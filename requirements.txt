@@ -13,4 +13,4 @@ requests==2.25.1
 selenium==3.141.0
 six==1.15.0
 urllib3==1.26.2
-yfinance==0.1.55
+yfinance==0.1.63
