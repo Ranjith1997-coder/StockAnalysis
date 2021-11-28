@@ -29,6 +29,8 @@ def addHeaderToExcel(workSheet,expiry):
     workSheet.append(['S.No',
                       'Stock Name',
                       'Current Price',
+                      'Average Returns',
+                      'Average Returns for {} days'.format(expiry),
                       'Daily Volatility',
                       'Volatility after {} days'.format(expiry),
                       '1 SD (LL)',
@@ -36,7 +38,7 @@ def addHeaderToExcel(workSheet,expiry):
                       '2 SD (LL)',
                       '2 SD (HH)',
                       ])
-    cellRange = workSheet['A1':'I1']
+    cellRange = workSheet['A1':'K1']
     redFill = PatternFill(start_color='FFFFFF00',
                           end_color='FFFFFF00',
                           fill_type='solid')
@@ -72,6 +74,8 @@ def computeSTDandAddtoExcel(stock, data ,No_of_days_to_Expire, workSheet, sNo):
     workSheet.append([sNo,
                       stock,
                       data.iloc[-1],
+                      mean,
+                      mean_at_expiry,
                       standardDeviation,
                       std_at_expiry,
                       lowerLimit_1SD,

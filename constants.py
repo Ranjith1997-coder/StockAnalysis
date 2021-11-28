@@ -1,18 +1,8 @@
 indexSymbolForYfinance = {"Nifty 50" : "^NSEI",
           "Nifty Bank": "^NSEBANK"}
 
-
 indexSymbolForNSE = {'Nifty 50': 'NIFTY',
-                    'Financial Services': 'FINNIFTY',
                     'Nifty Bank': 'BANKNIFTY'}
-
-# stocksSymbolForNSE = ['symbol': 'COALINDIA',
-#                       'symbol': 'TCS',
-#                       'symbol': 'RELIANCE',
-#                       'symbol': 'IOC',
-#                       'symbol': 'ITC',
-#                       'symbol': 'BHEL',
-#                       'symbol': 'SBIN'}]
 
 stocks ={'Gujarat_Gas_Co_Ltd':	'GUJGASLTD',
 'Aarti_Industries_Ltd':	'AARTIIND',
