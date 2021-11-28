@@ -1,5 +1,6 @@
 from requests import get
 from constants import OpstraURLs
+import pandas as pd
 
 def getMonthlyExpiry():
 
@@ -24,7 +25,7 @@ def getTickerList():
 
 def getIVChartData(ticker):
     res = get(OpstraURLs["IVChartURL"].format(ticker)).json()
-    return (res["events"],res["ivchart"])
+    return (pd.DataFrame(res["events"]),pd.DataFrame(res["ivchart"]))
 
 
 
