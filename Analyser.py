@@ -21,13 +21,13 @@ class Analyser:
         result = False
         for method in self.analysisMethods:
             if method["imputData"] == self.InputData.IV_DATA:
-                result = method["method"](stockObj.ivData)
+                result, trend, comment = method["method"](stockObj.ivData)
             elif method["imputData"] == self.InputData.PRICE_DATA:
-                result = method["method"](stockObj.priceData)
+                result, trend, comment = method["method"](stockObj.priceData)
 
             if result:
-                stockObj.analysisResult[method["trend"].value].append({"AnalyserName":self.analyserName,
-                                                           "comment" : method["comments"]})
+                stockObj.analysisResult[trend.value].append({"AnalyserName":self.analyserName,
+                                                           "comment" : comment})
                 if self.singleMethod:
                     return result
 

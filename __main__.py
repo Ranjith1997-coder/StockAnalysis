@@ -2,15 +2,19 @@ from datetime import date
 
 from Stock import Stock
 from IVAnalyser import IVAnalyser
+from VolumeAnalyser import VolumeAnalyser
+from TechnicalAnalyser import TechnicalAnalyser
 import constants
 from json import dumps
 
 
+analyserList = [IVAnalyser(),VolumeAnalyser(),TechnicalAnalyser()]
+
 
 def analyse(stock):
-    iv_analyser = IVAnalyser()
 
-    iv_analyser.runAnalysis(stock)
+    for analyser in analyserList:
+        analyser.runAnalysis(stock)
 
 def storeResultsInJson(tickerList):
 
@@ -19,8 +23,11 @@ def storeResultsInJson(tickerList):
 
     count = 0
     for ticker in tickerList:
+        if ((not ticker.analysisResult['Bullish']) and (not ticker.analysisResult['Bearish']) and (not ticker.analysisResult['Neutral'])):
+            continue
         jsonDict["stockResults"].append({
             "StockName" : ticker.stockName,
+            "StockSymbol":ticker.stockSymbolOpestra,
             "AnalysisResults" : ticker.analysisResult
         })
         count+=1
@@ -48,14 +55,22 @@ if __name__ == '__main__':
 
     for index in constants.indexSymbolForNSE:
         ticker = Stock(index, constants.indexSymbolForYfinance[index], constants.indexSymbolForNSE[index])
-        ticker.getStockData()
+        try:
+            ticker.getStockData()
+        except Exception:
+            print("Cannot Retrive data for {}".format(ticker.stockName))
+            continue
         analyse(ticker)
         ticker.removeStockData()
         tickerList.append(ticker)
 
     for stock in constants.stocks:
         ticker = Stock(stock,constants.stocks[stock]+".NS",constants.stocks[stock])
-        ticker.getStockData()
+        try:
+            ticker.getStockData()
+        except Exception:
+            print("Cannot Retrive data for {}".format(ticker.stockName))
+            continue
         analyse(ticker)
         ticker.removeStockData()
         tickerList.append(ticker)
