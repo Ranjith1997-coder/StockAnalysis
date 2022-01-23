@@ -27,6 +27,10 @@ def getIVChartData(ticker):
     res = get(OpstraURLs["IVChartURL"].format(ticker)).json()
     return (pd.DataFrame(res["events"]),pd.DataFrame(res["ivchart"]))
 
+def get_FII_DII_Data():
+    res = get(OpstraURLs["FII_DII_DATA_URL"]).json()
+    return (res["daily"])
+
 
 
 if __name__ == '__main__':

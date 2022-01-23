@@ -1,15 +1,17 @@
 from datetime import date
-
+from optionOpstraCollection import get_FII_DII_Data
 from Stock import Stock
 from IVAnalyser import IVAnalyser
 from VolumeAnalyser import VolumeAnalyser
 from TechnicalAnalyser import TechnicalAnalyser
+from candleStickPatternAnalyser import CandleStickAnalyser
 import constants
 from json import dumps
 
 
-analyserList = [IVAnalyser(),VolumeAnalyser(),TechnicalAnalyser()]
 
+analyserList = [IVAnalyser(),VolumeAnalyser(),TechnicalAnalyser(), CandleStickAnalyser()]
+# analyserList = [CandleStickAnalyser(),]
 
 def analyse(stock):
 
@@ -18,19 +20,19 @@ def analyse(stock):
 
 def storeResultsInJson(tickerList):
 
-    jsonDict = {"No_of_stocks" : 0,
-                "stockResults" : []}
+    jsonDict = {"FII_DII_DATA": get_FII_DII_Data()[-1],"No_of_stocks": 0, "stockResults": []}
 
     count = 0
     for ticker in tickerList:
-        if ((not ticker.analysisResult['Bullish']) and (not ticker.analysisResult['Bearish']) and (not ticker.analysisResult['Neutral'])):
-            continue
-        jsonDict["stockResults"].append({
-            "StockName" : ticker.stockName,
-            "StockSymbol":ticker.stockSymbolOpestra,
-            "AnalysisResults" : ticker.analysisResult
-        })
-        count+=1
+        # if ((not ticker.analysisResult['Bullish']) and (not ticker.analysisResult['Bearish']) and (not ticker.analysisResult['Neutral'])):
+        if ticker.indicator_count != 0 :
+            jsonDict["stockResults"].append({
+                "StockName" : ticker.stockName,
+                "StockSymbol":ticker.stockSymbolOpestra,
+                "No_of_Indicators": ticker.indicator_count,
+                "AnalysisResults" : ticker.analysisResult
+            })
+            count+=1
 
     jsonDict["No_of_stocks"] = count
 
@@ -42,11 +44,13 @@ def storeResultsInJson(tickerList):
 
 
 
+
 def printResult(tickerList):
 
     for ticker in tickerList:
-        print(ticker)
-        print("********************************************************")
+        if ticker.indicator_count != 0:
+            print(ticker)
+            print("********************************************************")
 
 
 if __name__ == '__main__':
@@ -75,5 +79,6 @@ if __name__ == '__main__':
         ticker.removeStockData()
         tickerList.append(ticker)
 
+    # printResult(tickerList)
     storeResultsInJson(tickerList)
 
