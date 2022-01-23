@@ -1,7 +1,11 @@
+import datetime
+
 import yfinance as yf
 from optionOpstraCollection import getIVChartData
 import pandas as pd
+from optionOpstraCollection import get_FII_DII_Data
 
+pd.options.mode.chained_assignment = None
 
 class Stock:
     def __init__(self, stockName, stockSymbolYFinance, stockSymbolOpestra):
@@ -15,6 +19,10 @@ class Stock:
         self.priceData = None
         self.ivData = None
         self.rsi_Df = None
+        self.indicator_count = 0
+
+    def increment_indicator_count(self):
+        self.indicator_count += 1
 
     def getStockData(self):
         try :
@@ -22,6 +30,7 @@ class Stock:
             self.ivData = getIVChartData(self.stockSymbolOpestra)[1]
             self.priceData['rsi'] = self.compute_rsi(self.priceData['Close'])
             self.priceData = self.priceData.dropna()
+            self.priceData['upper_bb'], self.priceData['lower_bb'] = self.bollinger_band_data(self.priceData['Close'])
         except Exception:
             raise Exception()
 
@@ -46,10 +55,18 @@ class Stock:
         rsi_df = rsi_df.dropna()
         return rsi_df[3:]
 
+    def bollinger_band_data(self, data, window = 20):
+        sma = data.rolling(window=window).mean()
+        std = data.rolling(window=window).std()
+        upper_bb = sma + std * 2
+        lower_bb = sma - std * 2
+        return upper_bb, lower_bb
+
     def removeStockData(self):
         self.priceData = None
         self.ivData = None
 
     def __repr__(self):
         return """Stock Name : {}
-Analysis Results : {} """.format(self.stockName,self.analysisResult)
+No_of_Indicators : {}
+Analysis Results : {} """.format(self.stockName,self.indicator_count,self.analysisResult)

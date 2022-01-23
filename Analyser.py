@@ -28,6 +28,7 @@ class Analyser:
             if result:
                 stockObj.analysisResult[trend.value].append({"AnalyserName":self.analyserName,
                                                            "comment" : comment})
+                stockObj.increment_indicator_count()
                 if self.singleMethod:
                     return result
 
