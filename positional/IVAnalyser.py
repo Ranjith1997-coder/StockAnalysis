@@ -1,4 +1,4 @@
-from Analyser import Analyser
+from positional.Analyser import Analyser
 
 
 class IVAnalyser(Analyser):

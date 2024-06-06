@@ -1,5 +1,5 @@
-from Analyser import Analyser
-from helperFunctions import percentageChange
+from positional.Analyser import Analyser
+from common.helperFunctions import percentageChange
 
 
 
@@ -10,7 +10,7 @@ class CandleStickAnalyser(Analyser):
         self.singleMethod = True
         self.analysisMethods = (
         {"method": self.singleCandleStickPattern, "imputData": self.InputData.PRICE_DATA},
-        )
+        {"method": self.doubleCandleStickPattern, "imputData": self.InputData.PRICE_DATA})
 
 
     def singleCandleStickPattern(self, priceData, priceChangePercentage = 1.5 , candleWickPercentage = 0.2):
@@ -38,7 +38,7 @@ class CandleStickAnalyser(Analyser):
                     "Bearish shooting star , with return {}".format((percentageChange(closePrice, openPrice))))
         return (False, None, None)
 
-    def doubleCandleStickPattern(self, priceData, priceChangePercentage = 1.5 , candleWickPercentage = 0.2):
+    def doubleCandleStickPattern(self, priceData):
         closePrice = priceData['Close'].iloc[-1]
         openPrice = priceData['Open'].iloc[-1]
         highPrice = priceData['High'].iloc[-1]
