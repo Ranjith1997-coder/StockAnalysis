@@ -1,11 +1,11 @@
 from datetime import date
 from optionOpstraCollection import get_FII_DII_Data
-from Stock import Stock
-from IVAnalyser import IVAnalyser
-from VolumeAnalyser import VolumeAnalyser
-from TechnicalAnalyser import TechnicalAnalyser
-from candleStickPatternAnalyser import CandleStickAnalyser
-import constants
+from common.Stock import Stock
+from positional.IVAnalyser import IVAnalyser
+from positional.VolumeAnalyser import VolumeAnalyser
+from positional.TechnicalAnalyser import TechnicalAnalyser
+from positional.candleStickPatternAnalyser import CandleStickAnalyser
+import common.constants as constants
 from json import dumps
 
 
@@ -60,7 +60,7 @@ if __name__ == '__main__':
     for index in constants.indexSymbolForNSE:
         ticker = Stock(index, constants.indexSymbolForYfinance[index], constants.indexSymbolForNSE[index])
         try:
-            ticker.getStockData()
+            ticker.getStockData(period="3y", interval="1d")
         except Exception:
             print("Cannot Retrive data for {}".format(ticker.stockName))
             continue
@@ -69,7 +69,7 @@ if __name__ == '__main__':
         tickerList.append(ticker)
 
     for stock in constants.stocks:
-        ticker = Stock(stock,constants.stocks[stock]+".NS",constants.stocks[stock])
+        ticker = Stock(stock, constants.stocks[stock]+".NS", constants.stocks[stock])
         try:
             ticker.getStockData()
         except Exception:

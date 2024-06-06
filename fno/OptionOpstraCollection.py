@@ -1,5 +1,5 @@
 from requests import get
-from constants import OpstraURLs
+from common.constants import OpstraURLs
 import pandas as pd
 
 def getMonthlyExpiry():

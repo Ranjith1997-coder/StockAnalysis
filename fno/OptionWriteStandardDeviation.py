@@ -1,6 +1,6 @@
 import yfinance as yf
 from pandas import Series
-from constants import stocks, indexSymbolForYfinance
+from common.constants import stocks, indexSymbolForYfinance
 from math import log,exp
 from openpyxl import Workbook
 from openpyxl.styles import PatternFill

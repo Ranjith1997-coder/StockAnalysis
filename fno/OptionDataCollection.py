@@ -1,7 +1,7 @@
 import requests
 from datetime import date
 from os import mkdir
-from constants import indexSymbolForNSE,  stocksSymbolForNSE
+from common.constants import indexSymbolForNSE,  stocksSymbolForNSE
 
 
 stockURL = "https://www.nseindia.com/api/option-chain-equities"
