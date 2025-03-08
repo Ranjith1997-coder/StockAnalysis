@@ -1,0 +1,1340 @@
+{
+      "ABB": {
+            "instrument_token": 3329,
+            "tradingsymbol": "ABB",
+            "name": "ABB INDIA",
+            "instrument_type": "EQ"
+      },
+      "ACC": {
+            "instrument_token": 5633,
+            "tradingsymbol": "ACC",
+            "name": "ACC",
+            "instrument_type": "EQ"
+      },
+      "APLAPOLLO": {
+            "instrument_token": 6599681,
+            "tradingsymbol": "APLAPOLLO",
+            "name": "APL APOLLO TUBES",
+            "instrument_type": "EQ"
+      },
+      "AUBANK": {
+            "instrument_token": 5436929,
+            "tradingsymbol": "AUBANK",
+            "name": "AU SMALL FINANCE BANK",
+            "instrument_type": "EQ"
+      },
+      "AARTIIND": {
+            "instrument_token": 1793,
+            "tradingsymbol": "AARTIIND",
+            "name": "AARTI INDUSTRIES",
+            "instrument_type": "EQ"
+      },
+      "ABBOTINDIA": {
+            "instrument_token": 4583169,
+            "tradingsymbol": "ABBOTINDIA",
+            "name": "ABBOTT INDIA",
+            "instrument_type": "EQ"
+      },
+      "ADANIENSOL": {
+            "instrument_token": 2615553,
+            "tradingsymbol": "ADANIENSOL",
+            "name": "ADANI ENERGY SOLUTION",
+            "instrument_type": "EQ"
+      },
+      "ADANIENT": {
+            "instrument_token": 6401,
+            "tradingsymbol": "ADANIENT",
+            "name": "ADANI ENTERPRISES",
+            "instrument_type": "EQ"
+      },
+      "ADANIGREEN": {
+            "instrument_token": 912129,
+            "tradingsymbol": "ADANIGREEN",
+            "name": "ADANI GREEN ENERGY",
+            "instrument_type": "EQ"
+      },
+      "ADANIPORTS": {
+            "instrument_token": 3861249,
+            "tradingsymbol": "ADANIPORTS",
+            "name": "ADANI PORT & SEZ",
+            "instrument_type": "EQ"
+      },
+      "ATGL": {
+            "instrument_token": 1552897,
+            "tradingsymbol": "ATGL",
+            "name": "ADANI TOTAL GAS",
+            "instrument_type": "EQ"
+      },
+      "ABCAPITAL": {
+            "instrument_token": 5533185,
+            "tradingsymbol": "ABCAPITAL",
+            "name": "ADITYA BIRLA CAPITAL",
+            "instrument_type": "EQ"
+      },
+      "ABFRL": {
+            "instrument_token": 7707649,
+            "tradingsymbol": "ABFRL",
+            "name": "ADITYA BIRLA FASHION & RT",
+            "instrument_type": "EQ"
+      },
+      "ALKEM": {
+            "instrument_token": 2995969,
+            "tradingsymbol": "ALKEM",
+            "name": "ALKEM LABORATORIES",
+            "instrument_type": "EQ"
+      },
+      "AMBUJACEM": {
+            "instrument_token": 325121,
+            "tradingsymbol": "AMBUJACEM",
+            "name": "AMBUJA CEMENTS",
+            "instrument_type": "EQ"
+      },
+      "ANGELONE": {
+            "instrument_token": 82945,
+            "tradingsymbol": "ANGELONE",
+            "name": "ANGEL ONE",
+            "instrument_type": "EQ"
+      },
+      "APOLLOHOSP": {
+            "instrument_token": 40193,
+            "tradingsymbol": "APOLLOHOSP",
+            "name": "APOLLO HOSPITALS ENTER. L",
+            "instrument_type": "EQ"
+      },
+      "APOLLOTYRE": {
+            "instrument_token": 41729,
+            "tradingsymbol": "APOLLOTYRE",
+            "name": "APOLLO TYRES",
+            "instrument_type": "EQ"
+      },
+      "ASHOKLEY": {
+            "instrument_token": 54273,
+            "tradingsymbol": "ASHOKLEY",
+            "name": "ASHOK LEYLAND",
+            "instrument_type": "EQ"
+      },
+      "ASIANPAINT": {
+            "instrument_token": 60417,
+            "tradingsymbol": "ASIANPAINT",
+            "name": "ASIAN PAINTS",
+            "instrument_type": "EQ"
+      },
+      "ASTRAL": {
+            "instrument_token": 3691009,
+            "tradingsymbol": "ASTRAL",
+            "name": "ASTRAL",
+            "instrument_type": "EQ"
+      },
+      "ATUL": {
+            "instrument_token": 67329,
+            "tradingsymbol": "ATUL",
+            "name": "ATUL",
+            "instrument_type": "EQ"
+      },
+      "AUROPHARMA": {
+            "instrument_token": 70401,
+            "tradingsymbol": "AUROPHARMA",
+            "name": "AUROBINDO PHARMA",
+            "instrument_type": "EQ"
+      },
+      "DMART": {
+            "instrument_token": 5097729,
+            "tradingsymbol": "DMART",
+            "name": "AVENUE SUPERMARTS",
+            "instrument_type": "EQ"
+      },
+      "AXISBANK": {
+            "instrument_token": 1510401,
+            "tradingsymbol": "AXISBANK",
+            "name": "AXIS BANK",
+            "instrument_type": "EQ"
+      },
+      "BSOFT": {
+            "instrument_token": 1790465,
+            "tradingsymbol": "BSOFT",
+            "name": "BIRLASOFT",
+            "instrument_type": "EQ"
+      },
+      "BSE": {
+            "instrument_token": 5013761,
+            "tradingsymbol": "BSE",
+            "name": "BSE",
+            "instrument_type": "EQ"
+      },
+      "BAJAJ-AUTO": {
+            "instrument_token": 4267265,
+            "tradingsymbol": "BAJAJ-AUTO",
+            "name": "BAJAJ AUTO",
+            "instrument_type": "EQ"
+      },
+      "BAJFINANCE": {
+            "instrument_token": 81153,
+            "tradingsymbol": "BAJFINANCE",
+            "name": "BAJAJ FINANCE",
+            "instrument_type": "EQ"
+      },
+      "BAJAJFINSV": {
+            "instrument_token": 4268801,
+            "tradingsymbol": "BAJAJFINSV",
+            "name": "BAJAJ FINSERV",
+            "instrument_type": "EQ"
+      },
+      "BALKRISIND": {
+            "instrument_token": 85761,
+            "tradingsymbol": "BALKRISIND",
+            "name": "BALKRISHNA IND.",
+            "instrument_type": "EQ"
+      },
+      "BANDHANBNK": {
+            "instrument_token": 579329,
+            "tradingsymbol": "BANDHANBNK",
+            "name": "BANDHAN BANK",
+            "instrument_type": "EQ"
+      },
+      "BANKBARODA": {
+            "instrument_token": 1195009,
+            "tradingsymbol": "BANKBARODA",
+            "name": "BANK OF BARODA",
+            "instrument_type": "EQ"
+      },
+      "BANKINDIA": {
+            "instrument_token": 1214721,
+            "tradingsymbol": "BANKINDIA",
+            "name": "BANK OF INDIA",
+            "instrument_type": "EQ"
+      },
+      "BATAINDIA": {
+            "instrument_token": 94977,
+            "tradingsymbol": "BATAINDIA",
+            "name": "BATA INDIA",
+            "instrument_type": "EQ"
+      },
+      "BERGEPAINT": {
+            "instrument_token": 103425,
+            "tradingsymbol": "BERGEPAINT",
+            "name": "BERGER PAINTS (I)",
+            "instrument_type": "EQ"
+      },
+      "BEL": {
+            "instrument_token": 98049,
+            "tradingsymbol": "BEL",
+            "name": "BHARAT ELECTRONICS",
+            "instrument_type": "EQ"
+      },
+      "BHARATFORG": {
+            "instrument_token": 108033,
+            "tradingsymbol": "BHARATFORG",
+            "name": "BHARAT FORGE",
+            "instrument_type": "EQ"
+      },
+      "BHEL": {
+            "instrument_token": 112129,
+            "tradingsymbol": "BHEL",
+            "name": "BHEL",
+            "instrument_type": "EQ"
+      },
+      "BPCL": {
+            "instrument_token": 134657,
+            "tradingsymbol": "BPCL",
+            "name": "BHARAT PETROLEUM CORP  LT",
+            "instrument_type": "EQ"
+      },
+      "BHARTIARTL": {
+            "instrument_token": 2714625,
+            "tradingsymbol": "BHARTIARTL",
+            "name": "BHARTI AIRTEL",
+            "instrument_type": "EQ"
+      },
+      "BIOCON": {
+            "instrument_token": 2911489,
+            "tradingsymbol": "BIOCON",
+            "name": "BIOCON",
+            "instrument_type": "EQ"
+      },
+      "BOSCHLTD": {
+            "instrument_token": 558337,
+            "tradingsymbol": "BOSCHLTD",
+            "name": "BOSCH",
+            "instrument_type": "EQ"
+      },
+      "BRITANNIA": {
+            "instrument_token": 140033,
+            "tradingsymbol": "BRITANNIA",
+            "name": "BRITANNIA INDUSTRIES",
+            "instrument_type": "EQ"
+      },
+      "CESC": {
+            "instrument_token": 160769,
+            "tradingsymbol": "CESC",
+            "name": "CESC",
+            "instrument_type": "EQ"
+      },
+      "CGPOWER": {
+            "instrument_token": 194561,
+            "tradingsymbol": "CGPOWER",
+            "name": "CG POWER AND IND SOL",
+            "instrument_type": "EQ"
+      },
+      "CANFINHOME": {
+            "instrument_token": 149249,
+            "tradingsymbol": "CANFINHOME",
+            "name": "CAN FIN HOMES",
+            "instrument_type": "EQ"
+      },
+      "CANBK": {
+            "instrument_token": 2763265,
+            "tradingsymbol": "CANBK",
+            "name": "CANARA BANK",
+            "instrument_type": "EQ"
+      },
+      "CDSL": {
+            "instrument_token": 5420545,
+            "tradingsymbol": "CDSL",
+            "name": "CENTRAL DEPO SER (I)",
+            "instrument_type": "EQ"
+      },
+      "CHAMBLFERT": {
+            "instrument_token": 163073,
+            "tradingsymbol": "CHAMBLFERT",
+            "name": "CHAMBAL FERTILIZERS",
+            "instrument_type": "EQ"
+      },
+      "CHOLAFIN": {
+            "instrument_token": 175361,
+            "tradingsymbol": "CHOLAFIN",
+            "name": "CHOLAMANDALAM IN & FIN CO",
+            "instrument_type": "EQ"
+      },
+      "CIPLA": {
+            "instrument_token": 177665,
+            "tradingsymbol": "CIPLA",
+            "name": "CIPLA",
+            "instrument_type": "EQ"
+      },
+      "CUB": {
+            "instrument_token": 1459457,
+            "tradingsymbol": "CUB",
+            "name": "CITY UNION BANK",
+            "instrument_type": "EQ"
+      },
+      "COALINDIA": {
+            "instrument_token": 5215745,
+            "tradingsymbol": "COALINDIA",
+            "name": "COAL INDIA",
+            "instrument_type": "EQ"
+      },
+      "COFORGE": {
+            "instrument_token": 2955009,
+            "tradingsymbol": "COFORGE",
+            "name": "COFORGE",
+            "instrument_type": "EQ"
+      },
+      "COLPAL": {
+            "instrument_token": 3876097,
+            "tradingsymbol": "COLPAL",
+            "name": "COLGATE PALMOLIVE",
+            "instrument_type": "EQ"
+      },
+      "CAMS": {
+            "instrument_token": 87553,
+            "tradingsymbol": "CAMS",
+            "name": "COMPUTER AGE MNGT SER",
+            "instrument_type": "EQ"
+      },
+      "CONCOR": {
+            "instrument_token": 1215745,
+            "tradingsymbol": "CONCOR",
+            "name": "CONTAINER CORP OF IND",
+            "instrument_type": "EQ"
+      },
+      "COROMANDEL": {
+            "instrument_token": 189185,
+            "tradingsymbol": "COROMANDEL",
+            "name": "COROMANDEL INTERNTL.",
+            "instrument_type": "EQ"
+      },
+      "CROMPTON": {
+            "instrument_token": 4376065,
+            "tradingsymbol": "CROMPTON",
+            "name": "CROMPT GREA CON ELEC",
+            "instrument_type": "EQ"
+      },
+      "CUMMINSIND": {
+            "instrument_token": 486657,
+            "tradingsymbol": "CUMMINSIND",
+            "name": "CUMMINS INDIA",
+            "instrument_type": "EQ"
+      },
+      "CYIENT": {
+            "instrument_token": 1471489,
+            "tradingsymbol": "CYIENT",
+            "name": "CYIENT",
+            "instrument_type": "EQ"
+      },
+      "DLF": {
+            "instrument_token": 3771393,
+            "tradingsymbol": "DLF",
+            "name": "DLF",
+            "instrument_type": "EQ"
+      },
+      "DABUR": {
+            "instrument_token": 197633,
+            "tradingsymbol": "DABUR",
+            "name": "DABUR INDIA",
+            "instrument_type": "EQ"
+      },
+      "DALBHARAT": {
+            "instrument_token": 2067201,
+            "tradingsymbol": "DALBHARAT",
+            "name": "DALMIA BHARAT",
+            "instrument_type": "EQ"
+      },
+      "DEEPAKNTR": {
+            "instrument_token": 5105409,
+            "tradingsymbol": "DEEPAKNTR",
+            "name": "DEEPAK NITRITE",
+            "instrument_type": "EQ"
+      },
+      "DELHIVERY": {
+            "instrument_token": 2457345,
+            "tradingsymbol": "DELHIVERY",
+            "name": "DELHIVERY",
+            "instrument_type": "EQ"
+      },
+      "DIVISLAB": {
+            "instrument_token": 2800641,
+            "tradingsymbol": "DIVISLAB",
+            "name": "DIVI S LABORATORIES",
+            "instrument_type": "EQ"
+      },
+      "DIXON": {
+            "instrument_token": 5552641,
+            "tradingsymbol": "DIXON",
+            "name": "DIXON TECHNO (INDIA)",
+            "instrument_type": "EQ"
+      },
+      "LALPATHLAB": {
+            "instrument_token": 2983425,
+            "tradingsymbol": "LALPATHLAB",
+            "name": "DR. LAL PATH LABS",
+            "instrument_type": "EQ"
+      },
+      "DRREDDY": {
+            "instrument_token": 225537,
+            "tradingsymbol": "DRREDDY",
+            "name": "DR. REDDY S LABORATORIES",
+            "instrument_type": "EQ"
+      },
+      "EICHERMOT": {
+            "instrument_token": 232961,
+            "tradingsymbol": "EICHERMOT",
+            "name": "EICHER MOTORS",
+            "instrument_type": "EQ"
+      },
+      "ESCORTS": {
+            "instrument_token": 245249,
+            "tradingsymbol": "ESCORTS",
+            "name": "ESCORTS KUBOTA",
+            "instrument_type": "EQ"
+      },
+      "EXIDEIND": {
+            "instrument_token": 173057,
+            "tradingsymbol": "EXIDEIND",
+            "name": "EXIDE INDUSTRIES",
+            "instrument_type": "EQ"
+      },
+      "NYKAA": {
+            "instrument_token": 1675521,
+            "tradingsymbol": "NYKAA",
+            "name": "FSN E COMMERCE VENTURES",
+            "instrument_type": "EQ"
+      },
+      "GAIL": {
+            "instrument_token": 1207553,
+            "tradingsymbol": "GAIL",
+            "name": "GAIL (INDIA)",
+            "instrument_type": "EQ"
+      },
+      "GMRINFRA": {
+            "instrument_token": 3463169,
+            "tradingsymbol": "GMRINFRA",
+            "name": "GMR AIRPORTS INFRA",
+            "instrument_type": "EQ"
+      },
+      "GLENMARK": {
+            "instrument_token": 1895937,
+            "tradingsymbol": "GLENMARK",
+            "name": "GLENMARK PHARMACEUTICALS",
+            "instrument_type": "EQ"
+      },
+      "GODREJCP": {
+            "instrument_token": 2585345,
+            "tradingsymbol": "GODREJCP",
+            "name": "GODREJ CONSUMER PRODUCTS",
+            "instrument_type": "EQ"
+      },
+      "GODREJPROP": {
+            "instrument_token": 4576001,
+            "tradingsymbol": "GODREJPROP",
+            "name": "GODREJ PROPERTIES",
+            "instrument_type": "EQ"
+      },
+      "GRANULES": {
+            "instrument_token": 3039233,
+            "tradingsymbol": "GRANULES",
+            "name": "GRANULES INDIA",
+            "instrument_type": "EQ"
+      },
+      "GRASIM": {
+            "instrument_token": 315393,
+            "tradingsymbol": "GRASIM",
+            "name": "GRASIM INDUSTRIES",
+            "instrument_type": "EQ"
+      },
+      "GUJGASLTD": {
+            "instrument_token": 2713345,
+            "tradingsymbol": "GUJGASLTD",
+            "name": "GUJARAT GAS",
+            "instrument_type": "EQ"
+      },
+      "GNFC": {
+            "instrument_token": 300545,
+            "tradingsymbol": "GNFC",
+            "name": "GUJ NAR VAL FER & CHEM L",
+            "instrument_type": "EQ"
+      },
+      "HCLTECH": {
+            "instrument_token": 1850625,
+            "tradingsymbol": "HCLTECH",
+            "name": "HCL TECHNOLOGIES",
+            "instrument_type": "EQ"
+      },
+      "HDFCAMC": {
+            "instrument_token": 1086465,
+            "tradingsymbol": "HDFCAMC",
+            "name": "HDFC AMC",
+            "instrument_type": "EQ"
+      },
+      "HDFCBANK": {
+            "instrument_token": 341249,
+            "tradingsymbol": "HDFCBANK",
+            "name": "HDFC BANK",
+            "instrument_type": "EQ"
+      },
+      "HDFCLIFE": {
+            "instrument_token": 119553,
+            "tradingsymbol": "HDFCLIFE",
+            "name": "HDFC LIFE INS CO",
+            "instrument_type": "EQ"
+      },
+      "HFCL": {
+            "instrument_token": 5619457,
+            "tradingsymbol": "HFCL",
+            "name": "HFCL",
+            "instrument_type": "EQ"
+      },
+      "HAVELLS": {
+            "instrument_token": 2513665,
+            "tradingsymbol": "HAVELLS",
+            "name": "HAVELLS INDIA",
+            "instrument_type": "EQ"
+      },
+      "HEROMOTOCO": {
+            "instrument_token": 345089,
+            "tradingsymbol": "HEROMOTOCO",
+            "name": "HERO MOTOCORP",
+            "instrument_type": "EQ"
+      },
+      "HINDALCO": {
+            "instrument_token": 348929,
+            "tradingsymbol": "HINDALCO",
+            "name": "HINDALCO  INDUSTRIES ",
+            "instrument_type": "EQ"
+      },
+      "HAL": {
+            "instrument_token": 589569,
+            "tradingsymbol": "HAL",
+            "name": "HINDUSTAN AERONAUTICS",
+            "instrument_type": "EQ"
+      },
+      "HINDCOPPER": {
+            "instrument_token": 4592385,
+            "tradingsymbol": "HINDCOPPER",
+            "name": "HINDUSTAN COPPER",
+            "instrument_type": "EQ"
+      },
+      "HINDPETRO": {
+            "instrument_token": 359937,
+            "tradingsymbol": "HINDPETRO",
+            "name": "HINDUSTAN PETROLEUM CORP",
+            "instrument_type": "EQ"
+      },
+      "HINDUNILVR": {
+            "instrument_token": 356865,
+            "tradingsymbol": "HINDUNILVR",
+            "name": "HINDUSTAN UNILEVER",
+            "instrument_type": "EQ"
+      },
+      "HUDCO": {
+            "instrument_token": 5331201,
+            "tradingsymbol": "HUDCO",
+            "name": "HSG & URBAN DEV CORPN",
+            "instrument_type": "EQ"
+      },
+      "ICICIBANK": {
+            "instrument_token": 1270529,
+            "tradingsymbol": "ICICIBANK",
+            "name": "ICICI BANK",
+            "instrument_type": "EQ"
+      },
+      "ICICIGI": {
+            "instrument_token": 5573121,
+            "tradingsymbol": "ICICIGI",
+            "name": "ICICI LOMBARD GIC",
+            "instrument_type": "EQ"
+      },
+      "ICICIPRULI": {
+            "instrument_token": 4774913,
+            "tradingsymbol": "ICICIPRULI",
+            "name": "ICICI PRU LIFE INS CO",
+            "instrument_type": "EQ"
+      },
+      "IDFCFIRSTB": {
+            "instrument_token": 2863105,
+            "tradingsymbol": "IDFCFIRSTB",
+            "name": "IDFC FIRST BANK",
+            "instrument_type": "EQ"
+      },
+      "IPCALAB": {
+            "instrument_token": 418049,
+            "tradingsymbol": "IPCALAB",
+            "name": "IPCA LABORATORIES",
+            "instrument_type": "EQ"
+      },
+      "IRB": {
+            "instrument_token": 3920129,
+            "tradingsymbol": "IRB",
+            "name": "IRB INFRA DEV",
+            "instrument_type": "EQ"
+      },
+      "ITC": {
+            "instrument_token": 424961,
+            "tradingsymbol": "ITC",
+            "name": "ITC",
+            "instrument_type": "EQ"
+      },
+      "INDIAMART": {
+            "instrument_token": 2745857,
+            "tradingsymbol": "INDIAMART",
+            "name": "INDIAMART INTERMESH",
+            "instrument_type": "EQ"
+      },
+      "INDIANB": {
+            "instrument_token": 3663105,
+            "tradingsymbol": "INDIANB",
+            "name": "INDIAN BANK",
+            "instrument_type": "EQ"
+      },
+      "IEX": {
+            "instrument_token": 56321,
+            "tradingsymbol": "IEX",
+            "name": "INDIAN ENERGY EXC",
+            "instrument_type": "EQ"
+      },
+      "IOC": {
+            "instrument_token": 415745,
+            "tradingsymbol": "IOC",
+            "name": "INDIAN OIL CORP",
+            "instrument_type": "EQ"
+      },
+      "IRCTC": {
+            "instrument_token": 3484417,
+            "tradingsymbol": "IRCTC",
+            "name": "INDIAN RAIL TOUR CORP",
+            "instrument_type": "EQ"
+      },
+      "IRFC": {
+            "instrument_token": 519425,
+            "tradingsymbol": "IRFC",
+            "name": "INDIAN RAILWAY FIN CORP L",
+            "instrument_type": "EQ"
+      },
+      "IGL": {
+            "instrument_token": 2883073,
+            "tradingsymbol": "IGL",
+            "name": "INDRAPRASTHA GAS",
+            "instrument_type": "EQ"
+      },
+      "INDUSTOWER": {
+            "instrument_token": 7458561,
+            "tradingsymbol": "INDUSTOWER",
+            "name": "INDUS TOWERS",
+            "instrument_type": "EQ"
+      },
+      "INDUSINDBK": {
+            "instrument_token": 1346049,
+            "tradingsymbol": "INDUSINDBK",
+            "name": "INDUSIND BANK",
+            "instrument_type": "EQ"
+      },
+      "NAUKRI": {
+            "instrument_token": 3520257,
+            "tradingsymbol": "NAUKRI",
+            "name": "INFO EDGE (I)",
+            "instrument_type": "EQ"
+      },
+      "INFY": {
+            "instrument_token": 408065,
+            "tradingsymbol": "INFY",
+            "name": "INFOSYS",
+            "instrument_type": "EQ"
+      },
+      "INDIGO": {
+            "instrument_token": 2865921,
+            "tradingsymbol": "INDIGO",
+            "name": "INTERGLOBE AVIATION",
+            "instrument_type": "EQ"
+      },
+      "JKCEMENT": {
+            "instrument_token": 3397121,
+            "tradingsymbol": "JKCEMENT",
+            "name": "JK CEMENT",
+            "instrument_type": "EQ"
+      },
+      "JSWENERGY": {
+            "instrument_token": 4574465,
+            "tradingsymbol": "JSWENERGY",
+            "name": "JSW ENERGY",
+            "instrument_type": "EQ"
+      },
+      "JSWSTEEL": {
+            "instrument_token": 3001089,
+            "tradingsymbol": "JSWSTEEL",
+            "name": "JSW STEEL",
+            "instrument_type": "EQ"
+      },
+      "JSL": {
+            "instrument_token": 2876417,
+            "tradingsymbol": "JSL",
+            "name": "JINDAL STAINLESS",
+            "instrument_type": "EQ"
+      },
+      "JINDALSTEL": {
+            "instrument_token": 1723649,
+            "tradingsymbol": "JINDALSTEL",
+            "name": "JINDAL STEEL & POWER",
+            "instrument_type": "EQ"
+      },
+      "JIOFIN": {
+            "instrument_token": 4644609,
+            "tradingsymbol": "JIOFIN",
+            "name": "JIO FIN SERVICES",
+            "instrument_type": "EQ"
+      },
+      "JUBLFOOD": {
+            "instrument_token": 4632577,
+            "tradingsymbol": "JUBLFOOD",
+            "name": "JUBILANT FOODWORKS",
+            "instrument_type": "EQ"
+      },
+      "KEI": {
+            "instrument_token": 3407361,
+            "tradingsymbol": "KEI",
+            "name": "KEI INDUSTRIES",
+            "instrument_type": "EQ"
+      },
+      "KPITTECH": {
+            "instrument_token": 2478849,
+            "tradingsymbol": "KPITTECH",
+            "name": "KPIT TECHNOLOGIES",
+            "instrument_type": "EQ"
+      },
+      "KALYANKJIL": {
+            "instrument_token": 756481,
+            "tradingsymbol": "KALYANKJIL",
+            "name": "KALYAN JEWELLERS IND",
+            "instrument_type": "EQ"
+      },
+      "KOTAKBANK": {
+            "instrument_token": 492033,
+            "tradingsymbol": "KOTAKBANK",
+            "name": "KOTAK MAHINDRA BANK",
+            "instrument_type": "EQ"
+      },
+      "LTF": {
+            "instrument_token": 6386689,
+            "tradingsymbol": "LTF",
+            "name": "L&T FINANCE",
+            "instrument_type": "EQ"
+      },
+      "LTTS": {
+            "instrument_token": 4752385,
+            "tradingsymbol": "LTTS",
+            "name": "L&T TECHNOLOGY SER.",
+            "instrument_type": "EQ"
+      },
+      "LICHSGFIN": {
+            "instrument_token": 511233,
+            "tradingsymbol": "LICHSGFIN",
+            "name": "LIC HOUSING FINANCE",
+            "instrument_type": "EQ"
+      },
+      "LTIM": {
+            "instrument_token": 4561409,
+            "tradingsymbol": "LTIM",
+            "name": "LTIMINDTREE",
+            "instrument_type": "EQ"
+      },
+      "LT": {
+            "instrument_token": 2939649,
+            "tradingsymbol": "LT",
+            "name": "LARSEN & TOUBRO",
+            "instrument_type": "EQ"
+      },
+      "LAURUSLABS": {
+            "instrument_token": 4923905,
+            "tradingsymbol": "LAURUSLABS",
+            "name": "LAURUS LABS",
+            "instrument_type": "EQ"
+      },
+      "LICI": {
+            "instrument_token": 2426881,
+            "tradingsymbol": "LICI",
+            "name": "LIFE INSURA CORP OF INDIA",
+            "instrument_type": "EQ"
+      },
+      "LUPIN": {
+            "instrument_token": 2672641,
+            "tradingsymbol": "LUPIN",
+            "name": "LUPIN",
+            "instrument_type": "EQ"
+      },
+      "MRF": {
+            "instrument_token": 582913,
+            "tradingsymbol": "MRF",
+            "name": "MRF",
+            "instrument_type": "EQ"
+      },
+      "LODHA": {
+            "instrument_token": 824321,
+            "tradingsymbol": "LODHA",
+            "name": "MACROTECH DEVELOPERS",
+            "instrument_type": "EQ"
+      },
+      "MGL": {
+            "instrument_token": 4488705,
+            "tradingsymbol": "MGL",
+            "name": "MAHANAGAR GAS",
+            "instrument_type": "EQ"
+      },
+      "M&MFIN": {
+            "instrument_token": 3400961,
+            "tradingsymbol": "M&MFIN",
+            "name": "M&M FIN. SERVICES",
+            "instrument_type": "EQ"
+      },
+      "M&M": {
+            "instrument_token": 519937,
+            "tradingsymbol": "M&M",
+            "name": "MAHINDRA & MAHINDRA",
+            "instrument_type": "EQ"
+      },
+      "MANAPPURAM": {
+            "instrument_token": 4879617,
+            "tradingsymbol": "MANAPPURAM",
+            "name": "MANAPPURAM FINANCE",
+            "instrument_type": "EQ"
+      },
+      "MARICO": {
+            "instrument_token": 1041153,
+            "tradingsymbol": "MARICO",
+            "name": "MARICO",
+            "instrument_type": "EQ"
+      },
+      "MARUTI": {
+            "instrument_token": 2815745,
+            "tradingsymbol": "MARUTI",
+            "name": "MARUTI SUZUKI INDIA",
+            "instrument_type": "EQ"
+      },
+      "MFSL": {
+            "instrument_token": 548353,
+            "tradingsymbol": "MFSL",
+            "name": "MAX FINANCIAL SERV",
+            "instrument_type": "EQ"
+      },
+      "MAXHEALTH": {
+            "instrument_token": 5728513,
+            "tradingsymbol": "MAXHEALTH",
+            "name": "MAX HEALTHCARE INS",
+            "instrument_type": "EQ"
+      },
+      "METROPOLIS": {
+            "instrument_token": 2452737,
+            "tradingsymbol": "METROPOLIS",
+            "name": "METROPOLIS HEALTHCARE",
+            "instrument_type": "EQ"
+      },
+      "MPHASIS": {
+            "instrument_token": 1152769,
+            "tradingsymbol": "MPHASIS",
+            "name": "MPHASIS",
+            "instrument_type": "EQ"
+      },
+      "MCX": {
+            "instrument_token": 7982337,
+            "tradingsymbol": "MCX",
+            "name": "MULTI COMMODITY EXCHANGE",
+            "instrument_type": "EQ"
+      },
+      "MUTHOOTFIN": {
+            "instrument_token": 6054401,
+            "tradingsymbol": "MUTHOOTFIN",
+            "name": "MUTHOOT FINANCE",
+            "instrument_type": "EQ"
+      },
+      "NCC": {
+            "instrument_token": 593665,
+            "tradingsymbol": "NCC",
+            "name": "NCC",
+            "instrument_type": "EQ"
+      },
+      "NHPC": {
+            "instrument_token": 4454401,
+            "tradingsymbol": "NHPC",
+            "name": "NHPC",
+            "instrument_type": "EQ"
+      },
+      "NMDC": {
+            "instrument_token": 3924993,
+            "tradingsymbol": "NMDC",
+            "name": "NMDC",
+            "instrument_type": "EQ"
+      },
+      "NTPC": {
+            "instrument_token": 2977281,
+            "tradingsymbol": "NTPC",
+            "name": "NTPC",
+            "instrument_type": "EQ"
+      },
+      "NATIONALUM": {
+            "instrument_token": 1629185,
+            "tradingsymbol": "NATIONALUM",
+            "name": "NATIONAL ALUMINIUM CO",
+            "instrument_type": "EQ"
+      },
+      "NAVINFLUOR": {
+            "instrument_token": 3756033,
+            "tradingsymbol": "NAVINFLUOR",
+            "name": "NAVIN FLUORINE INT.",
+            "instrument_type": "EQ"
+      },
+      "NESTLEIND": {
+            "instrument_token": 4598529,
+            "tradingsymbol": "NESTLEIND",
+            "name": "NESTLE INDIA",
+            "instrument_type": "EQ"
+      },
+      "OBEROIRLTY": {
+            "instrument_token": 5181953,
+            "tradingsymbol": "OBEROIRLTY",
+            "name": "OBEROI REALTY",
+            "instrument_type": "EQ"
+      },
+      "ONGC": {
+            "instrument_token": 633601,
+            "tradingsymbol": "ONGC",
+            "name": "OIL AND NATURAL GAS CORP.",
+            "instrument_type": "EQ"
+      },
+      "OIL": {
+            "instrument_token": 4464129,
+            "tradingsymbol": "OIL",
+            "name": "OIL INDIA",
+            "instrument_type": "EQ"
+      },
+      "PAYTM": {
+            "instrument_token": 1716481,
+            "tradingsymbol": "PAYTM",
+            "name": "ONE 97 COMMUNICATIONS",
+            "instrument_type": "EQ"
+      },
+      "OFSS": {
+            "instrument_token": 2748929,
+            "tradingsymbol": "OFSS",
+            "name": "ORACLE FIN SERV SOFT",
+            "instrument_type": "EQ"
+      },
+      "POLICYBZR": {
+            "instrument_token": 1703937,
+            "tradingsymbol": "POLICYBZR",
+            "name": "PB FINTECH",
+            "instrument_type": "EQ"
+      },
+      "PIIND": {
+            "instrument_token": 6191105,
+            "tradingsymbol": "PIIND",
+            "name": "PI INDUSTRIES",
+            "instrument_type": "EQ"
+      },
+      "PVRINOX": {
+            "instrument_token": 3365633,
+            "tradingsymbol": "PVRINOX",
+            "name": "PVR INOX",
+            "instrument_type": "EQ"
+      },
+      "PAGEIND": {
+            "instrument_token": 3689729,
+            "tradingsymbol": "PAGEIND",
+            "name": "PAGE INDUSTRIES",
+            "instrument_type": "EQ"
+      },
+      "PERSISTENT": {
+            "instrument_token": 4701441,
+            "tradingsymbol": "PERSISTENT",
+            "name": "PERSISTENT SYSTEMS",
+            "instrument_type": "EQ"
+      },
+      "PETRONET": {
+            "instrument_token": 2905857,
+            "tradingsymbol": "PETRONET",
+            "name": "PETRONET LNG",
+            "instrument_type": "EQ"
+      },
+      "PIDILITIND": {
+            "instrument_token": 681985,
+            "tradingsymbol": "PIDILITIND",
+            "name": "PIDILITE INDUSTRIES",
+            "instrument_type": "EQ"
+      },
+      "PEL": {
+            "instrument_token": 617473,
+            "tradingsymbol": "PEL",
+            "name": "PIRAMAL ENTERPRISES",
+            "instrument_type": "EQ"
+      },
+      "POLYCAB": {
+            "instrument_token": 2455041,
+            "tradingsymbol": "POLYCAB",
+            "name": "POLYCAB INDIA",
+            "instrument_type": "EQ"
+      },
+      "POONAWALLA": {
+            "instrument_token": 2919169,
+            "tradingsymbol": "POONAWALLA",
+            "name": "POONAWALLA FINCORP",
+            "instrument_type": "EQ"
+      },
+      "PFC": {
+            "instrument_token": 3660545,
+            "tradingsymbol": "PFC",
+            "name": "POWER FIN CORP",
+            "instrument_type": "EQ"
+      },
+      "POWERGRID": {
+            "instrument_token": 3834113,
+            "tradingsymbol": "POWERGRID",
+            "name": "POWER GRID CORP.",
+            "instrument_type": "EQ"
+      },
+      "PRESTIGE": {
+            "instrument_token": 5197313,
+            "tradingsymbol": "PRESTIGE",
+            "name": "PRESTIGE ESTATE",
+            "instrument_type": "EQ"
+      },
+      "PNB": {
+            "instrument_token": 2730497,
+            "tradingsymbol": "PNB",
+            "name": "PUNJAB NATIONAL BANK",
+            "instrument_type": "EQ"
+      },
+      "RBLBANK": {
+            "instrument_token": 4708097,
+            "tradingsymbol": "RBLBANK",
+            "name": "RBL BANK",
+            "instrument_type": "EQ"
+      },
+      "RECLTD": {
+            "instrument_token": 3930881,
+            "tradingsymbol": "RECLTD",
+            "name": "REC",
+            "instrument_type": "EQ"
+      },
+      "RELIANCE": {
+            "instrument_token": 738561,
+            "tradingsymbol": "RELIANCE",
+            "name": "RELIANCE INDUSTRIES",
+            "instrument_type": "EQ"
+      },
+      "SBICARD": {
+            "instrument_token": 4600577,
+            "tradingsymbol": "SBICARD",
+            "name": "SBI CARDS & PAY SER",
+            "instrument_type": "EQ"
+      },
+      "SBILIFE": {
+            "instrument_token": 5582849,
+            "tradingsymbol": "SBILIFE",
+            "name": "SBI LIFE INSURANCE CO",
+            "instrument_type": "EQ"
+      },
+      "SHREECEM": {
+            "instrument_token": 794369,
+            "tradingsymbol": "SHREECEM",
+            "name": "SHREE CEMENT",
+            "instrument_type": "EQ"
+      },
+      "SJVN": {
+            "instrument_token": 4834049,
+            "tradingsymbol": "SJVN",
+            "name": "SJVN",
+            "instrument_type": "EQ"
+      },
+      "SRF": {
+            "instrument_token": 837889,
+            "tradingsymbol": "SRF",
+            "name": "SRF",
+            "instrument_type": "EQ"
+      },
+      "MOTHERSON": {
+            "instrument_token": 1076225,
+            "tradingsymbol": "MOTHERSON",
+            "name": "SAMVRDHNA MTHRSN INTL",
+            "instrument_type": "EQ"
+      },
+      "SHRIRAMFIN": {
+            "instrument_token": 1102337,
+            "tradingsymbol": "SHRIRAMFIN",
+            "name": "SHRIRAM FINANCE",
+            "instrument_type": "EQ"
+      },
+      "SIEMENS": {
+            "instrument_token": 806401,
+            "tradingsymbol": "SIEMENS",
+            "name": "SIEMENS",
+            "instrument_type": "EQ"
+      },
+      "SONACOMS": {
+            "instrument_token": 1199105,
+            "tradingsymbol": "SONACOMS",
+            "name": "SONA BLW PRECISION FRGS L",
+            "instrument_type": "EQ"
+      },
+      "SBIN": {
+            "instrument_token": 779521,
+            "tradingsymbol": "SBIN",
+            "name": "STATE BANK OF INDIA",
+            "instrument_type": "EQ"
+      },
+      "SAIL": {
+            "instrument_token": 758529,
+            "tradingsymbol": "SAIL",
+            "name": "STEEL AUTHORITY OF INDIA",
+            "instrument_type": "EQ"
+      },
+      "SUNPHARMA": {
+            "instrument_token": 857857,
+            "tradingsymbol": "SUNPHARMA",
+            "name": "SUN PHARMACEUTICAL IND L",
+            "instrument_type": "EQ"
+      },
+      "SUNTV": {
+            "instrument_token": 3431425,
+            "tradingsymbol": "SUNTV",
+            "name": "SUN TV NETWORK",
+            "instrument_type": "EQ"
+      },
+      "SUPREMEIND": {
+            "instrument_token": 860929,
+            "tradingsymbol": "SUPREMEIND",
+            "name": "SUPREME INDUSTRIES",
+            "instrument_type": "EQ"
+      },
+      "SYNGENE": {
+            "instrument_token": 2622209,
+            "tradingsymbol": "SYNGENE",
+            "name": "SYNGENE INTERNATIONAL",
+            "instrument_type": "EQ"
+      },
+      "TATACONSUM": {
+            "instrument_token": 878593,
+            "tradingsymbol": "TATACONSUM",
+            "name": "TATA CONSUMER PRODUCT",
+            "instrument_type": "EQ"
+      },
+      "TVSMOTOR": {
+            "instrument_token": 2170625,
+            "tradingsymbol": "TVSMOTOR",
+            "name": "TVS MOTOR COMPANY ",
+            "instrument_type": "EQ"
+      },
+      "TATACHEM": {
+            "instrument_token": 871681,
+            "tradingsymbol": "TATACHEM",
+            "name": "TATA CHEMICALS",
+            "instrument_type": "EQ"
+      },
+      "TATACOMM": {
+            "instrument_token": 952577,
+            "tradingsymbol": "TATACOMM",
+            "name": "TATA COMMUNICATIONS",
+            "instrument_type": "EQ"
+      },
+      "TCS": {
+            "instrument_token": 2953217,
+            "tradingsymbol": "TCS",
+            "name": "TATA CONSULTANCY SERV LT",
+            "instrument_type": "EQ"
+      },
+      "TATAELXSI": {
+            "instrument_token": 873217,
+            "tradingsymbol": "TATAELXSI",
+            "name": "TATA ELXSI",
+            "instrument_type": "EQ"
+      },
+      "TATAMOTORS": {
+            "instrument_token": 884737,
+            "tradingsymbol": "TATAMOTORS",
+            "name": "TATA MOTORS",
+            "instrument_type": "EQ"
+      },
+      "TATAPOWER": {
+            "instrument_token": 877057,
+            "tradingsymbol": "TATAPOWER",
+            "name": "TATA POWER CO",
+            "instrument_type": "EQ"
+      },
+      "TATASTEEL": {
+            "instrument_token": 895745,
+            "tradingsymbol": "TATASTEEL",
+            "name": "TATA STEEL",
+            "instrument_type": "EQ"
+      },
+      "TECHM": {
+            "instrument_token": 3465729,
+            "tradingsymbol": "TECHM",
+            "name": "TECH MAHINDRA",
+            "instrument_type": "EQ"
+      },
+      "FEDERALBNK": {
+            "instrument_token": 261889,
+            "tradingsymbol": "FEDERALBNK",
+            "name": "FEDERAL BANK",
+            "instrument_type": "EQ"
+      },
+      "INDHOTEL": {
+            "instrument_token": 387073,
+            "tradingsymbol": "INDHOTEL",
+            "name": "THE INDIAN HOTELS CO.",
+            "instrument_type": "EQ"
+      },
+      "RAMCOCEM": {
+            "instrument_token": 523009,
+            "tradingsymbol": "RAMCOCEM",
+            "name": "THE RAMCO CEMENTS",
+            "instrument_type": "EQ"
+      },
+      "TITAN": {
+            "instrument_token": 897537,
+            "tradingsymbol": "TITAN",
+            "name": "TITAN COMPANY",
+            "instrument_type": "EQ"
+      },
+      "TORNTPHARM": {
+            "instrument_token": 900609,
+            "tradingsymbol": "TORNTPHARM",
+            "name": "TORRENT PHARMACEUTICALS L",
+            "instrument_type": "EQ"
+      },
+      "TRENT": {
+            "instrument_token": 502785,
+            "tradingsymbol": "TRENT",
+            "name": "TRENT",
+            "instrument_type": "EQ"
+      },
+      "TIINDIA": {
+            "instrument_token": 79873,
+            "tradingsymbol": "TIINDIA",
+            "name": "TUBE INVEST OF INDIA",
+            "instrument_type": "EQ"
+      },
+      "UPL": {
+            "instrument_token": 2889473,
+            "tradingsymbol": "UPL",
+            "name": "UPL",
+            "instrument_type": "EQ"
+      },
+      "ULTRACEMCO": {
+            "instrument_token": 2952193,
+            "tradingsymbol": "ULTRACEMCO",
+            "name": "ULTRATECH CEMENT",
+            "instrument_type": "EQ"
+      },
+      "UNIONBANK": {
+            "instrument_token": 2752769,
+            "tradingsymbol": "UNIONBANK",
+            "name": "UNION BANK OF INDIA",
+            "instrument_type": "EQ"
+      },
+      "UBL": {
+            "instrument_token": 4278529,
+            "tradingsymbol": "UBL",
+            "name": "UNITED BREWERIES",
+            "instrument_type": "EQ"
+      },
+      "UNITDSPR": {
+            "instrument_token": 2674433,
+            "tradingsymbol": "UNITDSPR",
+            "name": "UNITED SPIRITS",
+            "instrument_type": "EQ"
+      },
+      "VBL": {
+            "instrument_token": 4843777,
+            "tradingsymbol": "VBL",
+            "name": "VARUN BEVERAGES",
+            "instrument_type": "EQ"
+      },
+      "VEDL": {
+            "instrument_token": 784129,
+            "tradingsymbol": "VEDL",
+            "name": "VEDANTA",
+            "instrument_type": "EQ"
+      },
+      "IDEA": {
+            "instrument_token": 3677697,
+            "tradingsymbol": "IDEA",
+            "name": "VODAFONE IDEA",
+            "instrument_type": "EQ"
+      },
+      "VOLTAS": {
+            "instrument_token": 951809,
+            "tradingsymbol": "VOLTAS",
+            "name": "VOLTAS",
+            "instrument_type": "EQ"
+      },
+      "WIPRO": {
+            "instrument_token": 969473,
+            "tradingsymbol": "WIPRO",
+            "name": "WIPRO",
+            "instrument_type": "EQ"
+      },
+      "YESBANK": {
+            "instrument_token": 3050241,
+            "tradingsymbol": "YESBANK",
+            "name": "YES BANK",
+            "instrument_type": "EQ"
+      },
+      "ZOMATO": {
+            "instrument_token": 1304833,
+            "tradingsymbol": "ZOMATO",
+            "name": "ZOMATO",
+            "instrument_type": "EQ"
+      },
+      "ZYDUSLIFE": {
+            "instrument_token": 2029825,
+            "tradingsymbol": "ZYDUSLIFE",
+            "name": "ZYDUS LIFESCIENCES",
+            "instrument_type": "EQ"
+      }
+}
