@@ -6,24 +6,47 @@ from pprint import pprint
 import logging
 from kiteconnect import KiteTicker
 from common.shared import stock_token_obj_dict 
-import common.constants as constants
 from common.Stock import Stock
 from datetime import datetime
-from common.push_notification import telegram_notif
-import threading 
+import threading , time
+from multiprocessing.pool import ThreadPool
+from copy import deepcopy
+from common.helperFunctions import get_stock_objects_from_json
 
 logging.basicConfig(level=logging.INFO)
 
 TESTING = True
 
+stocks = {}
+
 kws = None
 
-ENC_TOKEN = "nImo9AHJms%2FilCpP2%2Fb22uUzDZjA%2BxNSiZI4WVsjQIflmHJ%2BRt%2FeMffx82xzRnj8U7Jd%2Fg2iXbYIN01RNKdwdQ05XDQoqe%2BxrBSVuE%2FM7iGmrkofXSbh7w%3D%3D"
+ENC_TOKEN = "8ssCI0NEWHD4fYN%2F53tr3Ti4nWyFCHB9IsV%2B66k9%2FRzv%2FVsjmFKP2gbiyu695dsYWjKtQKN8mJI7RBF49s8hqyt5UCeFQ4N9Nn6xtXLR3h4AaAiqqpbfTw%3D%3D&uid=1733077009401"
 USERNAME = "QR5450"
 
 initial_condition = threading.Condition()
+callback_count = 0
+if TESTING:
+    TESTING_DATA_COUNT = 10
+    MAX_LENGTH_OF_CALLBACK = 1
+    WAIT_TIME_SECONDS = 1
+else:
+    MAX_LENGTH_OF_CALLBACK = 100
+    WAIT_TIME_SECONDS = 10
+
+
 init_done = False
 # Initialise
+
+def monitor_zd_time_series_data(stock: Stock):
+    logging.debug(f"Monitoring {stock.stockName}")
+
+    if not stock.zd_data["data_count"] >= MAX_LENGTH_OF_CALLBACK:
+        logging.info(f" {stock.stockName} did not have enough data. Data collected = {stock.zd_data["data_count"]}")
+    
+    with stock.zd_data_mutux:
+        stock_data = deepcopy(stock.zd_data)
+
 
 class Monitor_Thread(threading.Thread): 
     def __init__(self, wait_time): 
@@ -36,11 +59,20 @@ class Monitor_Thread(threading.Thread):
             while not init_done:
                 logging.info("Monitor thread is waiting...")
                 initial_condition.wait()
+        
+        logging.info("Monitor thread has started...")
 
+        event = threading.Event()
+        thread_pool = ThreadPool(processes=10)
+        while not event.wait(WAIT_TIME_SECONDS):
+            for result in thread_pool.map(monitor_zd_time_series_data, list(stock_token_obj_dict.values())):
+                print(result)
 
 
 def on_ticks(ws, ticks):
     # Callback to receive ticks.
+    global callback_count
+    print(ticks)
     for tick in ticks:
         data = {
             "ltp" : tick["last_price"],
@@ -48,15 +80,43 @@ def on_ticks(ws, ticks):
             'buy_quantity' : tick["total_buy_quantity"],
             'sell_quantity' : tick["total_sell_quantity"]
         }
-        stock_token_obj_dict[tick["instrument_token"]].zd_data["series_data"].append(data)
-        stock_token_obj_dict[tick["instrument_token"]].zd_data["last_updated_time_stamp"].append(datetime.now().replace(microsecond=0))
-        stock_token_obj_dict[tick["instrument_token"]].zd_data["open"] = tick["ohlc"]["open"]
-        stock_token_obj_dict[tick["instrument_token"]].zd_data["high"] = tick["ohlc"]["high"]
-        stock_token_obj_dict[tick["instrument_token"]].zd_data["low"] = tick["ohlc"]["low"]
-        stock_token_obj_dict[tick["instrument_token"]].zd_data["change"] = tick["change"]
-        print( stock_token_obj_dict[tick["instrument_token"]].zd_data)
+        if TESTING:
+            for _ in range(TESTING_DATA_COUNT):
+                with stock_token_obj_dict[tick["instrument_token"]].zd_data_mutux:
+                    stock_token_obj_dict[tick["instrument_token"]].zd_data["series_data"].append(data)
+                    stock_token_obj_dict[tick["instrument_token"]].zd_data["last_updated_time_stamp"].append(datetime.now().replace(microsecond=0))
+                    stock_token_obj_dict[tick["instrument_token"]].zd_data["open"] = tick["ohlc"]["open"]
+                    stock_token_obj_dict[tick["instrument_token"]].zd_data["high"] = tick["ohlc"]["high"]
+                    stock_token_obj_dict[tick["instrument_token"]].zd_data["low"] = tick["ohlc"]["low"]
+                    stock_token_obj_dict[tick["instrument_token"]].zd_data["change"] = tick["change"]
+                    stock_token_obj_dict[tick["instrument_token"]].zd_data["data_count"] += 1
+
+                data["ltp"] += 1
+                data["buy_quantity"] += 1
+                data["sell_quantity"] += 1
+                data["volume"] += 1 
+
+                time.sleep(1)
+        else:
+            with stock_token_obj_dict[tick["instrument_token"]].zd_data_mutux:
+                stock_token_obj_dict[tick["instrument_token"]].zd_data["series_data"].append(data)
+                stock_token_obj_dict[tick["instrument_token"]].zd_data["last_updated_time_stamp"].append(datetime.now().replace(microsecond=0))
+                stock_token_obj_dict[tick["instrument_token"]].zd_data["open"] = tick["ohlc"]["open"]
+                stock_token_obj_dict[tick["instrument_token"]].zd_data["high"] = tick["ohlc"]["high"]
+                stock_token_obj_dict[tick["instrument_token"]].zd_data["low"] = tick["ohlc"]["low"]
+                stock_token_obj_dict[tick["instrument_token"]].zd_data["change"] = tick["change"]
+                stock_token_obj_dict[tick["instrument_token"]].zd_data["data_count"] += 1
+            
+        # print( stock_token_obj_dict[tick["instrument_token"]].zd_data)
+    callback_count += 1
+
+    if  callback_count == MAX_LENGTH_OF_CALLBACK:
+        with initial_condition:
+            global init_done
+            init_done = True
+            logging.info("Collected {} of data. Notifying the monitor thread..".format(callback_count))
+            initial_condition.notify()
         
-    # print(type(ticks))
         
 
 def on_connect(ws, response):
@@ -65,13 +125,8 @@ def on_connect(ws, response):
     logging.info("Entering On connect callback")
     instrument_tokens = list(stock_token_obj_dict.keys())
 
-    if TESTING:
-        #single
-        ws.subscribe([instrument_tokens[0],instrument_tokens[1]])
-        ws.set_mode(ws.MODE_FULL, [instrument_tokens[0],instrument_tokens[1]])
-    else:
-        ws.subscribe(instrument_tokens)
-        ws.set_mode(ws.MODE_FULL, instrument_tokens)
+    ws.subscribe(instrument_tokens)
+    ws.set_mode(ws.MODE_FULL, instrument_tokens)
 
 def on_close(ws, code, reason):
     # On connection close stop the event loop.
@@ -106,10 +161,22 @@ def zerodha_init():
     logging.info("Zerodha Init done")
 
 if __name__ == "__main__":
+    
+    stocks = get_stock_objects_from_json()
 
-    for stock in constants.stocks:
-        ticker = Stock(constants.stocks[stock]["name"], constants.stocks[stock]["tradingsymbol"])
-        stock_token_obj_dict[constants.stocks[stock]["instrument_token"]] = ticker
+    if not TESTING:
+        for stock in stocks:
+            ticker = Stock(stocks[stock]["name"], stocks[stock]["tradingsymbol"])
+            stock_token_obj_dict[stocks[stock]["instrument_token"]] = ticker
+    else:
+        count = 0
+        for stock in stocks:
+            ticker = Stock(stocks[stock]["name"], stocks[stock]["tradingsymbol"])
+            stock_token_obj_dict[stocks[stock]["instrument_token"]] = ticker
+            count += 1
+
+            if count == 2:
+                break
     zerodha_init()
     # kws.connect(threaded=True)
     kws.connect()

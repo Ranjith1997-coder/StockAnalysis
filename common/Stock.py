@@ -8,10 +8,11 @@ import yfinance as yf
 from fno.OptionOpstraCollection import getIVChartData
 import pandas as pd
 from fno.OptionOpstraCollection import get_FII_DII_Data
-import pandas_ta as ta
 from common.constants import mode,Mode
 from common.helperFunctions import percentageChange
 import pandas as pd
+from threading import Lock
+import numpy as np
 
 pd.options.mode.chained_assignment = None
 
@@ -26,6 +27,7 @@ class Stock:
         self.priceData = pd.DataFrame()
         self.ivData = None
         self.last_trend_timestamp = None
+        self.zd_data_mutux = Lock()
         # {
         #     ltp: last traded price
         #     volume: volume 
@@ -78,36 +80,56 @@ class Stock:
                         }
 
     def compute_rsi(self, rsi_lookback = 14):
-        closeSeries = self.priceData["Close"]
-        ret = closeSeries.diff()
-        up = []
-        down = []
-        for i in range(len(ret)):
-            if ret.iloc[i] < 0:
-                up.append(0)
-                down.append(ret.iloc[i])
-            else:
-                up.append(ret.iloc[i])
-                down.append(0)
-        up_series = pd.Series(up)
-        down_series = pd.Series(down).abs()
-        up_ewm = up_series.ewm(com=rsi_lookback - 1, adjust=False).mean()
-        down_ewm = down_series.ewm(com=rsi_lookback - 1, adjust=False).mean()
-        rs = up_ewm / down_ewm
-        rsi = 100 - (100 / (1 + rs))
-        rsi_df = pd.DataFrame(rsi).rename(columns = {0:'rsi'}).set_index(closeSeries.index)
-        rsi_df = rsi_df.dropna()
-        self.priceData["rsi"] = rsi_df[3:]
-        return rsi_df[3:]
+        # closeSeries = self.priceData["Close"]
+        # ret = closeSeries.diff()
+        # up = []
+        # down = []
+        # for i in (range( len(ret))):
+        #     if ret.iloc[i].item() < 0:
+        #         up.append(0)
+        #         down.append(ret.iloc[i])
+        #     else:
+        #         up.append(ret.iloc[i])
+        #         down.append(0)
+        # up_series = pd.Series(up)
+        # down_series = pd.Series(down).abs()
+        # up_ewm = up_series.ewm(com=rsi_lookback - 1, adjust=False).mean()
+        # down_ewm = down_series.ewm(com=rsi_lookback - 1, adjust=False).mean()
+        # rs = up_ewm / down_ewm
+        # rsi = 100 - (100 / (1 + rs))
+        # rsi_df = pd.DataFrame(rsi).rename(columns = {0:'rsi'}).set_index(closeSeries.index)
+        # rsi_df = rsi_df.dropna()
+        # self.priceData["rsi"] = rsi_df[3:]
+        # return rsi_df[3:]
+        change = self.priceData['Close'].diff()
+        up_series = change.mask(change < 0, 0.0)
+        down_series = -change.mask(change > 0, -0.0)
 
-    def bollinger_band_data(self, window = 20):
+        #@numba.jit
+        def rma(x, n):
+            """Running moving average"""
+            a = np.full_like(x, np.nan)
+            a[n] = x[1:n+1].mean()
+            for i in range(n+1, len(x)):
+                a[i] = (a[i-1] * (n - 1) + x[i]) / n
+            return a
+
+        avg_gain = rma(up_series.to_numpy(), 14)
+        avg_loss = rma(down_series.to_numpy(), 14)
+
+        rs = avg_gain / avg_loss
+        self.priceData['rsi'] = 100 - (100 / (1 + rs))
+        return self.priceData['rsi']
+
+    def compute_bollinger_band(self, window = 20):
         sma = self.priceData['Close'].rolling(window=window).mean()
         std = self.priceData['Close'].rolling(window=window).std()
         upper_bb = sma + (std * 2)
         lower_bb = sma - (std * 2)
         self.priceData["BB_UPPER_BAND"] = upper_bb
         self.priceData["BB_LOWER_BAND"] = lower_bb
-        return (upper_bb, lower_bb)
+        self.priceData["BB_SMA_20"] = sma
+        return (sma, upper_bb, lower_bb)
     
     def compute_sma_of_volume(self, window):
         if not self.priceData.empty :
@@ -123,7 +145,6 @@ class Stock:
     
     def compute_candle_stick_pattern(self):
         if mode.name == Mode.INTRADAY.name:
-            candle_stick = self.priceData.ta.cdl_pattern(name= ["3whitesoldiers","3blackcrows"])
             self.compute_triple_increase_decrease()
             self.compute_marubasu_candle_stick()
             self.compute_double_increase_decrease()
@@ -131,9 +152,6 @@ class Stock:
             self.compute_triple_increase_decrease()
             self.compute_marubasu_candle_stick()
             self.compute_double_increase_decrease()
-            candle_stick = self.priceData.ta.cdl_pattern(name= ["3whitesoldiers","3blackcrows", "harami", "engulfing"])
-            
-        self.priceData = pd.concat([self.priceData , candle_stick], axis= 1)
 
     def compute_triple_increase_decrease(self):
         length = self.priceData.shape[0]
@@ -144,18 +162,18 @@ class Stock:
             prev_price = self.priceData.iloc[index-1]
             prev_minus_one_price = self.priceData.iloc[index-2]
 
-            if prev_minus_one_price["Open"] < prev_minus_one_price["Close"]\
-                and prev_price["Open"] < prev_price["Close"]\
-                    and curr_price["Open"] < curr_price["Close"]\
-                    and curr_price["Close"] > prev_price["Close"] \
-                            and prev_price["Close"] > prev_minus_one_price["Close"]:
-                series.iloc[index] = ((curr_price["Close"] - prev_minus_one_price["Open"])/prev_minus_one_price["Open"]) * 100
-            elif prev_minus_one_price["Open"] > prev_minus_one_price["Close"]\
-                and prev_price["Open"] > prev_price["Close"]\
-                    and curr_price["Open"] > curr_price["Close"]\
-                        and curr_price["Close"] < prev_price["Close"] \
-                        and prev_price["Close"] < prev_minus_one_price["Close"]:
-                series.iloc[index] =  ((curr_price["Close"] - prev_minus_one_price["Open"])/prev_minus_one_price["Open"]) * 100
+            if prev_minus_one_price["Open"].item() < prev_minus_one_price["Close"].item()\
+                and prev_price["Open"].item() < prev_price["Close"].item()\
+                    and curr_price["Open"].item() < curr_price["Close"].item()\
+                    and curr_price["Close"].item() > prev_price["Close"].item() \
+                            and prev_price["Close"].item() > prev_minus_one_price["Close"].item():
+                series.iloc[index] = ((curr_price["Close"].item() - prev_minus_one_price["Open"].item())/prev_minus_one_price["Open"].item()) * 100
+            elif prev_minus_one_price["Open"].item() > prev_minus_one_price["Close"].item()\
+                and prev_price["Open"].item() > prev_price["Close"].item()\
+                    and curr_price["Open"].item() > curr_price["Close"].item()\
+                        and curr_price["Close"].item() < prev_price["Close"].item() \
+                        and prev_price["Close"].item() < prev_minus_one_price["Close"].item():
+                series.iloc[index] =  ((curr_price["Close"].item() - prev_minus_one_price["Open"].item())/prev_minus_one_price["Open"].item()) * 100
             else:
                 series.iloc[index] = 0.0
         self.priceData["3_CONT_INC_OR_DEC"] = series
@@ -168,14 +186,14 @@ class Stock:
             curr_price = self.priceData.iloc[index]
             prev_price = self.priceData.iloc[index-1]
 
-            if prev_price["Open"] < prev_price["Close"]\
-                    and curr_price["Open"] < curr_price["Close"]\
-                    and curr_price["Close"] > prev_price["Close"]:
-                series.iloc[index] = ((curr_price["Close"] - prev_price["Open"])/prev_price["Open"]) * 100
-            elif prev_price["Open"] > prev_price["Close"]\
-                    and curr_price["Open"] > curr_price["Close"]\
-                        and curr_price["Close"] < prev_price["Close"] :
-                series.iloc[index] =  ((curr_price["Close"] - prev_price["Open"])/prev_price["Open"]) * 100
+            if prev_price["Open"].item() < prev_price["Close"].item()\
+                    and curr_price["Open"].item() < curr_price["Close"].item()\
+                    and curr_price["Close"].item() > prev_price["Close"].item():
+                series.iloc[index] = ((curr_price["Close"].item() - prev_price["Open"].item())/prev_price["Open"].item()) * 100
+            elif prev_price["Open"].item() > prev_price["Close"].item()\
+                    and curr_price["Open"].item() > curr_price["Close"].item()\
+                        and curr_price["Close"].item() < prev_price["Close"].item() :
+                series.iloc[index] =  ((curr_price["Close"].item() - prev_price["Open"].item())/prev_price["Open"].item()) * 100
             else:
                 series.iloc[index] = 0.0
         self.priceData["2_CONT_INC_OR_DEC"] = series
@@ -185,10 +203,10 @@ class Stock:
 
         series = pd.Series(index = self.priceData.index)
         for index in range(0,length):
-            closePrice = self.priceData.iloc[index]['Close']
-            openPrice = self.priceData.iloc[index]['Open']
-            highPrice = self.priceData.iloc[index]['High']
-            lowPrice = self.priceData.iloc[index]['Low']
+            closePrice = self.priceData.iloc[index]['Close'].item()
+            openPrice = self.priceData.iloc[index]['Open'].item()
+            highPrice = self.priceData.iloc[index]['High'].item()
+            lowPrice = self.priceData.iloc[index]['Low'].item()
 
             if (((openPrice == lowPrice) or (percentageChange(openPrice, lowPrice) <= candleWickPercentage)) \
                 and ((highPrice == closePrice) or (percentageChange(highPrice, closePrice) <= candleWickPercentage))):

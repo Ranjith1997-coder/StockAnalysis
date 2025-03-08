@@ -7,10 +7,8 @@ from common.helperFunctions import percentageChange
 
 if mode.name == Mode.INTRADAY.name:
     VOLUME_PRICE_THRESHOLD = 0.5   
-    MARUBASU_THRESHOLD = 1.5
 else:
-    THREE_CONT_INC_OR_DEC_THRESHOLD = 5  
-    MARUBASU_THRESHOLD = 3 
+    VOLUME_PRICE_THRESHOLD = 5  
 
 
 TIMES_VOLUME = 10
