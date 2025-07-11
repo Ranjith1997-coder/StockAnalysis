@@ -67,6 +67,10 @@ def generate_notif_message(stock):
         message += "NEUTRAL : \n"
         if "atr_rank" in neutral_trend.keys():
             message += """  atr_rank : {:.2f} \n""".format(neutral_trend["atr_rank"]["value"])
+        if "52-week-high" in neutral_trend.keys():
+            message += """  Price at 52 WEEK HIGH \n"""
+        if "52-week-low" in neutral_trend.keys():
+            message += """  Price at 52 WEEK LOW \n"""
 
     return message
 
@@ -75,95 +79,106 @@ def monitor(stock: Stock):
         stock_name = ticker.stockName
         if ticker.is_price_data_empty():
             return (1, "{} data not available".format(stock_name))
-        ticker.compute_sma_of_volume(VOL_SMA_WIN_SIZE)
-        ticker.compute_rsi()
-        # ticker.compute_atr_rank()
-        ticker.reset_analysis()
-        ticker.compute_bollinger_band()
-        ticker.compute_candle_stick_pattern()
-        if mode.name == Mode.INTRADAY.name:
-            curr_data = ticker.priceData.iloc[-2]
-            prev_data = ticker.priceData.iloc[-3]
-        else:
-            curr_data = ticker.priceData.iloc[-1]
-            prev_data = ticker.priceData.iloc[-2]
+        
+        try: 
+            ticker.compute_sma_of_volume(VOL_SMA_WIN_SIZE)
+            ticker.compute_rsi()
+            # ticker.compute_atr_rank()
+            ticker.reset_analysis()
+            ticker.compute_bollinger_band()
+            ticker.compute_candle_stick_pattern()
+            if mode.name == Mode.INTRADAY.name:
+                curr_data = ticker.priceData.iloc[-2]
+                prev_data = ticker.priceData.iloc[-3]
+            else:
+                curr_data = ticker.priceData.iloc[-1]
+                prev_data = ticker.priceData.iloc[-2]
 
-        trend_found = False
-    
-    # Volume and price increase/decrease indicator
-        if check_for_increase_in_volume_and_price(curr_data['Volume'].item(), 
-                                                prev_data["Volume"].item(),
-                                                curr_data['Vol_SMA_20'].item(),
-                                                curr_data['Close'].item(),
-                                                prev_data['Close'].item()):
+            trend_found = False
+        
+        # Volume and price increase/decrease indicator
+            if check_for_increase_in_volume_and_price(curr_data['Volume'].item(), 
+                                                    prev_data["Volume"].item(),
+                                                    curr_data['Vol_SMA_20'].item(),
+                                                    curr_data['Close'].item(),
+                                                    prev_data['Close'].item()):
+                
+                vol_rate = ((curr_data['Volume'].item() - prev_data["Volume"].item())/prev_data["Volume"].item()) * 100
+                price_inc = ((curr_data['Close'].item() - prev_data["Close"].item())/prev_data["Close"].item()) * 100
+                ticker.analysis["BULLISH"]["Volume"] = {"Volume_rate_percent" : vol_rate, 
+                                                    "Price_inc_percent": price_inc}
+                trend_found = True
+            elif check_for_increase_in_volume_and_decrease_in_price(curr_data['Volume'].item(), 
+                                                    prev_data["Volume"].item(),
+                                                    curr_data['Vol_SMA_20'].item(),
+                                                    curr_data['Close'].item(),
+                                                    prev_data['Close'].item()):
+                vol_rate = ((curr_data['Volume'].item() - prev_data["Volume"].item())/prev_data["Volume"].item()) * 100
+                price_inc = ((curr_data['Close'].item() - prev_data["Close"].item())/prev_data["Close"].item()) * 100
+                ticker.analysis["BEARISH"]["Volume"] = { "Volume_rate_percent" : vol_rate, 
+                                                        "Price_dec_percent": price_inc}
+                trend_found = True
+
+        # RSI Indicator
+            if is_rsi_below_threshold(curr_data["rsi"].item()):
+                ticker.analysis["BEARISH"]["rsi"] = {"value" : curr_data["rsi"].item()}
+                trend_found = True
+            elif is_rsi_above_threshold(curr_data["rsi"].item()):
+                ticker.analysis["BULLISH"]["rsi"] = {"value" : curr_data["rsi"].item()}
+                trend_found = True
+
+        # #ATR Indicator 
+        #     if is_atr_rank_above_threshold(curr_data["atr_rank"].item()):
+        #         ticker.analysis["NEUTRAL"]["atr_rank"] = {"value" : curr_data["atr_rank"].item()}
+        #         trend_found = True
+        
+        # Candle Stick Pattern.
+            pattern_found, pattern = is_bullish_candle_stick_pattern(curr_data)
+
+            if pattern_found:
+                ticker.analysis["BULLISH"]["Candle_stick_pattern"] = {"value" : pattern}
+                trend_found = True
             
-            vol_rate = ((curr_data['Volume'].item() - prev_data["Volume"].item())/prev_data["Volume"].item()) * 100
-            price_inc = ((curr_data['Close'].item() - prev_data["Close"].item())/prev_data["Close"].item()) * 100
-            ticker.analysis["BULLISH"]["Volume"] = {"Volume_rate_percent" : vol_rate, 
-                                                   "Price_inc_percent": price_inc}
-            trend_found = True
-        elif check_for_increase_in_volume_and_decrease_in_price(curr_data['Volume'].item(), 
-                                                prev_data["Volume"].item(),
-                                                curr_data['Vol_SMA_20'].item(),
-                                                curr_data['Close'].item(),
-                                                prev_data['Close'].item()):
-            vol_rate = ((curr_data['Volume'].item() - prev_data["Volume"].item())/prev_data["Volume"].item()) * 100
-            price_inc = ((curr_data['Close'].item() - prev_data["Close"].item())/prev_data["Close"].item()) * 100
-            ticker.analysis["BEARISH"]["Volume"] = { "Volume_rate_percent" : vol_rate, 
-                                                    "Price_dec_percent": price_inc}
-            trend_found = True
+            pattern_found, pattern = is_bearish_candle_stick_pattern(curr_data)
 
-    # RSI Indicator
-        if is_rsi_below_threshold(curr_data["rsi"].item()):
-            ticker.analysis["BEARISH"]["rsi"] = {"value" : curr_data["rsi"].item()}
-            trend_found = True
-        elif is_rsi_above_threshold(curr_data["rsi"].item()):
-            ticker.analysis["BULLISH"]["rsi"] = {"value" : curr_data["rsi"].item()}
-            trend_found = True
-
-    # #ATR Indicator 
-    #     if is_atr_rank_above_threshold(curr_data["atr_rank"].item()):
-    #         ticker.analysis["NEUTRAL"]["atr_rank"] = {"value" : curr_data["atr_rank"].item()}
-    #         trend_found = True
-    
-    # Candle Stick Pattern.
-        pattern_found, pattern = is_bullish_candle_stick_pattern(curr_data)
-
-        if pattern_found:
-            ticker.analysis["BULLISH"]["Candle_stick_pattern"] = {"value" : pattern}
-            trend_found = True
+            if pattern_found:
+                ticker.analysis["BEARISH"]["Candle_stick_pattern"]  = {"value" : pattern}
+                trend_found = True
         
-        pattern_found, pattern = is_bearish_candle_stick_pattern(curr_data)
+        # Bollinger band.
+            if is_price_at_upper_BB(curr_data['Close'].item(), curr_data['BB_UPPER_BAND'].item()):
+                ticker.analysis["BEARISH"]["BB"]  = { "close" : curr_data['Close'].item(),
+                                                    "upper_band" : curr_data['BB_UPPER_BAND'].item()}
+            elif is_price_at_lower_BB(curr_data['Close'].item(), curr_data['BB_LOWER_BAND'].item()):
+                ticker.analysis["BULLISH"]["BB"]  = { "close" : curr_data['Close'].item(),
+                                                    "lower_band" : curr_data['BB_LOWER_BAND'].item()}
+        
+        # 52 week status 
+            if mode.name == Mode.POSITIONAL.name:
+                status = ticker.check_52_week_status()
+                if status == 1:
+                    ticker.analysis["NEUTRAL"]["52-week-high"] = True
+                    trend_found = True
+                elif status == -1:
+                    ticker.analysis["NEUTRAL"]["52-week-low"] = True
+                    trend_found = True
+            
+            if trend_found:
+                ticker.analysis["Timestamp"] = curr_data.name
+                message = generate_notif_message(ticker)
+                telegram_notif(message)
+                return (0, trend_found, message)   
+            else:
+                return (0, trend_found, None)
+        except Exception as e : 
+            logging.error("Error occured while monitoring {}. \n Exception : {}".format(ticker.stockName, e))
+        
 
-        if pattern_found:
-            ticker.analysis["BEARISH"]["Candle_stick_pattern"]  = {"value" : pattern}
-            trend_found = True
-    
-    # Bollinger band.
-        if is_price_at_upper_BB(curr_data['Close'].item(), curr_data['BB_UPPER_BAND'].item()):
-            ticker.analysis["BEARISH"]["BB"]  = { "close" : curr_data['Close'].item(),
-                                                "upper_band" : curr_data['BB_UPPER_BAND'].item()}
-        elif is_price_at_lower_BB(curr_data['Close'].item(), curr_data['BB_LOWER_BAND'].item()):
-            ticker.analysis["BULLISH"]["BB"]  = { "close" : curr_data['Close'].item(),
-                                                "lower_band" : curr_data['BB_LOWER_BAND'].item()}
-
-        
-        if trend_found:
-            ticker.analysis["Timestamp"] = curr_data.name
-            message = generate_notif_message(ticker)
-            telegram_notif(message)
-            return (0, trend_found, message)   
-        else:
-            return (0, trend_found, None)
-        
-        
 def create_stock_objects():
     for stock in stocks:
         ticker = Stock(stocks[stock]["name"], stocks[stock]["tradingsymbol"])
         stock_token_obj_dict[stocks[stock]["instrument_token"]] = ticker
         stocks_list.append(stocks[stock]["tradingsymbol"])
-
-
 
 def init():
     global thread_pool
@@ -194,10 +209,10 @@ if __name__ =="__main__":
             telegram_notif("*********** Intraday Analysis ***********")
 
             while(is_in_time_period):
-                logging.info(time.strftime("%H:%M:%S", time.localtime()))
+                logging.info("current iteration time : {}".format(datetime.now()))
 
                 for stock in stock_token_obj_dict:
-                    stock_token_obj_dict[stock].get_stock_price_data('5d','5m')
+                    stock_token_obj_dict[stock].get_stock_price_data('1d','5m')
                 
                 for result in thread_pool.map(monitor, list(stock_token_obj_dict.values())):
                     if result[0]:
@@ -211,7 +226,7 @@ if __name__ =="__main__":
 
                 sleeptime = (SLEEP_TIME) - (datetime.now().second + ((datetime.now().minute % 5) * 60))
                 logging.info("sleeping for {} sec".format(sleeptime))
-                time.sleep(sleeptime)
+                sleep(sleeptime)
 
                 is_in_time_period = isNowInTimePeriod(time(9,15), time(15,30), datetime.now().time())
             
@@ -234,7 +249,7 @@ if __name__ =="__main__":
                 logging.info("EOD analysis Started")
                 telegram_notif("*********** EOD Analysis ***********")
                 for stock in stock_token_obj_dict:
-                    stock_token_obj_dict[stock].get_stock_price_data('1y','1d')
+                    stock_token_obj_dict[stock].get_stock_price_data('2y','1d')
             
                 for result in thread_pool.map(monitor, list(stock_token_obj_dict.values())):
                     if result[0]:
@@ -251,47 +266,6 @@ if __name__ =="__main__":
         
     logging.info("End of day")
 
-
-    # if mode.name == Mode.INTRADAY.name:
-    #     sleeptime = (SLEEP_TIME) - (datetime.now().second + ((datetime.now().minute % 5) * 60))
-    #     print("sleeping for {} sec".format(sleeptime))
-    #     time.sleep(sleeptime)
-
-    #     while True:
-    #         print(time.strftime("%H:%M:%S", time.localtime()))
-
-    #         # bulk_data = yf.download(stocks_list, period='2d', interval='1m')
-
-    #         for stock in stock_token_obj_dict:
-    #             stock_token_obj_dict[stock].get_stock_price_data('5d','5m')
-            
-    #         for result in thread_pool.map(monitor, list(stock_token_obj_dict.values())):
-    #             if result[0]:
-    #                 print("Error : {}".format(result[1]))
-    #             else:
-    #                 if result[1]:
-    #                     print(result[2])
-            
-    #         for stock in stock_token_obj_dict:
-    #             stock_token_obj_dict[stock].reset_price_data()
-
-    #         sleeptime = (SLEEP_TIME) - (datetime.now().second + ((datetime.now().minute % 5) * 60))
-    #         print("sleeping for {} sec".format(sleeptime))
-    #         time.sleep(sleeptime)
-    # else :
-
-    #     for stock in stock_token_obj_dict:
-    #         stock_token_obj_dict[stock].get_stock_price_data('1y','1d')
-        
-    #     for result in thread_pool.map(monitor, list(stock_token_obj_dict.values())):
-    #         if result[0]:
-    #             print("Error : {}".format(result[1]))
-    #         else:
-    #             if result[1]:
-    #                 print(result[2])
-        
-    #     for stock in stock_token_obj_dict:
-    #         stock_token_obj_dict[stock].reset_price_data()
 
     
 

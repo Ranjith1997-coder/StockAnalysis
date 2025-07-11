@@ -13,6 +13,7 @@ from common.helperFunctions import percentageChange
 import pandas as pd
 from threading import Lock
 import numpy as np
+import pdb
 
 pd.options.mode.chained_assignment = None
 
@@ -80,27 +81,6 @@ class Stock:
                         }
 
     def compute_rsi(self, rsi_lookback = 14):
-        # closeSeries = self.priceData["Close"]
-        # ret = closeSeries.diff()
-        # up = []
-        # down = []
-        # for i in (range( len(ret))):
-        #     if ret.iloc[i].item() < 0:
-        #         up.append(0)
-        #         down.append(ret.iloc[i])
-        #     else:
-        #         up.append(ret.iloc[i])
-        #         down.append(0)
-        # up_series = pd.Series(up)
-        # down_series = pd.Series(down).abs()
-        # up_ewm = up_series.ewm(com=rsi_lookback - 1, adjust=False).mean()
-        # down_ewm = down_series.ewm(com=rsi_lookback - 1, adjust=False).mean()
-        # rs = up_ewm / down_ewm
-        # rsi = 100 - (100 / (1 + rs))
-        # rsi_df = pd.DataFrame(rsi).rename(columns = {0:'rsi'}).set_index(closeSeries.index)
-        # rsi_df = rsi_df.dropna()
-        # self.priceData["rsi"] = rsi_df[3:]
-        # return rsi_df[3:]
         change = self.priceData['Close'].diff()
         up_series = change.mask(change < 0, 0.0)
         down_series = -change.mask(change > 0, -0.0)
@@ -109,6 +89,7 @@ class Stock:
         def rma(x, n):
             """Running moving average"""
             a = np.full_like(x, np.nan)
+            # pdb.set_trace()
             a[n] = x[1:n+1].mean()
             for i in range(n+1, len(x)):
                 a[i] = (a[i-1] * (n - 1) + x[i]) / n
@@ -217,6 +198,21 @@ class Stock:
             else:
                 series.iloc[index] = 0.0
         self.priceData["MARUBASU"] = series
+    
+    def check_52_week_status(self):
+        close_df = self.priceData[['Close']]
+        close_df['rolling_max_prev'] = close_df['Close'].shift(1).rolling(window=252).max()
+        close_df['rolling_min_prev'] = close_df['Close'].shift(1).rolling(window=252).min()
+
+        is_52_week_high = (close_df['Close'].iloc[-1] > close_df['rolling_max_prev'].iloc[-1])
+        is_52_week_low = (close_df['Close'].iloc[-1] < close_df['rolling_min_prev'].iloc[-1])
+
+        if (is_52_week_high.item()):
+            return 1
+        elif (is_52_week_low.item()):
+            return -1
+        else:
+            return 0
 
 
     def removeStockData(self):

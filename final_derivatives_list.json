@@ -455,12 +455,6 @@
             "name": "GAIL (INDIA)",
             "instrument_type": "EQ"
       },
-      "GMRINFRA": {
-            "instrument_token": 3463169,
-            "tradingsymbol": "GMRINFRA",
-            "name": "GMR AIRPORTS INFRA",
-            "instrument_type": "EQ"
-      },
       "GLENMARK": {
             "instrument_token": 1895937,
             "tradingsymbol": "GLENMARK",
@@ -1325,10 +1319,10 @@
             "name": "YES BANK",
             "instrument_type": "EQ"
       },
-      "ZOMATO": {
+      "ETERNAL": {
             "instrument_token": 1304833,
-            "tradingsymbol": "ZOMATO",
-            "name": "ZOMATO",
+            "tradingsymbol": "ETERNAL",
+            "name": "ETERNAL",
             "instrument_type": "EQ"
       },
       "ZYDUSLIFE": {
@@ -1336,5 +1330,12 @@
             "tradingsymbol": "ZYDUSLIFE",
             "name": "ZYDUS LIFESCIENCES",
             "instrument_type": "EQ"
+      }, 
+      "SOLARINDS": {
+            "instrument_token": 3412993,
+            "tradingsymbol": "SOLARINDS",
+            "name": "Solar Industries India Limited",
+            "instrument_type": "EQ"
       }
+
 }
