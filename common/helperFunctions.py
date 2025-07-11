@@ -2,7 +2,7 @@ import datetime as dt
 import pandas as pd
 import json
 
-STOCKS_JSON_FILE = "/Users/rkumark2/Personal_project/StockAnalysis/final_derivatives_list.json"
+STOCKS_JSON_FILE = "/Users/rkumark/Ranjith/StockAnalysis/final_derivatives_list.json"
 
 def percentageChange(x1, x2):
     return ((x1- x2)/x2)* 100

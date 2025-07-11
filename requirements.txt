@@ -7,11 +7,12 @@ autobahn==19.11.2
 Automat==22.10.0
 beautifulsoup4==4.13.3
 certifi==2025.1.31
-cffi==1.16.0
+cffi==1.17.1
 charset-normalizer==3.4.1
 comm==0.2.2
 constantly==23.10.4
 cryptography==43.0.0
+curl_cffi==0.10.0
 debugpy==1.8.1
 decorator==5.1.1
 executing==2.0.1
@@ -64,7 +65,7 @@ Pygments==2.18.0
 pyOpenSSL==24.2.1
 python-dateutil==2.9.0.post0
 pytz==2025.1
-pyzmq==26.0.3
+pyzmq==26.4.0
 requests==2.32.3
 rich==13.9.2
 service-identity==24.1.0
@@ -72,10 +73,8 @@ setuptools==70.1.0
 six==1.17.0
 soupsieve==2.6
 stack-data==0.6.3
-TA-Lib==0.4.31
 tensorboard==2.17.1
 tensorboard-data-server==0.7.2
-tensorflow==2.17.0
 termcolor==2.5.0
 tornado==6.4.1
 traitlets==5.14.3
@@ -86,8 +85,9 @@ tzdata==2025.1
 urllib3==2.3.0
 wcwidth==0.2.13
 webencodings==0.5.1
+websockets==15.0.1
 Werkzeug==3.0.4
 wheel==0.44.0
 wrapt==1.16.0
-yfinance==0.2.54
+yfinance==0.2.61
 zope.interface==6.4.post2
