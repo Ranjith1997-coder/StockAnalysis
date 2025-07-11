@@ -1,8 +1,7 @@
 import datetime as dt  
 import pandas as pd
 import json
-
-STOCKS_JSON_FILE = "/Users/rkumark/Ranjith/StockAnalysis/final_derivatives_list.json"
+from os import getcwd
 
 def percentageChange(x1, x2):
     return ((x1- x2)/x2)* 100
@@ -11,6 +10,7 @@ def zd_rate_of_change(series: pd.Series, period= 10):
     return percentageChange(series.iloc[-1], series.iloc[-1*period])
 
 def get_stock_objects_from_json():
+    STOCKS_JSON_FILE = getcwd() + "/final_derivatives_list.json"
     with open(STOCKS_JSON_FILE, "r") as file:
         stocks = json.load(file)
         return stocks
