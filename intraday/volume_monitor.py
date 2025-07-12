@@ -10,8 +10,10 @@ if mode.name == Mode.INTRADAY.name:
 else:
     VOLUME_PRICE_THRESHOLD = 5  
 
-
-TIMES_VOLUME = 10
+if mode.name == Mode.INTRADAY.name:
+    TIMES_VOLUME = 10
+else:
+    TIMES_VOLUME = 3
 
 def check_for_increase_in_volume_and_price(curr_vol, prev_vol, curr_vol_sma, curr_price, prev_price):
 

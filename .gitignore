@@ -2,3 +2,8 @@
 /.venv
 /__pycache__
 /.vscode
+/intraday/__pycache__
+/nse/__pycache__
+/common/__pycache__
+/fno/__pycache__
+/analyser/__pycache__
