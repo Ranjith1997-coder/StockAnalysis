@@ -199,6 +199,7 @@ if __name__ =="__main__":
     is_production = False
 
     if os.getenv(ENV_PRODUCTION, "False") == "True":
+        logging.info("Running in production mode")
         is_production = True
 
     if is_production and datetime.now().time() < time(9,15):
