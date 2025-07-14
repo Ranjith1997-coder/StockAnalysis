@@ -7,7 +7,7 @@ from intraday.other_monitor import *
 from common.push_notification import telegram_notif
 from datetime import datetime, time 
 from multiprocessing.pool import ThreadPool
-from common.constants import mode, Mode
+from common.constants import mode, Mode, ENV_PRODUCTION
 from common.shared import stock_token_obj_dict, stocks_list 
 from common.Stock import Stock
 from common.helperFunctions import get_stock_objects_from_json, isNowInTimePeriod
@@ -196,10 +196,22 @@ if __name__ =="__main__":
     logging.info("start time : {}".format(start_time))
     EOD_ANALYSIS_COMPLETED = False
 
+    is_production = False
+
+    if os.getenv(ENV_PRODUCTION, "False") == "True":
+        is_production = True
+
+    if is_production and datetime.now().time() < time(9,15):
+        now = datetime.now()
+        new_time = now.replace(hour=9, minute=15, second=0, microsecond=0)
+        time_to_sleep = new_time - now
+        logging.info("Sleeping for {} sec to 9:15 AM".format(time_to_sleep.total_seconds()))
+        sleep(time_to_sleep.total_seconds())
+
     while (EOD_ANALYSIS_COMPLETED == False):
         is_in_time_period = isNowInTimePeriod(time(9,15), time(15,30), datetime.now().time())
         logging.info("is_in_time_period : {}".format(is_in_time_period))
-
+        
         if is_in_time_period:
             mode = Mode.INTRADAY
 
