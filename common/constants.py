@@ -12,6 +12,10 @@ class Mode (Enum):
 # mode = Mode.INTRADAY
 mode = Mode.POSITIONAL
 
+
+#ENVS
+ENV_PRODUCTION = "PRODUCTION"
+
 # stocks = {
 #     "ABB": {
 #         "instrument_token": 3329,
