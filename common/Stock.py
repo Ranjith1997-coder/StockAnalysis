@@ -19,7 +19,7 @@ pd.options.mode.chained_assignment = None
 
 
 class Stock:
-    def __init__(self, stockName, stockSymbol):
+    def __init__(self, stockName : str , stockSymbol : str):
         self.stockName = stockName
         self.stock_symbol = stockSymbol
         self.stockSymbolYFinance = stockSymbol+".NS"
@@ -75,9 +75,9 @@ class Stock:
     
     def reset_analysis(self):
         self.analysis = {"Timestamp" : None,
-                        "BULLISH":{},
-                        "BEARISH":{},
-                        "NEUTRAL":{}
+                            "BULLISH":{},
+                            "BEARISH":{},
+                            "NEUTRAL":{}
                         }
 
     def compute_rsi(self, rsi_lookback = 14):
