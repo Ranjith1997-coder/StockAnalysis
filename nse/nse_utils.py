@@ -5,7 +5,7 @@ import numpy as np
 from dateutil.relativedelta import relativedelta
 import pandas as pd
 from nse.nse_constants import *
-# import pandas_market_calendars as mcal
+import pandas_market_calendars as mcal
 
 default_header = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36"
@@ -25,7 +25,7 @@ header = {
              "Accept-Language": "en-US,en;q=0.9,hi;q=0.8"
             }
 
-# nse_calendar = mcal.get_calendar("NSE")
+nse_calendar = mcal.get_calendar("NSE")
 
 
 class CalenderNotFound(Exception):
