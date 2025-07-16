@@ -17,7 +17,6 @@ from time import sleep
 
 logging.basicConfig(format="{levelname}:{name}:{message}", style="{", level=logging.INFO)
 
-stocks = {}
 
 class Trend (Enum):
     BULLISH = "BULLISH"
@@ -174,17 +173,17 @@ def monitor(stock: Stock):
             logging.error("Error occured while monitoring {}. \n Exception : {}".format(ticker.stockName, e))
         
 
-def create_stock_objects():
-    for stock in stocks:
-        ticker = Stock(stocks[stock]["name"], stocks[stock]["tradingsymbol"])
-        stock_token_obj_dict[stocks[stock]["instrument_token"]] = ticker
-        stocks_list.append(stocks[stock]["tradingsymbol"])
+def create_stock_objects(stock_list : list):
+    for stock in stock_list:
+        ticker = Stock(stock["name"], stock["tradingsymbol"])
+        stock_token_obj_dict[stock["instrument_token"]] = ticker
+        stocks_list.append(stock["tradingsymbol"])
 
 def init():
     global thread_pool
-    global stocks
-    stocks = get_stock_objects_from_json()
-    create_stock_objects()
+    data = get_stock_objects_from_json()
+    stock_list = data["data"]["UnderlyingList"]
+    create_stock_objects(stock_list)
     thread_pool = ThreadPool(processes=10)
     
 
@@ -225,7 +224,7 @@ if __name__ =="__main__":
                 logging.info("current iteration time : {}".format(datetime.now()))
 
                 for stock in stock_token_obj_dict:
-                    stock_token_obj_dict[stock].get_stock_price_data('1d','5m')
+                    stock_token_obj_dict[stock].get_stock_price_data('2d','5m')
                 
                 for result in thread_pool.map(monitor, list(stock_token_obj_dict.values())):
                     if result[0]:
