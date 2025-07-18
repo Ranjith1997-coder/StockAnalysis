@@ -6,8 +6,23 @@ from io import BytesIO
 from nse.nse_utils import *
 from nse.nse_constants import *
 
-
 class NSE_DATA_CLASS:
+
+    @staticmethod
+    def get_futures_and_options_data(symbol : str, expiry: str):
+        origin_url = "https://www.nseindia.com/get-quotes/derivatives"
+        url = "https://www.nseindia.com/api/quote-derivative?"
+        payload = f"symbol={symbol}&identifier=FUTSTK{symbol}{expiry}XX0.00"
+        try:
+            data_dict = nse_urlfetch(url + payload, origin_url=origin_url).json()
+        except Exception as e:
+            raise ValueError(f" Invalid parameters : NSE error:{e}")
+        return data_dict
+
+    @staticmethod
+    def parseFuturesData(futuresData : dict) -> pd.DataFrame : 
+        nse_df = pd.DataFrame(columns=future_price_volume_data_column)
+
 
     @staticmethod
     def future_price_volume_data(symbol: str, instrument: str, from_date: str, to_date: str ,
@@ -257,7 +272,7 @@ class NSE_DATA_CLASS:
         get the future and option expiry dates as per stock or index given
         :return: list of dates
         """
-        payload = get_nse_option_chain("TCS").json()
+        payload = NSE_DATA_CLASS.get_nse_option_chain("TCS").json()
         return payload['records']['expiryDates']
 
     @staticmethod
