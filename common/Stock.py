@@ -13,7 +13,12 @@ from common.helperFunctions import percentageChange
 import pandas as pd
 from threading import Lock
 import numpy as np
-import pdb
+from nse.nse_derivative_data import NSE_DATA_CLASS
+
+import logging
+logging.basicConfig(format="{levelname}:{name}:{message}", style="{", level=logging.INFO)
+
+stockExpires = NSE_DATA_CLASS.expiry_dates_future()
 
 pd.options.mode.chained_assignment = None
 
@@ -29,33 +34,46 @@ class Stock:
         self.ivData = None
         self.last_trend_timestamp = None
         self.zd_data_mutux = Lock()
-        # {
-        #     ltp: last traded price
-        #     volume: volume 
-        #     buy_quantity: total buy quantity
-        #     sell_quantity: total sell quantity
-        # }
-        self.zd_data = { "series_data" : [],
-                         "open" : None,
-                         "high" : None,
-                         "low"  : None,
-                         "data_count": 0,
-                         "change" : None,
-                         "last_updated_time_stamp" : []
-                        }
+        self.derivativesData = { 
+                        "futuresData": {"currExpiry" : None, "nextExpiry" : None} , 
+                        "optionsData": {"currExpiry" : None, "nextExpiry" : None} 
+        }
         self.analysis = {"Timestamp" : None,
                         "BULLISH":{},
                         "BEARISH":{},
-                        "NEUTRAL":{}}
+                        "NEUTRAL":{}
+                        }
 
-    def get_stock_price_data(self, period , interval):
+    def get_stock_price_data(self, period:str , interval:str):
         try :
             self.priceData = yf.download(self.stockSymbolYFinance, period=period, interval=interval)
             self.last_price_update = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         except Exception:
+            logging.error("Error while getting the stock price data")
             raise Exception()
         return  self.priceData
     
+    def get_futures_and_options_data(self):
+        try :
+            data = NSE_DATA_CLASS.get_futures_and_options_data(self.stock_symbol, stockExpires[0])
+        except Exception:
+            logging.error("Error while getting the futures and options data")
+            raise Exception()
+
+        currentExpiry = (pd.to_datetime(stockExpires[0], format='%d-%m-%Y')).strftime('%d-%b-%Y')
+        nextExpiry = (pd.to_datetime(stockExpires[0], format='%d-%m-%Y')).strftime('%d-%b-%Y')
+
+        for derivative_data in data["stocks"] : 
+            if (derivative_data["metadata"]["instrumentType"] == "Stock Futures") and \
+                derivative_data["metadata"]["expiryDate"] == currentExpiry:
+                derivative_df = Stock.parseFuturesData(derivative_data)
+
+
+
+        
+
+        return  self.priceData
+
     def get_stock_IV_data(self):
         try :
             self.ivData = getIVChartData(self.stockSymbolOpestra)[1]
