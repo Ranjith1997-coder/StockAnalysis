@@ -2,18 +2,21 @@ import sys
 import os
 sys.path.append(os.getcwd())
 
-from common.constants import mode,Mode
+import common.constants as constant
 from common.helperFunctions import percentageChange
 
-if mode.name == Mode.INTRADAY.name:
-    VOLUME_PRICE_THRESHOLD = 0.5   
-else:
-    VOLUME_PRICE_THRESHOLD = 5  
+TIMES_VOLUME = 0
+VOLUME_PRICE_THRESHOLD = 0
 
-if mode.name == Mode.INTRADAY.name:
-    TIMES_VOLUME = 10
-else:
-    TIMES_VOLUME = 3
+def set_volume_constants():
+    global TIMES_VOLUME
+    global VOLUME_PRICE_THRESHOLD
+    if constant.mode.name == constant.Mode.INTRADAY.name:
+        VOLUME_PRICE_THRESHOLD = 0.5   
+        TIMES_VOLUME = 10
+    else:
+        VOLUME_PRICE_THRESHOLD = 5  
+        TIMES_VOLUME = 3
 
 def check_for_increase_in_volume_and_price(curr_vol, prev_vol, curr_vol_sma, curr_price, prev_price):
 
