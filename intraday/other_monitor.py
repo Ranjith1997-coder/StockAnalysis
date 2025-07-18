@@ -1,19 +1,27 @@
 import sys
 import os
 sys.path.append(os.getcwd())
-from common.constants import mode,Mode
+import common.constants as constant
 
 RSI_UPPER_THRESHOLD = 80
 RSI_LOWER_THRESHOLD = 20
 ATR_THRESHOLD = 0.97
-if mode.name == Mode.INTRADAY.name:
-    THREE_CONT_INC_OR_DEC_THRESHOLD = 1.5  
-    TWO_CONT_INC_OR_DEC_THRESHOLD = 1    
-    MARUBASU_THRESHOLD = 1.5
-else:
-    THREE_CONT_INC_OR_DEC_THRESHOLD = 6  
-    TWO_CONT_INC_OR_DEC_THRESHOLD = 4   
-    MARUBASU_THRESHOLD = 3 
+THREE_CONT_INC_OR_DEC_THRESHOLD = 0
+TWO_CONT_INC_OR_DEC_THRESHOLD = 0
+MARUBASU_THRESHOLD = 0
+
+def set_candle_stick_constants():
+    global THREE_CONT_INC_OR_DEC_THRESHOLD
+    global TWO_CONT_INC_OR_DEC_THRESHOLD 
+    global MARUBASU_THRESHOLD
+    if constant.mode.name == constant.Mode.INTRADAY.name:
+        THREE_CONT_INC_OR_DEC_THRESHOLD = 1.5  
+        TWO_CONT_INC_OR_DEC_THRESHOLD = 1    
+        MARUBASU_THRESHOLD = 1.5
+    else:
+        THREE_CONT_INC_OR_DEC_THRESHOLD = 6  
+        TWO_CONT_INC_OR_DEC_THRESHOLD = 4   
+        MARUBASU_THRESHOLD = 3 
 
 def is_rsi_above_threshold(rsi_value):
     # if rsi_value != 'NaN' and rsi_value > RSI_UPPER_THRESHOLD:
@@ -44,7 +52,7 @@ def is_price_at_lower_BB(close_price, lower_bb):
 
 def is_bullish_candle_stick_pattern(data):
 
-    if mode.name == Mode.INTRADAY.name:
+    if constant.mode.name == constant.Mode.INTRADAY.name:
         if (data["MARUBASU"].item() > MARUBASU_THRESHOLD ) :
             return (True , "Marubasu, rate: {:.2f}%".format(data["MARUBASU"].item()) )
         # if (data["CDL_3WHITESOLDIERS"] > 0.0 ):
@@ -79,7 +87,7 @@ def is_bullish_candle_stick_pattern(data):
 
 
 def is_bearish_candle_stick_pattern(data):
-    if mode.name == Mode.INTRADAY.name:
+    if constant.mode.name == constant.Mode.INTRADAY.name:
 
         if (data["MARUBASU"].item() < (MARUBASU_THRESHOLD * -1) ) :
             return (True , "Marubasu, rate:{:.2f}%".format(data["MARUBASU"].item()))

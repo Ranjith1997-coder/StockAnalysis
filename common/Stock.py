@@ -8,7 +8,7 @@ import yfinance as yf
 from fno.OptionOpstraCollection import getIVChartData
 import pandas as pd
 from fno.OptionOpstraCollection import get_FII_DII_Data
-from common.constants import mode,Mode
+import common.constants as constant
 from common.helperFunctions import percentageChange
 import pandas as pd
 from threading import Lock
@@ -24,7 +24,7 @@ pd.options.mode.chained_assignment = None
 
 
 class Stock:
-    def __init__(self, stockName, stockSymbol):
+    def __init__(self, stockName : str , stockSymbol : str):
         self.stockName = stockName
         self.stock_symbol = stockSymbol
         self.stockSymbolYFinance = stockSymbol+".NS"
@@ -93,9 +93,9 @@ class Stock:
     
     def reset_analysis(self):
         self.analysis = {"Timestamp" : None,
-                        "BULLISH":{},
-                        "BEARISH":{},
-                        "NEUTRAL":{}
+                            "BULLISH":{},
+                            "BEARISH":{},
+                            "NEUTRAL":{}
                         }
 
     def compute_rsi(self, rsi_lookback = 14):
@@ -143,7 +143,7 @@ class Stock:
             print(self.stockName)
     
     def compute_candle_stick_pattern(self):
-        if mode.name == Mode.INTRADAY.name:
+        if constant.mode.name == constant.Mode.INTRADAY.name:
             self.compute_triple_increase_decrease()
             self.compute_marubasu_candle_stick()
             self.compute_double_increase_decrease()
