@@ -3,8 +3,7 @@ class Mode (Enum):
     INTRADAY = 1
     POSITIONAL = 2
 
-# mode = Mode.INTRADAY
-mode = Mode.POSITIONAL
+mode = None
 
 #ENVS
 ENV_PRODUCTION = "PRODUCTION"
