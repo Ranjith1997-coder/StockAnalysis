@@ -7,7 +7,7 @@ from intraday.other_monitor import *
 from common.push_notification import telegram_notif
 from datetime import datetime, time 
 from multiprocessing.pool import ThreadPool
-from common.constants import mode, Mode, ENV_PRODUCTION
+from common.constants import mode, Mode, ENV_PRODUCTION, ENV_SHUTDOWN
 from common.shared import stock_token_obj_dict, stocks_list 
 from common.Stock import Stock
 from common.helperFunctions import get_stock_objects_from_json, isNowInTimePeriod
@@ -196,10 +196,15 @@ if __name__ =="__main__":
     EOD_ANALYSIS_COMPLETED = False
 
     is_production = False
+    shutdown_system = False
 
     if os.getenv(ENV_PRODUCTION, "False") == "True":
         logging.info("Running in production mode")
         is_production = True
+    
+    if os.getenv(ENV_SHUTDOWN, "False") == "True":
+        logging.info("Running in production mode")
+        shutdown_system = True
 
     if is_production and datetime.now().time() < time(9,15):
         now = datetime.now()
@@ -274,7 +279,13 @@ if __name__ =="__main__":
                     stock_token_obj_dict[stock].reset_price_data()
 
                 EOD_ANALYSIS_COMPLETED = True
-                logging.info("EOD analysis completed")
+                logging.info("EOD analysis completed. Shutting down the system")
+
+                # Shutdown system
+                if shutdown_system:
+                    from subprocess import run
+                    run(["/sbin/shutdown", "-h", "now"])
+
         
     logging.info("End of day")
 
