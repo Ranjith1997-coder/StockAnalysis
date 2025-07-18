@@ -7,7 +7,7 @@ from intraday.other_monitor import *
 from common.push_notification import telegram_notif
 from datetime import datetime, time 
 from multiprocessing.pool import ThreadPool
-from common.constants import mode, Mode, ENV_PRODUCTION, ENV_SHUTDOWN
+import common.constants as constant
 from common.shared import stock_token_obj_dict, stocks_list 
 from common.Stock import Stock
 from common.helperFunctions import get_stock_objects_from_json, isNowInTimePeriod
@@ -86,7 +86,7 @@ def monitor(stock: Stock):
             ticker.reset_analysis()
             ticker.compute_bollinger_band()
             ticker.compute_candle_stick_pattern()
-            if mode.name == Mode.INTRADAY.name:
+            if constant.mode.name == constant.Mode.INTRADAY.name:
                 curr_data = ticker.priceData.iloc[-2]
                 prev_data = ticker.priceData.iloc[-3]
             else:
@@ -153,7 +153,7 @@ def monitor(stock: Stock):
                                                     "lower_band" : curr_data['BB_LOWER_BAND'].item()}
         
         # 52 week status 
-            if mode.name == Mode.POSITIONAL.name:
+            if constant.mode.name == constant.Mode.POSITIONAL.name:
                 status = ticker.check_52_week_status()
                 if status == 1:
                     ticker.analysis["NEUTRAL"]["52-week-high"] = True
@@ -198,11 +198,11 @@ if __name__ =="__main__":
     is_production = False
     shutdown_system = False
 
-    if os.getenv(ENV_PRODUCTION, "False") == "True":
+    if os.getenv(constant.ENV_PRODUCTION, "False") == "True":
         logging.info("Running in production mode")
         is_production = True
     
-    if os.getenv(ENV_SHUTDOWN, "False") == "True":
+    if os.getenv(constant.ENV_SHUTDOWN, "False") == "True":
         logging.info("Running in production mode")
         shutdown_system = True
 
@@ -216,12 +216,14 @@ if __name__ =="__main__":
     is_in_time_period = isNowInTimePeriod(time(9,15), time(15,30), datetime.now().time())
         
     if is_in_time_period:
-        mode = Mode.INTRADAY
+        constant.mode = constant.Mode.INTRADAY
 
         logging.info("Market time open")
         logging.info("Starting Intraday analysis")
 
         telegram_notif("*********** Intraday Analysis ***********")
+        set_candle_stick_constants()
+        set_volume_constants()
 
         while(is_in_time_period):
             logging.info("current iteration time : {}".format(datetime.now()))
@@ -248,7 +250,7 @@ if __name__ =="__main__":
         EOD_ANALYSIS_COMPLETED = False
         logging.info("Market time closed")
     else:
-        mode = Mode.POSITIONAL
+        constant.mode = constant.Mode.POSITIONAL
         if datetime.now().time() > time(16,0):
             logging.info("Market time closed")
             logging.info("Starting EOD analysis")
@@ -262,6 +264,8 @@ if __name__ =="__main__":
         
         logging.info("EOD analysis Started")
         telegram_notif("*********** EOD Analysis ***********")
+        set_candle_stick_constants()
+        set_volume_constants()
         for stock in stock_token_obj_dict:
             stock_token_obj_dict[stock].get_stock_price_data('2y','1d')
     

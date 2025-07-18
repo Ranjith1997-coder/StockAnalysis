@@ -8,7 +8,7 @@ import yfinance as yf
 from fno.OptionOpstraCollection import getIVChartData
 import pandas as pd
 from fno.OptionOpstraCollection import get_FII_DII_Data
-from common.constants import mode,Mode
+import common.constants as constant
 from common.helperFunctions import percentageChange
 import pandas as pd
 from threading import Lock
@@ -125,7 +125,7 @@ class Stock:
             print(self.stockName)
     
     def compute_candle_stick_pattern(self):
-        if mode.name == Mode.INTRADAY.name:
+        if constant.mode.name == constant.Mode.INTRADAY.name:
             self.compute_triple_increase_decrease()
             self.compute_marubasu_candle_stick()
             self.compute_double_increase_decrease()
