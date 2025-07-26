@@ -136,6 +136,13 @@ def trading_holiday_calendar():
     return data_df
 
 
+def floor_to_5_min(dt=None):
+    if dt is None:
+        dt = datetime.now()
+    floored_minute = dt.minute - (dt.minute % 5)
+    return dt.replace(minute=floored_minute, second=0, microsecond=0)
+
+
 if __name__ == '__main__':
     # data = derive_from_and_to_date('6M')
     print(trading_holiday_calendar())

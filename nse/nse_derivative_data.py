@@ -5,11 +5,55 @@ import zipfile
 from io import BytesIO
 from nse.nse_utils import *
 from nse.nse_constants import *
+import common.shared as shared
+from typing import Optional
+
+from common.logging_util import logger
 
 class NSE_DATA_CLASS:
 
     @staticmethod
-    def get_futures_and_options_data(symbol : str, expiry: str):
+    def get_live_futures_and_options_data_intraday(stock : str, currentExpiry: str, nextExpiry: str):
+        try :
+            expiry = currentExpiry
+            date_obj = datetime.strptime(expiry, "%d-%b-%Y")
+            expiry = date_obj.strftime("%d-%m-%Y")
+            data = NSE_DATA_CLASS.get_futures_and_options_data_from_nse_intraday(stock, currentExpiry)
+        except Exception:
+            logger.error("Error while getting the futures and options data")
+            raise Exception()
+        res = { 
+                "futuresData" : {"currExpiry" : None, "nextExpiry" : None} , 
+                "optionsData": {"currExpiry" : None, "nextExpiry" : None} 
+            }
+        for derivative_data in data["stocks"] : 
+            if (derivative_data["metadata"]["instrumentType"] == "Stock Futures") and \
+                derivative_data["metadata"]["expiryDate"] == currentExpiry:
+                res["futuresData"]["currExpiry"] = NSE_DATA_CLASS.parseFuturesData(stock, derivative_data)
+            elif (derivative_data["metadata"]["instrumentType"] == "Stock Futures") and \
+                derivative_data["metadata"]["expiryDate"] == nextExpiry:
+                res["futuresData"]["nextExpiry"] = NSE_DATA_CLASS.parseFuturesData(stock, derivative_data)
+    
+        return res
+    
+    @staticmethod
+    def parseFuturesData(stockSymbol: str, futuresData : dict) -> pd.DataFrame : 
+        futures_dict = {}
+        futures_dict['TIMESTAMP'] = floor_to_5_min()
+        futures_dict['SYMBOL'] = stockSymbol
+        futures_dict['EXPIRY_DT'] = futuresData["metadata"]['expiryDate']
+        futures_dict['LAST_TRADED_PRICE'] = futuresData["metadata"]['lastPrice']
+        futures_dict['VOLUME'] = futuresData["metadata"]['numberOfContractsTraded']
+        futures_dict['OPEN_INT'] = futuresData["marketDeptOrderBook"]["tradeInfo"]['openInterest']
+
+        futures_df = pd.DataFrame([futures_dict], columns=future_price_volume_data_column_intraday)
+        futures_df['TIMESTAMP'] = pd.to_datetime(futures_df['TIMESTAMP'])
+        futures_df.set_index('TIMESTAMP', inplace=True)
+        
+        return futures_df
+
+    @staticmethod
+    def get_futures_and_options_data_from_nse_intraday(symbol : str, expiry: str) -> dict:
         origin_url = "https://www.nseindia.com/get-quotes/derivatives"
         url = "https://www.nseindia.com/api/quote-derivative?"
         payload = f"symbol={symbol}&identifier=FUTSTK{symbol}{expiry}XX0.00"
@@ -19,14 +63,9 @@ class NSE_DATA_CLASS:
             raise ValueError(f" Invalid parameters : NSE error:{e}")
         return data_dict
 
-    @staticmethod
-    def parseFuturesData(futuresData : dict) -> pd.DataFrame : 
-        nse_df = pd.DataFrame(columns=future_price_volume_data_column)
-
 
     @staticmethod
-    def future_price_volume_data(symbol: str, instrument: str, from_date: str, to_date: str ,
-                                period: str ):
+    def get_future_price_volume_data_positional(symbol: str, instrument: str, from_date: str , to_date: str , period: str , currentExpiry: str, nextExpiry: str):
         """
         get contract wise future price volume data set.
         :param instrument:  FUTIDX/FUTSTK
@@ -47,7 +86,7 @@ class NSE_DATA_CLASS:
             raise ValueError(f'{instrument} is not a future instrument')
 
         from_date, to_date = derive_from_and_to_date(from_date=from_date, to_date=to_date, period=period)
-        nse_df = pd.DataFrame(columns=future_price_volume_data_column)
+        nse_df = pd.DataFrame(columns=future_price_volume_data_column_positional)
         from_date = datetime.strptime(from_date, dd_mm_yyyy)
         to_date = datetime.strptime(to_date, dd_mm_yyyy)
         load_days = (to_date - from_date).days
@@ -58,7 +97,7 @@ class NSE_DATA_CLASS:
             else:
                 end_date = to_date.strftime(dd_mm_yyyy)
                 start_date = from_date.strftime(dd_mm_yyyy)
-            data_df = NSE_DATA_CLASS.get_future_price_volume_data(symbol=symbol, instrument=instrument,
+            data_df = NSE_DATA_CLASS.get_future_price_volume_data_from_nse_positional(symbol=symbol, instrument=instrument,
                                                 from_date=start_date, to_date=end_date)
             from_date = from_date + dt.timedelta(91)
             load_days = (to_date - from_date).days
@@ -66,10 +105,28 @@ class NSE_DATA_CLASS:
                 nse_df = data_df
             else:
                 nse_df = pd.concat([nse_df, data_df], ignore_index=True)
-        return nse_df
+            
+             # Convert data types
+            nse_df['TIMESTAMP'] = pd.to_datetime(nse_df['TIMESTAMP'])
+            nse_df['EXPIRY_DT'] = pd.to_datetime(nse_df['EXPIRY_DT'])
+            numeric_columns = ['OPENING_PRICE', 'TRADE_HIGH_PRICE', 'TRADE_LOW_PRICE', 'CLOSING_PRICE',
+                            'LAST_TRADED_PRICE', 'PREV_CLS', 'SETTLE_PRICE', 'TOT_TRADED_QTY',
+                            'TOT_TRADED_VAL', 'OPEN_INT', 'CHANGE_IN_OI', 'UNDERLYING_VALUE']
+            nse_df[numeric_columns] = nse_df[numeric_columns].apply(pd.to_numeric, errors='coerce')
+
+            expiry_dfs = {}
+            for expiry, label in zip([currentExpiry, nextExpiry], ["currExpiry", "nextExpiry"]):
+                expiry_df = nse_df[nse_df["EXPIRY_DT"] == expiry]
+                expiry_df.set_index('TIMESTAMP', inplace=True)
+                expiry_dfs[label] = expiry_df
+
+            res = {
+                "futuresData": expiry_dfs
+            }
+        return res
 
     @staticmethod
-    def get_future_price_volume_data(symbol: str, instrument: str, from_date: str, to_date: str):
+    def get_future_price_volume_data_from_nse_positional(symbol: str, instrument: str, from_date: str, to_date: str):
         origin_url = "https://www.nseindia.com/report-detail/fo_eq_security"
         url = "https://www.nseindia.com/api/historical/foCPV?"
         payload = f"from={from_date}&to={to_date}&instrumentType={instrument}&symbol={symbol}&csv=true"
@@ -79,7 +136,7 @@ class NSE_DATA_CLASS:
             raise ValueError(f" Invalid parameters : NSE error:{e}")
         data_df = pd.DataFrame(data_dict['data']).drop(columns='TIMESTAMP')
         data_df.columns = cleaning_column_name(data_df.columns)
-        return data_df[future_price_volume_data_column]
+        return data_df[future_price_volume_data_column_positional]
 
     @staticmethod
     def option_price_volume_data(symbol: str, instrument: str, option_type: str = None, from_date: str = None,

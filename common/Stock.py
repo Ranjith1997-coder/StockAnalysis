@@ -7,23 +7,19 @@ from datetime import datetime
 import yfinance as yf
 from fno.OptionOpstraCollection import getIVChartData
 import pandas as pd
-from fno.OptionOpstraCollection import get_FII_DII_Data
 import common.constants as constant
 from common.helperFunctions import percentageChange
 import pandas as pd
 from threading import Lock
 import numpy as np
 from nse.nse_derivative_data import NSE_DATA_CLASS
-
-import logging
-logging.basicConfig(format="{levelname}:{name}:{message}", style="{", level=logging.INFO)
-
-stockExpires = NSE_DATA_CLASS.expiry_dates_future()
+import  common.shared as shared
+from common.logging_util import logger
 
 pd.options.mode.chained_assignment = None
 
-
 class Stock:
+    DERIVATIVE_DATA_LENGTH = 30 # total number of rows to store in the derivatives dataframe 
     def __init__(self, stockName : str , stockSymbol : str):
         self.stockName = stockName
         self.stock_symbol = stockSymbol
@@ -49,30 +45,49 @@ class Stock:
             self.priceData = yf.download(self.stockSymbolYFinance, period=period, interval=interval)
             self.last_price_update = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         except Exception:
-            logging.error("Error while getting the stock price data")
+            logger.error("Error while getting the stock price data")
             raise Exception()
         return  self.priceData
     
-    def get_futures_and_options_data(self):
+    def get_futures_and_options_data_from_nse_intraday(self):
+        currexpiry = shared.stockExpires[0]
+        nextexpiry = shared.stockExpires[1]
         try :
-            data = NSE_DATA_CLASS.get_futures_and_options_data(self.stock_symbol, stockExpires[0])
+            data = NSE_DATA_CLASS.get_live_futures_and_options_data_intraday(self.stock_symbol, currexpiry, nextexpiry)
         except Exception:
-            logging.error("Error while getting the futures and options data")
+            logger.error("Error while getting the futures and options data")
             raise Exception()
-
-        currentExpiry = (pd.to_datetime(stockExpires[0], format='%d-%m-%Y')).strftime('%d-%b-%Y')
-        nextExpiry = (pd.to_datetime(stockExpires[0], format='%d-%m-%Y')).strftime('%d-%b-%Y')
-
-        for derivative_data in data["stocks"] : 
-            if (derivative_data["metadata"]["instrumentType"] == "Stock Futures") and \
-                derivative_data["metadata"]["expiryDate"] == currentExpiry:
-                derivative_df = Stock.parseFuturesData(derivative_data)
-
-
-
         
+        if self.derivativesData["futuresData"]["currExpiry"] is None:
+            self.derivativesData["futuresData"]["currExpiry"] = data["futuresData"]["currExpiry"]
+        else:
+            self.derivativesData["futuresData"]["currExpiry"]  = pd.concat([self.derivativesData["futuresData"]["currExpiry"], data["futuresData"]["currExpiry"]], ignore_index=True)
+            if len(self.derivativesData["futuresData"]["currExpiry"]) > Stock.DERIVATIVE_DATA_LENGTH:
+                self.derivativesData["futuresData"]["currExpiry"] = self.derivativesData["futuresData"]["currExpiry"].tail(Stock.DERIVATIVE_DATA_LENGTH) 
+        
+        if self.derivativesData["futuresData"]["nextExpiry"] is None:
+            self.derivativesData["futuresData"]["nextExpiry"] = data["futuresData"]["nextExpiry"]
+        else:
+            self.derivativesData["futuresData"]["nextExpiry"]  = pd.concat([self.derivativesData["futuresData"]["nextExpiry"], data["futuresData"]["nextExpiry"]], ignore_index=True)
+            if len(self.derivativesData["futuresData"]["nextExpiry"]) > Stock.DERIVATIVE_DATA_LENGTH:
+                self.derivativesData["futuresData"]["nextExpiry"] = self.derivativesData["futuresData"]["nextExpiry"].tail(Stock.DERIVATIVE_DATA_LENGTH) 
+        
+        return self.derivativesData
+    
+    def get_futures_and_options_data_from_nse_positional(self):
+        currexpiry = shared.stockExpires[0]
+        nextexpiry = shared.stockExpires[1]
+        try :
+            data = NSE_DATA_CLASS.get_future_price_volume_data_positional(self.stock_symbol,"FUTSTK", None, None, '1W', currexpiry, nextexpiry)
+        except Exception:
+            logger.error("Error while getting the futures and options data")
+            raise Exception()
+        
+        self.derivativesData["futuresData"]["currExpiry"] = data["futuresData"]["currExpiry"]
+        self.derivativesData["futuresData"]["nextExpiry"] = data["futuresData"]["nextExpiry"]
 
-        return  self.priceData
+        return self.derivativesData
+
 
     def get_stock_IV_data(self):
         try :
@@ -234,7 +249,7 @@ class Stock:
 
 
     def removeStockData(self):
-        self.priceData = None
+        self.priceData = pd.DataFrame()
         self.ivData = None
     
     def is_price_data_empty(self):

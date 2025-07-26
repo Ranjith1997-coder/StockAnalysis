@@ -36,10 +36,12 @@ bhavcopy_old = ['TradDt', 'ISIN', 'TckrSymb', 'SctySrs', 'OpnPric', 'HghPric', '
 bhavcopy_new = ['TIMESTAMP', 'ISIN', 'SYMBOL', 'SERIES', 'OPEN', 'HIGH', 'LOW', 'CLOSE', 'LAST', 'PREVCLOSE',
                 'TOTTRDQTY', 'TOTTRDVAL', 'TOTALTRADES']
 
-future_price_volume_data_column = ['TIMESTAMP', 'INSTRUMENT', 'SYMBOL', 'EXPIRY_DT', 'STRIKE_PRICE', 'OPTION_TYPE', 'MARKET_TYPE',
+future_price_volume_data_column_intraday = ['TIMESTAMP','SYMBOL', 'EXPIRY_DT', 'LAST_TRADED_PRICE', 'VOLUME', 'OPEN_INT']
+
+future_price_volume_data_column_positional = ['TIMESTAMP', 'SYMBOL', 'EXPIRY_DT',
                                    'OPENING_PRICE', 'TRADE_HIGH_PRICE', 'TRADE_LOW_PRICE', 'CLOSING_PRICE',
                                    'LAST_TRADED_PRICE', 'PREV_CLS', 'SETTLE_PRICE', 'TOT_TRADED_QTY', 'TOT_TRADED_VAL',
-                                   'OPEN_INT', 'CHANGE_IN_OI', 'MARKET_LOT', 'UNDERLYING_VALUE']
+                                   'OPEN_INT', 'CHANGE_IN_OI', 'UNDERLYING_VALUE']
 
 india_vix_data_column = ['TIMESTAMP', 'INDEX_NAME', 'OPEN_INDEX_VAL', 'CLOSE_INDEX_VAL', 'HIGH_INDEX_VAL',
                          'LOW_INDEX_VAL', 'PREV_CLOSE', 'VIX_PTS_CHG', 'VIX_PERC_CHG']
