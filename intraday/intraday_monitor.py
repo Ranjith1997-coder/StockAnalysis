@@ -2,7 +2,6 @@ import sys
 import os
 sys.path.append(os.getcwd())
 
-from intraday.volume_monitor import *
 from intraday.other_monitor import *
 from notification.Notification import TELEGRAM_NOTIFICATIONS
 from datetime import datetime, time 
@@ -16,6 +15,7 @@ from time import sleep
 from nse.nse_derivative_data import NSE_DATA_CLASS
 from analyser.Analyser import AnalyserOrchestrator
 from analyser.Futures_Analyser import FuturesAnalyser
+from analyser.VolumeAnalyser import VolumeAnalyser
 from common.logging_util import logger
 
 class Trend (Enum):
@@ -52,29 +52,6 @@ def monitor(stock: Stock):
                 prev_data = ticker.priceData.iloc[-2]
 
             trend_found = False
-        
-        # Volume and price increase/decrease indicator
-            if check_for_increase_in_volume_and_price(curr_data['Volume'].item(), 
-                                                    prev_data["Volume"].item(),
-                                                    curr_data['Vol_SMA_20'].item(),
-                                                    curr_data['Close'].item(),
-                                                    prev_data['Close'].item()):
-                
-                vol_rate = ((curr_data['Volume'].item() - prev_data["Volume"].item())/prev_data["Volume"].item()) * 100
-                price_inc = ((curr_data['Close'].item() - prev_data["Close"].item())/prev_data["Close"].item()) * 100
-                ticker.analysis["BULLISH"]["Volume"] = {"Volume_rate_percent" : vol_rate, 
-                                                    "Price_inc_percent": price_inc}
-                trend_found = True
-            elif check_for_increase_in_volume_and_decrease_in_price(curr_data['Volume'].item(), 
-                                                    prev_data["Volume"].item(),
-                                                    curr_data['Vol_SMA_20'].item(),
-                                                    curr_data['Close'].item(),
-                                                    prev_data['Close'].item()):
-                vol_rate = ((curr_data['Volume'].item() - prev_data["Volume"].item())/prev_data["Volume"].item()) * 100
-                price_inc = ((curr_data['Close'].item() - prev_data["Close"].item())/prev_data["Close"].item()) * 100
-                ticker.analysis["BEARISH"]["Volume"] = { "Volume_rate_percent" : vol_rate, 
-                                                        "Price_dec_percent": price_inc}
-                trend_found = True
 
         # RSI Indicator
             if is_rsi_below_threshold(curr_data["rsi"].item()):
@@ -122,11 +99,16 @@ def monitor(stock: Stock):
             
 
             if constant.mode.name == constant.Mode.POSITIONAL.name:
+                logger.debug("Positional analysis for {} stated.".format(ticker.stockName))
                 trend_found |= orchestrator.run_all_positional(stock)
+                logger.debug("Positional analysis for {} completed.".format(ticker.stockName))
             else : 
+                logger.debug("Intraday analysis for {} stated.".format(ticker.stockName))
                 trend_found |= orchestrator.run_all_intraday(stock)
+                logger.debug("Intraday analysis for {} completed.".format(ticker.stockName))
             
             if trend_found:
+                logger.info("Trend found for {} ".format(ticker.stockName))
                 ticker.analysis["Timestamp"] = curr_data.name
                 message = orchestrator.generate_analysis_message(ticker)
                 TELEGRAM_NOTIFICATIONS.send_notification(message)
@@ -156,7 +138,6 @@ def intraday_analysis():
 
     TELEGRAM_NOTIFICATIONS.send_notification("*********** Intraday Analysis ***********")
     set_candle_stick_constants()
-    set_volume_constants()
     orchestrator.reset_all_constants()
 
     is_in_time_period = isNowInTimePeriod(time(9,15), time(15,30), datetime.now().time())
@@ -203,13 +184,12 @@ def positional_analysis():
     logger.info("EOD analysis Started")
     TELEGRAM_NOTIFICATIONS.send_notification("*********** EOD Analysis ***********")
     set_candle_stick_constants()
-    set_volume_constants()
     orchestrator.reset_all_constants()
     for stock in shared.stock_token_obj_dict:
         shared.stock_token_obj_dict[stock].get_stock_price_data('2y','1d')
         shared.stock_token_obj_dict[stock].get_futures_and_options_data_from_nse_positional()
 
-    logger.info("Data fetched and analysis started.")
+    logger.info("Data fetched for all stocks")
     for result in thread_pool.map(monitor, list(shared.stock_token_obj_dict.values())):
         if result[0]:
             print("Error : {}".format(result[1]))
@@ -250,6 +230,7 @@ def init():
 
     orchestrator = AnalyserOrchestrator()
     orchestrator.register(FuturesAnalyser())
+    orchestrator.register(VolumeAnalyser())
     
 
 if __name__ =="__main__":
