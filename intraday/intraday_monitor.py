@@ -2,7 +2,6 @@ import sys
 import os
 sys.path.append(os.getcwd())
 
-from intraday.other_monitor import *
 from notification.Notification import TELEGRAM_NOTIFICATIONS
 from datetime import datetime, time 
 from multiprocessing.pool import ThreadPool
@@ -16,6 +15,7 @@ from nse.nse_derivative_data import NSE_DATA_CLASS
 from analyser.Analyser import AnalyserOrchestrator
 from analyser.Futures_Analyser import FuturesAnalyser
 from analyser.VolumeAnalyser import VolumeAnalyser
+from analyser.TechnicalAnalyser import TechnicalAnalyser
 from common.logging_util import logger
 
 class Trend (Enum):
@@ -52,19 +52,6 @@ def monitor(stock: Stock):
                 prev_data = ticker.priceData.iloc[-2]
 
             trend_found = False
-
-        # RSI Indicator
-            if is_rsi_below_threshold(curr_data["rsi"].item()):
-                ticker.analysis["BEARISH"]["rsi"] = {"value" : curr_data["rsi"].item()}
-                trend_found = True
-            elif is_rsi_above_threshold(curr_data["rsi"].item()):
-                ticker.analysis["BULLISH"]["rsi"] = {"value" : curr_data["rsi"].item()}
-                trend_found = True
-
-        # #ATR Indicator 
-        #     if is_atr_rank_above_threshold(curr_data["atr_rank"].item()):
-        #         ticker.analysis["NEUTRAL"]["atr_rank"] = {"value" : curr_data["atr_rank"].item()}
-        #         trend_found = True
         
         # Candle Stick Pattern.
             pattern_found, pattern = is_bullish_candle_stick_pattern(curr_data)
@@ -78,33 +65,14 @@ def monitor(stock: Stock):
             if pattern_found:
                 ticker.analysis["BEARISH"]["Candle_stick_pattern"]  = {"value" : pattern}
                 trend_found = True
-        
-        # Bollinger band.
-            if is_price_at_upper_BB(curr_data['Close'].item(), curr_data['BB_UPPER_BAND'].item()):
-                ticker.analysis["BEARISH"]["BB"]  = { "close" : curr_data['Close'].item(),
-                                                    "upper_band" : curr_data['BB_UPPER_BAND'].item()}
-            elif is_price_at_lower_BB(curr_data['Close'].item(), curr_data['BB_LOWER_BAND'].item()):
-                ticker.analysis["BULLISH"]["BB"]  = { "close" : curr_data['Close'].item(),
-                                                    "lower_band" : curr_data['BB_LOWER_BAND'].item()}
-        
-        # 52 week status 
-            if constant.mode.name == constant.Mode.POSITIONAL.name:
-                status = ticker.check_52_week_status()
-                if status == 1:
-                    ticker.analysis["NEUTRAL"]["52-week-high"] = True
-                    trend_found = True
-                elif status == -1:
-                    ticker.analysis["NEUTRAL"]["52-week-low"] = True
-                    trend_found = True
-            
 
             if constant.mode.name == constant.Mode.POSITIONAL.name:
                 logger.debug("Positional analysis for {} stated.".format(ticker.stockName))
-                trend_found |= orchestrator.run_all_positional(stock)
+                trend_found = orchestrator.run_all_positional(stock)
                 logger.debug("Positional analysis for {} completed.".format(ticker.stockName))
             else : 
                 logger.debug("Intraday analysis for {} stated.".format(ticker.stockName))
-                trend_found |= orchestrator.run_all_intraday(stock)
+                trend_found = orchestrator.run_all_intraday(stock)
                 logger.debug("Intraday analysis for {} completed.".format(ticker.stockName))
             
             if trend_found:
@@ -137,9 +105,8 @@ def intraday_analysis():
     logger.info("Market time open. Starting Intraday analysis")
 
     TELEGRAM_NOTIFICATIONS.send_notification("*********** Intraday Analysis ***********")
-    set_candle_stick_constants()
-    orchestrator.reset_all_constants()
 
+    orchestrator.reset_all_constants()
     is_in_time_period = isNowInTimePeriod(time(9,15), time(15,30), datetime.now().time())
 
     while(is_in_time_period):
@@ -183,7 +150,6 @@ def positional_analysis():
     
     logger.info("EOD analysis Started")
     TELEGRAM_NOTIFICATIONS.send_notification("*********** EOD Analysis ***********")
-    set_candle_stick_constants()
     orchestrator.reset_all_constants()
     for stock in shared.stock_token_obj_dict:
         shared.stock_token_obj_dict[stock].get_stock_price_data('2y','1d')
@@ -231,6 +197,7 @@ def init():
     orchestrator = AnalyserOrchestrator()
     orchestrator.register(FuturesAnalyser())
     orchestrator.register(VolumeAnalyser())
+    orchestrator.register(TechnicalAnalyser())
     
 
 if __name__ =="__main__":
