@@ -4,7 +4,7 @@ sys.path.append(os.getcwd())
 
 from intraday.volume_monitor import *
 from intraday.other_monitor import *
-from common.push_notification import telegram_notif
+from notification.Notification import TELEGRAM_NOTIFICATIONS
 from datetime import datetime, time 
 from multiprocessing.pool import ThreadPool
 import common.constants as constant
@@ -30,58 +30,6 @@ thread_pool = None
 orchestrator : AnalyserOrchestrator = None
 PRODUCTION = False
 SHUTDOWN_SYSTEM = False
-
-def generate_notif_message(stock):
-    message = """Stock : {} \nTimestamp : {} \n""".format(stock.stock_symbol, stock.analysis["Timestamp"])
-    
-    if stock.analysis["BULLISH"]:
-        bullish_trend = stock.analysis["BULLISH"]
-        message += "BULLISH : \n"
-        if "Volume" in bullish_trend.keys():
-            message += """  volume increase : {:.2f}% \n  price increase : {:.2f}% \n """.format(bullish_trend["Volume"]["Volume_rate_percent"], bullish_trend["Volume"]["Price_inc_percent"])
-
-        if "rsi" in bullish_trend.keys():
-            message += """  rsi value : {:.2f} \n""".format(bullish_trend["rsi"]["value"])
-        
-        if "Candle_stick_pattern" in bullish_trend.keys():
-            message += """  candle stick Pattern : {} \n""".format(bullish_trend["Candle_stick_pattern"]["value"])
-        
-        if "BB" in bullish_trend.keys():
-            message += """  Bollinger Band : Price({:.2f}) < Lower_band ({:.2f}) \n """.format(bullish_trend["BB"]['close'], bullish_trend["BB"]['lower_band'])
-        
-        if stock.analysis["BULLISH"]:
-            if "future_action" in bullish_trend.keys():
-                message += """  Futures_action : {} \n""".format(bullish_trend["future_action"]["action"])
-    
-    if stock.analysis["BEARISH"]:
-        bearish_trend = stock.analysis["BEARISH"]
-        message += "BEARISH : \n"
-        if "Volume" in bearish_trend.keys():
-            message += """  volume increase : {:.2f}% \n  price decrease : {:.2f}% \n """.format(bearish_trend["Volume"]["Volume_rate_percent"], bearish_trend["Volume"]["Price_dec_percent"])
-
-        if "rsi" in bearish_trend.keys():
-            message += """  rsi value : {:.2f} \n""".format(bearish_trend["rsi"]["value"])
-        
-        if "Candle_stick_pattern" in bearish_trend.keys():
-            message += """  candle stick Pattern : {} \n""".format(bearish_trend["Candle_stick_pattern"]["value"])
-        
-        if "BB" in bearish_trend.keys():
-            message += """  Bollinger Band : Price({:.2f}) > Upper_band ({:.2f})  \n """.format(bearish_trend["BB"]['close'], bearish_trend["BB"]['upper_band'])
-        
-        if "future_action" in bearish_trend.keys():
-                message += """  Futures_action : {} \n""".format(bearish_trend["future_action"]["action"])
-    
-    if stock.analysis["NEUTRAL"]:
-        neutral_trend = stock.analysis["NEUTRAL"]
-        message += "NEUTRAL : \n"
-        if "atr_rank" in neutral_trend.keys():
-            message += """  atr_rank : {:.2f} \n""".format(neutral_trend["atr_rank"]["value"])
-        if "52-week-high" in neutral_trend.keys():
-            message += """  Price at 52 WEEK HIGH \n"""
-        if "52-week-low" in neutral_trend.keys():
-            message += """  Price at 52 WEEK LOW \n"""
-
-    return message
 
 def monitor(stock: Stock):
         ticker = stock
@@ -180,8 +128,8 @@ def monitor(stock: Stock):
             
             if trend_found:
                 ticker.analysis["Timestamp"] = curr_data.name
-                message = generate_notif_message(ticker)
-                telegram_notif(message)
+                message = orchestrator.generate_analysis_message(ticker)
+                TELEGRAM_NOTIFICATIONS.send_notification(message)
                 return (0, trend_found, message)   
             else:
                 return (0, trend_found, None)
@@ -206,7 +154,7 @@ def intraday_analysis():
 
     logger.info("Market time open. Starting Intraday analysis")
 
-    telegram_notif("*********** Intraday Analysis ***********")
+    TELEGRAM_NOTIFICATIONS.send_notification("*********** Intraday Analysis ***********")
     set_candle_stick_constants()
     set_volume_constants()
     orchestrator.reset_all_constants()
@@ -253,7 +201,7 @@ def positional_analysis():
             sleep(time_to_sleep.total_seconds())
     
     logger.info("EOD analysis Started")
-    telegram_notif("*********** EOD Analysis ***********")
+    TELEGRAM_NOTIFICATIONS.send_notification("*********** EOD Analysis ***********")
     set_candle_stick_constants()
     set_volume_constants()
     orchestrator.reset_all_constants()
@@ -324,7 +272,7 @@ if __name__ =="__main__":
             positional_analysis()
         
         logger.info("shutting down the system.")
-        telegram_notif("*********** System shutdown ***********")
+        TELEGRAM_NOTIFICATIONS.send_notification("*********** System shutdown ***********")
         # Shutdown system
         if SHUTDOWN_SYSTEM:
             from subprocess import run
