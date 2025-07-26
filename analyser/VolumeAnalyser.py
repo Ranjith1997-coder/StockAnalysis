@@ -31,17 +31,17 @@ class VolumeAnalyser(BaseAnalyzer):
             curr_data = stock.current_equity_data
             prev_data = stock.previous_equity_data
 
-            curr_vol = curr_data['Volume'].item(), 
-            prev_vol = prev_data["Volume"].item(),
-            curr_vol_sma = curr_data['Vol_SMA_20'].item(),
-            curr_price = curr_data['Close'].item(),
-            prev_price = prev_data['Close'].item()
+            curr_vol = curr_data['Volume'], 
+            prev_vol = prev_data["Volume"],
+            curr_vol_sma = curr_data['Vol_SMA_20'],
+            curr_price = curr_data['Close'],
+            prev_price = prev_data['Close']
             if curr_vol_sma != 'NaN' and curr_vol > VolumeAnalyser.TIMES_VOLUME * prev_vol \
             and curr_vol > curr_vol_sma \
                 and curr_price > prev_price \
                     and  percentageChange(curr_price, prev_price) >  VolumeAnalyser.VOLUME_PRICE_THRESHOLD :
-                vol_rate = ((curr_data['Volume'].item() - prev_data["Volume"].item())/prev_data["Volume"].item()) * 100
-                price_inc = ((curr_data['Close'].item() - prev_data["Close"].item())/prev_data["Close"].item()) * 100
+                vol_rate = ((curr_data['Volume'] - prev_data["Volume"])/prev_data["Volume"]) * 100
+                price_inc = ((curr_data['Close'] - prev_data["Close"])/prev_data["Close"]) * 100
                 stock.analysis["BULLISH"]["Volume"] = {"Volume_rate_percent" : vol_rate, 
                                                     "Price_inc_percent": price_inc}
                 return True
@@ -58,18 +58,18 @@ class VolumeAnalyser(BaseAnalyzer):
             curr_data = stock.current_equity_data
             prev_data = stock.previous_equity_data
 
-            curr_vol = curr_data['Volume'].item(), 
-            prev_vol = prev_data["Volume"].item(),
-            curr_vol_sma = curr_data['Vol_SMA_20'].item(),
-            curr_price = curr_data['Close'].item(),
-            prev_price = prev_data['Close'].item()
+            curr_vol = curr_data['Volume'], 
+            prev_vol = prev_data["Volume"],
+            curr_vol_sma = curr_data['Vol_SMA_20'],
+            curr_price = curr_data['Close'],
+            prev_price = prev_data['Close']
 
             if curr_vol_sma != 'NaN' and curr_vol > VolumeAnalyser.TIMES_VOLUME * prev_vol \
             and curr_vol > curr_vol_sma \
                 and curr_price < prev_price \
                     and percentageChange(curr_price, prev_price) < (VolumeAnalyser.VOLUME_PRICE_THRESHOLD * -1):
-                vol_rate = ((curr_data['Volume'].item() - prev_data["Volume"].item())/prev_data["Volume"].item()) * 100
-                price_inc = ((curr_data['Close'].item() - prev_data["Close"].item())/prev_data["Close"].item()) * 100
+                vol_rate = ((curr_data['Volume'] - prev_data["Volume"])/prev_data["Volume"]) * 100
+                price_inc = ((curr_data['Close'] - prev_data["Close"])/prev_data["Close"]) * 100
                 stock.analysis["BEARISH"]["Volume"] = { "Volume_rate_percent" : vol_rate, 
                                                         "Price_dec_percent": price_inc}
                 return True

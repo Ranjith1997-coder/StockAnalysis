@@ -249,17 +249,25 @@ class Stock:
     @property
     def current_equity_data(self):
         if constant.mode.name == constant.Mode.INTRADAY.name:
-            curr_data = self.priceData.iloc[-2]
+            curr_data = self.priceData.iloc[-2].droplevel(1) 
         else:
-            curr_data = self.priceData.iloc[-1]
+            curr_data = self.priceData.iloc[-1].droplevel(1) 
         return curr_data
     
     @property
     def previous_equity_data(self):
         if constant.mode.name == constant.Mode.INTRADAY.name:
-            prev_data = self.priceData.iloc[-3]
+            prev_data = self.priceData.iloc[-3].droplevel(1) 
         else:
-            prev_data = self.priceData.iloc[-2]
+            prev_data = self.priceData.iloc[-2].droplevel(1) 
+        return prev_data
+    
+    @property
+    def previous_previous_equity_data(self):
+        if constant.mode.name == constant.Mode.INTRADAY.name:
+            prev_data = self.priceData.iloc[-4].droplevel(1) 
+        else:
+            prev_data = self.priceData.iloc[-3].droplevel(1) 
         return prev_data
     
 

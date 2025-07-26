@@ -16,6 +16,7 @@ from analyser.Analyser import AnalyserOrchestrator
 from analyser.Futures_Analyser import FuturesAnalyser
 from analyser.VolumeAnalyser import VolumeAnalyser
 from analyser.TechnicalAnalyser import TechnicalAnalyser
+from analyser.CandleStickPatternAnalyser import CandleStickAnalyser
 from common.logging_util import logger
 
 class Trend (Enum):
@@ -43,7 +44,7 @@ def monitor(stock: Stock):
             # ticker.compute_atr_rank()
             ticker.reset_analysis()
             ticker.compute_bollinger_band()
-            ticker.compute_candle_stick_pattern()
+            # ticker.compute_candle_stick_pattern()
             if constant.mode.name == constant.Mode.INTRADAY.name:
                 curr_data = ticker.priceData.iloc[-2]
                 prev_data = ticker.priceData.iloc[-3]
@@ -52,19 +53,6 @@ def monitor(stock: Stock):
                 prev_data = ticker.priceData.iloc[-2]
 
             trend_found = False
-        
-        # Candle Stick Pattern.
-            pattern_found, pattern = is_bullish_candle_stick_pattern(curr_data)
-
-            if pattern_found:
-                ticker.analysis["BULLISH"]["Candle_stick_pattern"] = {"value" : pattern}
-                trend_found = True
-            
-            pattern_found, pattern = is_bearish_candle_stick_pattern(curr_data)
-
-            if pattern_found:
-                ticker.analysis["BEARISH"]["Candle_stick_pattern"]  = {"value" : pattern}
-                trend_found = True
 
             if constant.mode.name == constant.Mode.POSITIONAL.name:
                 logger.debug("Positional analysis for {} stated.".format(ticker.stockName))
@@ -198,6 +186,7 @@ def init():
     orchestrator.register(FuturesAnalyser())
     orchestrator.register(VolumeAnalyser())
     orchestrator.register(TechnicalAnalyser())
+    orchestrator.register(CandleStickAnalyser())
     
 
 if __name__ =="__main__":
