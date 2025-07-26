@@ -246,6 +246,22 @@ class Stock:
             return -1
         else:
             return 0
+    @property
+    def current_equity_data(self):
+        if constant.mode.name == constant.Mode.INTRADAY.name:
+            curr_data = self.priceData.iloc[-2]
+        else:
+            curr_data = self.priceData.iloc[-1]
+        return curr_data
+    
+    @property
+    def previous_equity_data(self):
+        if constant.mode.name == constant.Mode.INTRADAY.name:
+            prev_data = self.priceData.iloc[-3]
+        else:
+            prev_data = self.priceData.iloc[-2]
+        return prev_data
+    
 
 
     def removeStockData(self):
