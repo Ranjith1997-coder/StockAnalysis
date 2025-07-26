@@ -8,25 +8,28 @@ from common.push_notification import telegram_notif
 from datetime import datetime, time 
 from multiprocessing.pool import ThreadPool
 import common.constants as constant
-from common.shared import stock_token_obj_dict, stocks_list 
+import common.shared as shared
 from common.Stock import Stock
 from common.helperFunctions import get_stock_objects_from_json, isNowInTimePeriod
 from enum import Enum
-import logging
 from time import sleep
-
-logging.basicConfig(format="{levelname}:{name}:{message}", style="{", level=logging.INFO)
-
+from nse.nse_derivative_data import NSE_DATA_CLASS
+from analyser.Analyser import AnalyserOrchestrator
+from analyser.Futures_Analyser import FuturesAnalyser
+from common.logging_util import logger
 
 class Trend (Enum):
     BULLISH = "BULLISH"
     BEARISH = "BEARISH"
     NEUTRAL = "NEUTRAL"
 
-SLEEP_TIME = 301
+
 VOL_SMA_WIN_SIZE = 20
 
 thread_pool = None
+orchestrator : AnalyserOrchestrator = None
+PRODUCTION = False
+SHUTDOWN_SYSTEM = False
 
 def generate_notif_message(stock):
     message = """Stock : {} \nTimestamp : {} \n""".format(stock.stock_symbol, stock.analysis["Timestamp"])
@@ -45,6 +48,10 @@ def generate_notif_message(stock):
         
         if "BB" in bullish_trend.keys():
             message += """  Bollinger Band : Price({:.2f}) < Lower_band ({:.2f}) \n """.format(bullish_trend["BB"]['close'], bullish_trend["BB"]['lower_band'])
+        
+        if stock.analysis["BULLISH"]:
+            if "future_action" in bullish_trend.keys():
+                message += """  Futures_action : {} \n""".format(bullish_trend["future_action"]["action"])
     
     if stock.analysis["BEARISH"]:
         bearish_trend = stock.analysis["BEARISH"]
@@ -60,6 +67,9 @@ def generate_notif_message(stock):
         
         if "BB" in bearish_trend.keys():
             message += """  Bollinger Band : Price({:.2f}) > Upper_band ({:.2f})  \n """.format(bearish_trend["BB"]['close'], bearish_trend["BB"]['upper_band'])
+        
+        if "future_action" in bearish_trend.keys():
+                message += """  Futures_action : {} \n""".format(bearish_trend["future_action"]["action"])
     
     if stock.analysis["NEUTRAL"]:
         neutral_trend = stock.analysis["NEUTRAL"]
@@ -162,6 +172,12 @@ def monitor(stock: Stock):
                     ticker.analysis["NEUTRAL"]["52-week-low"] = True
                     trend_found = True
             
+
+            if constant.mode.name == constant.Mode.POSITIONAL.name:
+                trend_found |= orchestrator.run_all_positional(stock)
+            else : 
+                trend_found |= orchestrator.run_all_intraday(stock)
+            
             if trend_found:
                 ticker.analysis["Timestamp"] = curr_data.name
                 message = generate_notif_message(ticker)
@@ -170,124 +186,172 @@ def monitor(stock: Stock):
             else:
                 return (0, trend_found, None)
         except Exception as e : 
-            logging.error("Error occured while monitoring {}. \n Exception : {}".format(ticker.stockName, e))
+            logger.error("Error occured while monitoring {}. \n Exception : {}".format(ticker.stockName, e))
         
 
 def create_stock_objects(stock_list : list):
+    count = 0
+
     for stock in stock_list:
+        if not PRODUCTION and constant.NO_OF_STOCKS != -1 and count >= constant.NO_OF_STOCKS:
+            break
         ticker = Stock(stock["name"], stock["tradingsymbol"])
-        stock_token_obj_dict[stock["instrument_token"]] = ticker
-        stocks_list.append(stock["tradingsymbol"])
+        shared.stock_token_obj_dict[stock["instrument_token"]] = ticker
+        shared.stocks_list.append(stock["tradingsymbol"])
+        count += 1
 
-def init():
-    global thread_pool
-    data = get_stock_objects_from_json()
-    stock_list = data["data"]["UnderlyingList"]
-    create_stock_objects(stock_list)
-    thread_pool = ThreadPool(processes=10)
-    
 
-if __name__ =="__main__":
+def intraday_analysis():
+    constant.mode = constant.Mode.INTRADAY
 
-    init()
+    logger.info("Market time open. Starting Intraday analysis")
 
-    start_time = datetime.now()
-    logging.info("start time : {}".format(start_time))
-    EOD_ANALYSIS_COMPLETED = False
-
-    is_production = False
-    shutdown_system = False
-
-    if os.getenv(constant.ENV_PRODUCTION, "False") == "True":
-        logging.info("Running in production mode")
-        is_production = True
-    
-    if os.getenv(constant.ENV_SHUTDOWN, "False") == "True":
-        logging.info("Running in production mode")
-        shutdown_system = True
-
-    if is_production and datetime.now().time() < time(9,15):
-        now = datetime.now()
-        new_time = now.replace(hour=9, minute=15, second=0, microsecond=0)
-        time_to_sleep = new_time - now
-        logging.info("Sleeping for {} sec to 9:15 AM".format(time_to_sleep.total_seconds()))
-        sleep(time_to_sleep.total_seconds())
+    telegram_notif("*********** Intraday Analysis ***********")
+    set_candle_stick_constants()
+    set_volume_constants()
+    orchestrator.reset_all_constants()
 
     is_in_time_period = isNowInTimePeriod(time(9,15), time(15,30), datetime.now().time())
+
+    while(is_in_time_period):
+        logger.info("current iteration time : {}".format(datetime.now()))
+
+        for stock in shared.stock_token_obj_dict:
+            shared.stock_token_obj_dict[stock].get_stock_price_data('2d','5m')
+            shared.stock_token_obj_dict[stock].get_futures_and_options_data_from_nse_intraday()
         
-    if is_in_time_period:
-        constant.mode = constant.Mode.INTRADAY
-
-        logging.info("Market time open")
-        logging.info("Starting Intraday analysis")
-
-        telegram_notif("*********** Intraday Analysis ***********")
-        set_candle_stick_constants()
-        set_volume_constants()
-
-        while(is_in_time_period):
-            logging.info("current iteration time : {}".format(datetime.now()))
-
-            for stock in stock_token_obj_dict:
-                stock_token_obj_dict[stock].get_stock_price_data('2d','5m')
-            
-            for result in thread_pool.map(monitor, list(stock_token_obj_dict.values())):
-                if result[0]:
-                    print("Error : {}".format(result[1]))
-                else:
-                    if result[1]:
-                        print(result[2])
-            
-            for stock in stock_token_obj_dict:
-                stock_token_obj_dict[stock].reset_price_data()
-
-            sleeptime = (SLEEP_TIME) - (datetime.now().second + ((datetime.now().minute % 5) * 60))
-            logging.info("sleeping for {} sec".format(sleeptime))
-            sleep(sleeptime)
-
-            is_in_time_period = isNowInTimePeriod(time(9,15), time(15,30), datetime.now().time())
-        
-        EOD_ANALYSIS_COMPLETED = False
-        logging.info("Market time closed")
-    else:
-        constant.mode = constant.Mode.POSITIONAL
-        if datetime.now().time() > time(16,0):
-            logging.info("Market time closed")
-            logging.info("Starting EOD analysis")
-        else:
-            logging.info("Sleeping till 4:00 PM to start EOD analysis")
-            now = datetime.now()
-            new_time = now.replace(hour=16, minute=0, second=0, microsecond=0)
-            time_to_sleep = new_time - now
-            logging.info("Sleeping for {} sec".format(time_to_sleep.total_seconds()))
-            sleep(time_to_sleep.total_seconds())
-        
-        logging.info("EOD analysis Started")
-        telegram_notif("*********** EOD Analysis ***********")
-        set_candle_stick_constants()
-        set_volume_constants()
-        for stock in stock_token_obj_dict:
-            stock_token_obj_dict[stock].get_stock_price_data('2y','1d')
-    
-        for result in thread_pool.map(monitor, list(stock_token_obj_dict.values())):
+        for result in thread_pool.map(monitor, list(shared.stock_token_obj_dict.values())):
             if result[0]:
                 print("Error : {}".format(result[1]))
             else:
                 if result[1]:
                     print(result[2])
         
-        for stock in stock_token_obj_dict:
-            stock_token_obj_dict[stock].reset_price_data()
+        for stock in shared.stock_token_obj_dict:
+            shared.stock_token_obj_dict[stock].reset_price_data()
 
-        logging.info("EOD analysis completed.")
+        sleeptime = (constant.INTRADAY_SLEEP_TIME) - (datetime.now().second + ((datetime.now().minute % 5) * 60))
+        logger.info("sleeping for {} sec".format(sleeptime))
+        sleep(sleeptime)
 
-    logging.info("shutting down the system.")
-    telegram_notif("*********** System shutdown ***********")
-    # Shutdown system
-    if shutdown_system:
-        from subprocess import run
-        run(["/sbin/shutdown", "-h", "now"])
+        is_in_time_period = isNowInTimePeriod(time(9,15), time(15,30), datetime.now().time())
 
+    logger.info("Market time closed")
+
+
+def positional_analysis():
+    constant.mode = constant.Mode.POSITIONAL
+    if PRODUCTION:
+        if datetime.now().time() > time(16,0):
+            logger.info("Market time closed")
+        else:
+            logger.info("Sleeping till 4:00 PM to start EOD analysis")
+            now = datetime.now()
+            new_time = now.replace(hour=16, minute=0, second=0, microsecond=0)
+            time_to_sleep = new_time - now
+            logger.info("Sleeping for {} sec".format(time_to_sleep.total_seconds()))
+            sleep(time_to_sleep.total_seconds())
+    
+    logger.info("EOD analysis Started")
+    telegram_notif("*********** EOD Analysis ***********")
+    set_candle_stick_constants()
+    set_volume_constants()
+    orchestrator.reset_all_constants()
+    for stock in shared.stock_token_obj_dict:
+        shared.stock_token_obj_dict[stock].get_stock_price_data('2y','1d')
+        shared.stock_token_obj_dict[stock].get_futures_and_options_data_from_nse_positional()
+
+    logger.info("Data fetched and analysis started.")
+    for result in thread_pool.map(monitor, list(shared.stock_token_obj_dict.values())):
+        if result[0]:
+            print("Error : {}".format(result[1]))
+        else:
+            if result[1]:
+                print(result[2])
+    
+    for stock in shared.stock_token_obj_dict:
+        shared.stock_token_obj_dict[stock].reset_price_data()
+
+    logger.info("EOD analysis completed.")
+
+def init():
+    global thread_pool
+    global orchestrator
+    global PRODUCTION
+    global SHUTDOWN_SYSTEM
+
+    if os.getenv(constant.ENV_PRODUCTION, "False") == "True":
+        logger.info("Running in production mode")
+        PRODUCTION = True
+    else:
+        logger.info("Running in development mode")
+        PRODUCTION = False
+    
+    if os.getenv(constant.ENV_SHUTDOWN, "False") == "True":
+        logger.info("Shutdown mode enabled")
+        SHUTDOWN_SYSTEM = True
+    else:
+        logger.info("Shutdown mode disabled")
+        SHUTDOWN_SYSTEM = False
+    
+    data = get_stock_objects_from_json()
+    shared.stockExpires = NSE_DATA_CLASS.expiry_dates_future()
+    stock_list = data["data"]["UnderlyingList"]
+    create_stock_objects(stock_list)
+    thread_pool = ThreadPool(processes=10)
+
+    orchestrator = AnalyserOrchestrator()
+    orchestrator.register(FuturesAnalyser())
+    
+
+if __name__ =="__main__":
+
+    init()
+
+    if PRODUCTION:
+        if datetime.now().time() < time(9,15):
+            now = datetime.now()
+            new_time = now.replace(hour=9, minute=15, second=0, microsecond=0)
+            time_to_sleep = new_time - now
+            logger.info("Sleeping for {} sec to 9:15 AM".format(time_to_sleep.total_seconds()))
+            sleep(time_to_sleep.total_seconds())
+
+        is_in_time_period = isNowInTimePeriod(time(9,15), time(15,30), datetime.now().time())
+
+        if is_in_time_period:
+            intraday_analysis()
+        else:
+            positional_analysis()
+        
+        logger.info("shutting down the system.")
+        telegram_notif("*********** System shutdown ***********")
+        # Shutdown system
+        if SHUTDOWN_SYSTEM:
+            from subprocess import run
+            run(["/sbin/shutdown", "-h", "now"])
+    else:
+        logger.info("Running in development mode. No shutdown operation.")
+        run_intraday = False
+        run_positional = True
+        if os.getenv(constant.ENV_DEV_POSITIONAL, "False") == "True":
+            logger.debug("Intraday analysis enabled")
+            run_positional = True
+        if os.getenv(constant.ENV_DEV_INTRADAY, "False") == "True":
+            logger.debug("Positional analysis enabled")
+            run_intraday = True
+        
+        if not run_intraday and not run_positional:
+            logger.info("No analysis enabled. Exiting.")
+            exit(0)
+        
+        if run_intraday:
+            intraday_analysis()
+        if run_positional:
+            positional_analysis()
+
+    
+
+    
 
 
     
