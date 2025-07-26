@@ -69,7 +69,7 @@ class AnalyserOrchestrator:
         logger.debug("All analyses complete for stock {}".format(stock.stock_symbol))
         return found_trend
     
-    def generate_analysis_message(stock):
+    def generate_analysis_message(self, stock):
         message = """Stock : {} \nTimestamp : {} \n""".format(stock.stock_symbol, stock.analysis["Timestamp"])
         
         if stock.analysis["BULLISH"]:
@@ -87,9 +87,8 @@ class AnalyserOrchestrator:
             if "BB" in bullish_trend.keys():
                 message += """  Bollinger Band : Price({:.2f}) < Lower_band ({:.2f}) \n """.format(bullish_trend["BB"]['close'], bullish_trend["BB"]['lower_band'])
             
-            if stock.analysis["BULLISH"]:
-                if "future_action" in bullish_trend.keys():
-                    message += """  Futures_action : {} \n""".format(bullish_trend["future_action"]["action"])
+            if "future_action" in bullish_trend.keys():
+                message += """  Futures_action : {} \n""".format(bullish_trend["future_action"]["action"])
         
         if stock.analysis["BEARISH"]:
             bearish_trend = stock.analysis["BEARISH"]

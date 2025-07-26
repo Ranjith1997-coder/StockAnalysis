@@ -4,6 +4,7 @@ import requests
 import json
 import os
 from common.constants import TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, TELEGRAM_URL, ENV_PRODUCTION
+from common.logging_util import logger
  
 # Function to send Push Notification
  
@@ -36,5 +37,7 @@ class TELEGRAM_NOTIFICATIONS:
         resp = requests.post(TELEGRAM_URL + TELEGRAM_TOKEN+ "/sendMessage",
                             data=json.dumps(msg),
                             headers={'Content-Type': 'application/json'})
+        logger.debug(f" Message: {message}")
         if resp.status_code != 200:  # Check if fort message send with the help of status code
             raise Exception('Error: unable to send message', resp.status_code)
+        logger.info("Message sent successfully")

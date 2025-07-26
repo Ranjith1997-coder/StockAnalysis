@@ -10,6 +10,7 @@ class FuturesAnalyser(BaseAnalyzer):
     FUTURE_PRICE_CHANGE_PERCENTAGE = 0
 
     def __init__(self) -> None:
+        self.analyserName = "Futures Analyser"
         super().__init__()
     
     def reset_constants(self):
