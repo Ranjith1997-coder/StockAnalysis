@@ -10,6 +10,7 @@ from collections import namedtuple
 class VolumeAnalyser(BaseAnalyzer):
     TIMES_VOLUME = 0
     VOLUME_PRICE_THRESHOLD = 0
+    VOLUME_MA_PERIOD = 0
     def __init__(self) -> None:
         self.analyserName = "Volume Analyser"
         super().__init__()
@@ -19,9 +20,11 @@ class VolumeAnalyser(BaseAnalyzer):
         if constant.mode.name == constant.Mode.INTRADAY.name:
             VolumeAnalyser.VOLUME_PRICE_THRESHOLD = 0.5   
             VolumeAnalyser.TIMES_VOLUME = 10
+            VolumeAnalyser.VOLUME_MA_PERIOD = 20
         else:
             VolumeAnalyser.VOLUME_PRICE_THRESHOLD = 5  
             VolumeAnalyser.TIMES_VOLUME = 3
+            VolumeAnalyser.VOLUME_MA_PERIOD = 50
         logger.debug(f"VolumeAnalyser constants reset for mode {constant.mode.name}")
         logger.debug(f"TIMES_VOLUME = {VolumeAnalyser.TIMES_VOLUME} ,VOLUME_PRICE_THRESHOLD = {VolumeAnalyser.VOLUME_PRICE_THRESHOLD}")
 
@@ -34,7 +37,10 @@ class VolumeAnalyser(BaseAnalyzer):
 
             curr_vol = curr_data['Volume'], 
             prev_vol = prev_data["Volume"],
-            curr_vol_sma = curr_data['Vol_SMA_20'],
+            if constant.mode.name == constant.Mode.INTRADAY.name:
+                curr_vol_sma = stock.priceData['Volume'].iloc[-VolumeAnalyser.VOLUME_MA_PERIOD:].ewm(span=VolumeAnalyser.VOLUME_MA_PERIOD, adjust=False).mean().iloc[-1]
+            else:
+                curr_vol_sma = stock.priceData['Volume'].iloc[-VolumeAnalyser.VOLUME_MA_PERIOD:].mean()
             curr_price = curr_data['Close'],
             prev_price = prev_data['Close']
             VolumeAnalysis = namedtuple("VolumeAnalysis", ["Volume_rate_percent", "price_change_percent"])

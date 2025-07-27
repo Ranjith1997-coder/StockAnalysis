@@ -28,8 +28,6 @@ class Trend (Enum):
     NEUTRAL = "NEUTRAL"
 
 
-VOL_SMA_WIN_SIZE = 20
-
 thread_pool = None
 orchestrator : AnalyserOrchestrator = None
 PRODUCTION = False
@@ -57,10 +55,7 @@ def monitor(stock: Stock) -> Tuple[MonitorResult, bool, Optional[str]]:
         return MonitorResult.NO_DATA, False, f"{stock.stock_symbol} data not available"
     
     try:
-        stock.compute_sma_of_volume(VOL_SMA_WIN_SIZE)
-        stock.compute_rsi()
         stock.reset_analysis()
-        stock.compute_bollinger_band()
 
         analysis_type = "Positional" if constant.mode == constant.Mode.POSITIONAL else "Intraday"
         logger.debug(f"{analysis_type} analysis for {stock.stockName} started.")
@@ -92,7 +87,7 @@ def process_monitor_results(results):
         elif result == MonitorResult.ERROR:
             logger.error(f"Error during monitoring: {message}")
         elif trend_found:
-            logger.info(f"Trend found: {message}")
+            logger.info(f"Trend found: \n{message}")
 
 def create_stock_objects(stock_list : list):
     count = 0
@@ -114,10 +109,11 @@ def fetch_price_data(stock_objs):
     
     for stock in stock_objs:
         try:
-            if len(symbols) > 1:
-                stock_data = data[stock.stockSymbolYFinance]
-            else:
-                stock_data = data
+            # if len(symbols) > 1:
+            #     stock_data = data[stock.stockSymbolYFinance]
+            # else:
+            #     stock_data = data
+            stock_data = data[stock.stockSymbolYFinance]
             stock.priceData = stock_data
             stock.last_price_update = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             logger.info(f"Price data fetched successfully for {stock.stockName}")
