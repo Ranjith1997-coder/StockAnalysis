@@ -44,7 +44,6 @@ def monitor(stock: Stock):
             # ticker.compute_atr_rank()
             ticker.reset_analysis()
             ticker.compute_bollinger_band()
-            # ticker.compute_candle_stick_pattern()
             if constant.mode.name == constant.Mode.INTRADAY.name:
                 curr_data = ticker.priceData.iloc[-2]
                 prev_data = ticker.priceData.iloc[-3]
@@ -65,7 +64,6 @@ def monitor(stock: Stock):
             
             if trend_found:
                 logger.info("Trend found for {} ".format(ticker.stockName))
-                ticker.analysis["Timestamp"] = curr_data.name
                 message = orchestrator.generate_analysis_message(ticker)
                 TELEGRAM_NOTIFICATIONS.send_notification(message)
                 return (0, trend_found, message)   

@@ -70,53 +70,46 @@ class AnalyserOrchestrator:
         return found_trend
     
     def generate_analysis_message(self, stock):
-        message = """Stock : {} \nTimestamp : {} \n""".format(stock.stock_symbol, stock.analysis["Timestamp"])
-        
-        if stock.analysis["BULLISH"]:
-            bullish_trend = stock.analysis["BULLISH"]
-            message += "BULLISH : \n"
-            if "Volume" in bullish_trend.keys():
-                message += """  volume increase : {:.2f}% \n  price increase : {:.2f}% \n """.format(bullish_trend["Volume"]["Volume_rate_percent"], bullish_trend["Volume"]["Price_inc_percent"])
+        # return message
+        message_parts = [
+        f"Stock: {stock.stock_symbol}",
+        ]
 
-            if "rsi" in bullish_trend.keys():
-                message += """  rsi value : {:.2f} \n""".format(bullish_trend["rsi"]["value"])
-            
-            if "Candle_stick_pattern" in bullish_trend.keys():
-                message += """  candle stick Pattern : {} \n""".format(bullish_trend["Candle_stick_pattern"]["value"])
-            
-            if "BB" in bullish_trend.keys():
-                message += """  Bollinger Band : Price({:.2f}) < Lower_band ({:.2f}) \n """.format(bullish_trend["BB"]['close'], bullish_trend["BB"]['lower_band'])
-            
-            if "future_action" in bullish_trend.keys():
-                message += """  Futures_action : {} \n""".format(bullish_trend["future_action"]["action"])
-        
-        if stock.analysis["BEARISH"]:
-            bearish_trend = stock.analysis["BEARISH"]
-            message += "BEARISH : \n"
-            if "Volume" in bearish_trend.keys():
-                message += """  volume increase : {:.2f}% \n  price decrease : {:.2f}% \n """.format(bearish_trend["Volume"]["Volume_rate_percent"], bearish_trend["Volume"]["Price_dec_percent"])
+        for trend in ['BULLISH', 'BEARISH']:
+            if stock.analysis[trend]:
+                message_parts.append(f"{trend}:")
+                for analysis_type, data in stock.analysis[trend].items():
+                    if analysis_type == 'Volume':
+                        message_parts.append(f"  Volume {trend.lower()}: {data.Volume_rate_percent:.2f}%")
+                        message_parts.append(f"  Price {trend.lower()}: {data.price_change_percent:.2f}%")
+                    elif analysis_type == 'RSI':
+                        message_parts.append(f"  RSI value: {data.value:.2f}")
+                    elif analysis_type == 'rsi_crossover':
+                        message_parts.append(f"  RSI crossover: {data.value:.2f}")
+                    elif analysis_type == 'BollingerBand':
+                        def format_bollinger_band(data, trend):
+                            close_price = f"{data.close:.2f}"
+                            comparison = '<' if trend == 'BULLISH' else '>'
+                            band_type = 'Lower' if trend == 'BULLISH' else 'Upper'
+                            band_value = f"{data.lower_band:.2f}" if trend == 'BULLISH' else f"{data.upper_band:.2f}"
+                            return f"  Bollinger Band: Price({close_price}) {comparison} {band_type}_band ({band_value})"
+                        message_parts.append(format_bollinger_band(data, trend))
+                    elif analysis_type == 'Single_candle_stick_pattern':
+                        message_parts.append(f" Single Candle stick Pattern: {data}")
+                    elif analysis_type == 'Double_candle_stick_pattern':
+                        message_parts.append(f" Double Candle stick Pattern: {data}")  
+                    elif analysis_type == "Triple_candle_stick_pattern":
+                        message_parts.append(f" Triple Candle stick Pattern: {data}")
+                    elif analysis_type == 'future_action':
+                        message_parts.append(f"  Futures action: {data.action}")
 
-            if "rsi" in bearish_trend.keys():
-                message += """  rsi value : {:.2f} \n""".format(bearish_trend["rsi"]["value"])
-            
-            if "Candle_stick_pattern" in bearish_trend.keys():
-                message += """  candle stick Pattern : {} \n""".format(bearish_trend["Candle_stick_pattern"]["value"])
-            
-            if "BB" in bearish_trend.keys():
-                message += """  Bollinger Band : Price({:.2f}) > Upper_band ({:.2f})  \n """.format(bearish_trend["BB"]['close'], bearish_trend["BB"]['upper_band'])
-            
-            if "future_action" in bearish_trend.keys():
-                    message += """  Futures_action : {} \n""".format(bearish_trend["future_action"]["action"])
-        
-        if stock.analysis["NEUTRAL"]:
-            neutral_trend = stock.analysis["NEUTRAL"]
-            message += "NEUTRAL : \n"
-            if "atr_rank" in neutral_trend.keys():
-                message += """  atr_rank : {:.2f} \n""".format(neutral_trend["atr_rank"]["value"])
-            if "52-week-high" in neutral_trend.keys():
-                message += """  Price at 52 WEEK HIGH \n"""
-            if "52-week-low" in neutral_trend.keys():
-                message += """  Price at 52 WEEK LOW \n"""
+        if stock.analysis['NEUTRAL']:
+            message_parts.append("NEUTRAL:")
+            for analysis_type, data in stock.analysis['NEUTRAL'].items():
+                if analysis_type == '52-week-high':
+                    message_parts.append("  Price at 52 WEEK HIGH")
+                elif analysis_type == '52-week-low':
+                    message_parts.append("  Price at 52 WEEK LOW")
 
-        return message
+        return "\n".join(message_parts)
 
