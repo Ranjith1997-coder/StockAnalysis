@@ -4,6 +4,7 @@ from common.Stock import Stock
 import common.constants as constant
 from common.logging_util import logger
 from common.helperFunctions import percentageChange
+from collections import namedtuple
 
 class CandleStickAnalyser(BaseAnalyzer):
     THREE_CONT_INC_OR_DEC_THRESHOLD = 0
@@ -41,20 +42,20 @@ class CandleStickAnalyser(BaseAnalyzer):
             if (((openPrice == lowPrice) or (percentageChange(openPrice, lowPrice) <= CandleStickAnalyser.WICK_PERCENTAGE)) \
                     and ((highPrice == closePrice) or (percentageChange(highPrice, closePrice) <= CandleStickAnalyser.WICK_PERCENTAGE)) \
                     and (percentageChange(closePrice, openPrice) >= CandleStickAnalyser.MARUBASU_THRESHOLD)):
-                stock.analysis["BULLISH"]["Candle_stick_pattern"] = {"single" : "Marubasu, rate: {:.2f}%".format(percentageChange(closePrice, openPrice)) }
+                stock.set_analysis("BULLISH", "Single_candle_stick_pattern", "Marubasu, rate: {:.2f}%".format(percentageChange(closePrice, openPrice)))
                 return True
             elif (((openPrice == highPrice) or (percentageChange(highPrice,openPrice) <= CandleStickAnalyser.WICK_PERCENTAGE)) \
                 and ((lowPrice == closePrice) or (percentageChange(closePrice,lowPrice) <= CandleStickAnalyser.WICK_PERCENTAGE)) \
                 and (abs(percentageChange(closePrice,openPrice)) >= CandleStickAnalyser.MARUBASU_THRESHOLD)):
-                stock.analysis["BEARISH"]["Candle_stick_pattern"] = {"single" : "Marubasu, rate: {:.2f}%".format(percentageChange(closePrice, openPrice)) }
+                stock.set_analysis("BEARISH", "Single_candle_stick_pattern", "Marubasu, rate: {:.2f}%".format(percentageChange(closePrice, openPrice)))
                 return True
             elif ((openPrice < closePrice) and ((closePrice == highPrice) or (percentageChange(highPrice, closePrice) <= CandleStickAnalyser.WICK_PERCENTAGE)) and \
                     (openPrice > lowPrice) and (abs(percentageChange(lowPrice,openPrice)) >= 2 * percentageChange(closePrice, openPrice))):
-                stock.analysis["BULLISH"]["Candle_stick_pattern"] = {"single" : "Hammer"}
+                stock.set_analysis("BULLISH", "Single_candle_stick_pattern", "Hammer")
                 return True
             elif ((openPrice > closePrice) and ((closePrice == lowPrice) or (percentageChange(closePrice, lowPrice) <= CandleStickAnalyser.WICK_PERCENTAGE)) and \
                     (openPrice < highPrice) and (percentageChange(highPrice,openPrice)) >= 2 * abs(percentageChange(closePrice, openPrice))):
-                stock.analysis["BEARISH"]["Candle_stick_pattern"] = {"single" : "shooting star"}
+                stock.set_analysis("BEARISH", "Single_candle_stick_pattern", "shooting star")
             return False
         except Exception as e:
             logger.error(f"Error in singleCandleStickPattern for stock {stock.stock_symbol}")
@@ -80,16 +81,16 @@ class CandleStickAnalyser(BaseAnalyzer):
             prevLowPrice = prevData['Low']
 
             if (prevClosePrice < prevOpenPrice) and (closePrice > openPrice) and (openPrice > prevClosePrice) and (closePrice < prevOpenPrice):
-                stock.analysis["BULLISH"]["Candle_stick_pattern"] = {"double" : "Harami"}
+                stock.set_analysis("BULLISH", "Double_candle_stick_pattern", "Harami")
                 return True
             elif (prevClosePrice > prevOpenPrice) and (closePrice < openPrice) and (openPrice < prevClosePrice) and (closePrice > prevOpenPrice):
-                stock.analysis["BEARISH"]["Candle_stick_pattern"] = {"double" : "Harami"}
+                stock.set_analysis("BEARISH", "Double_candle_stick_pattern", "Harami")
                 return True
             elif (prevOpenPrice < prevClosePrice) and (openPrice < closePrice) and (closePrice > prevClosePrice ) and (percentageChange(closePrice, prevOpenPrice) >= CandleStickAnalyser.TWO_CONT_INC_OR_DEC_THRESHOLD):
-                stock.analysis["BULLISH"]["Candle_stick_pattern"] = {"double" : "2_cont_inc, rate:{:.2f}%".format(percentageChange(closePrice, prevOpenPrice))}
+                stock.set_analysis("BULLISH", "Double_candle_stick_pattern", "2_cont_inc, rate:{:.2f}%".format(percentageChange(closePrice, prevOpenPrice)))
                 return True
             elif (prevOpenPrice > prevClosePrice) and (openPrice > closePrice) and (closePrice < prevClosePrice ) and (abs(percentageChange(closePrice, prevOpenPrice)) >= CandleStickAnalyser.TWO_CONT_INC_OR_DEC_THRESHOLD):
-                stock.analysis["BEARISH"]["Candle_stick_pattern"] = {"double" : "2_cont_dec, rate:{:.2f}%".format(percentageChange(closePrice, prevOpenPrice))}
+                stock.set_analysis("BEARISH", "Double_candle_stick_pattern", "2_cont_dec, rate:{:.2f}%".format(percentageChange(closePrice, prevOpenPrice)))
                 return True
             return False
         except Exception as e:
@@ -123,12 +124,12 @@ class CandleStickAnalyser(BaseAnalyzer):
             if (prevPrevOpenPrice < prevPrevClosePrice) and (prevOpenPrice < prevClosePrice) and (openPrice < closePrice ) \
                 and (closePrice > prevClosePrice) and (prevClosePrice > prevPrevClosePrice) and \
                 (percentageChange(closePrice, prevPrevOpenPrice) >= CandleStickAnalyser.THREE_CONT_INC_OR_DEC_THRESHOLD):
-                stock.analysis["BULLISH"]["Candle_stick_pattern"] = {"triple" : "3_cont_inc, rate:{:.2f}%".format(percentageChange(closePrice, prevPrevOpenPrice))}
+                stock.set_analysis("BULLISH", "Triple_candle_stick_pattern", "3_cont_inc, rate:{:.2f}%".format(percentageChange(closePrice, prevPrevOpenPrice)))
                 return True
             elif (prevPrevOpenPrice > prevPrevClosePrice) and (prevOpenPrice > prevClosePrice) and (openPrice > closePrice ) \
                 and (closePrice < prevClosePrice) and (prevClosePrice < prevPrevClosePrice) and \
                 (abs(percentageChange(closePrice, prevPrevOpenPrice)) >= CandleStickAnalyser.THREE_CONT_INC_OR_DEC_THRESHOLD):
-                stock.analysis["BEARISH"]["Candle_stick_pattern"] = {"triple" : "3_cont_dec, rate:{:.2f}%".format(percentageChange(closePrice, prevPrevOpenPrice))}
+                stock.set_analysis("BEARISH", "Triple_candle_stick_pattern", "3_cont_dec, rate:{:.2f}%".format(percentageChange(closePrice, prevPrevOpenPrice)))
                 return True
             return False
         except Exception as e:

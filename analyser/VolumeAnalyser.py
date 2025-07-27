@@ -4,6 +4,7 @@ from common.Stock import Stock
 import common.constants as constant
 from common.logging_util import logger
 from common.helperFunctions import percentageChange
+from collections import namedtuple
 
 
 class VolumeAnalyser(BaseAnalyzer):
@@ -25,9 +26,9 @@ class VolumeAnalyser(BaseAnalyzer):
         logger.debug(f"TIMES_VOLUME = {VolumeAnalyser.TIMES_VOLUME} ,VOLUME_PRICE_THRESHOLD = {VolumeAnalyser.VOLUME_PRICE_THRESHOLD}")
 
     @BaseAnalyzer.both
-    def analyse_increase_in_volume_and_price(self, stock: Stock):
+    def analyse_volume_and_price(self, stock: Stock):
         try : 
-            logger.debug(f'Inside analyse_increase_in_volume_and_price for stock {stock.stock_symbol}')
+            logger.debug(f'Inside analyse_volume_and_price for stock {stock.stock_symbol}')
             curr_data = stock.current_equity_data
             prev_data = stock.previous_equity_data
 
@@ -36,47 +37,27 @@ class VolumeAnalyser(BaseAnalyzer):
             curr_vol_sma = curr_data['Vol_SMA_20'],
             curr_price = curr_data['Close'],
             prev_price = prev_data['Close']
+            VolumeAnalysis = namedtuple("VolumeAnalysis", ["Volume_rate_percent", "price_change_percent"])
             if curr_vol_sma != 'NaN' and curr_vol > VolumeAnalyser.TIMES_VOLUME * prev_vol \
             and curr_vol > curr_vol_sma \
                 and curr_price > prev_price \
                     and  percentageChange(curr_price, prev_price) >  VolumeAnalyser.VOLUME_PRICE_THRESHOLD :
                 vol_rate = ((curr_data['Volume'] - prev_data["Volume"])/prev_data["Volume"]) * 100
                 price_inc = ((curr_data['Close'] - prev_data["Close"])/prev_data["Close"]) * 100
-                stock.analysis["BULLISH"]["Volume"] = {"Volume_rate_percent" : vol_rate, 
-                                                    "Price_inc_percent": price_inc}
+                stock.set_analysis("BULLISH", "Volume", VolumeAnalysis(Volume_rate_percent=vol_rate, price_change_percent=price_inc))
                 return True
-            return False
-        except Exception as e:
-            logger.error(f"Error in analyse_increase_in_volume_and_price for stock {stock.stock_symbol}: {str(e)}")
-            logger.error(f"Traceback: {traceback.format_exc()}")
-            return False
-
-    @BaseAnalyzer.both
-    def analyse_inc_in_vol_and_dec_in_price(self, stock: Stock):
-        try:
-            logger.debug(f'Inside analyse_inc_in_vol_and_dec_in_price for stock {stock.stock_symbol}')
-            curr_data = stock.current_equity_data
-            prev_data = stock.previous_equity_data
-
-            curr_vol = curr_data['Volume'], 
-            prev_vol = prev_data["Volume"],
-            curr_vol_sma = curr_data['Vol_SMA_20'],
-            curr_price = curr_data['Close'],
-            prev_price = prev_data['Close']
-
-            if curr_vol_sma != 'NaN' and curr_vol > VolumeAnalyser.TIMES_VOLUME * prev_vol \
+            elif curr_vol_sma != 'NaN' and curr_vol > VolumeAnalyser.TIMES_VOLUME * prev_vol \
             and curr_vol > curr_vol_sma \
                 and curr_price < prev_price \
                     and percentageChange(curr_price, prev_price) < (VolumeAnalyser.VOLUME_PRICE_THRESHOLD * -1):
                 vol_rate = ((curr_data['Volume'] - prev_data["Volume"])/prev_data["Volume"]) * 100
                 price_inc = ((curr_data['Close'] - prev_data["Close"])/prev_data["Close"]) * 100
-                stock.analysis["BEARISH"]["Volume"] = { "Volume_rate_percent" : vol_rate, 
-                                                        "Price_dec_percent": price_inc}
-                return True
+                stock.set_analysis("BEARISH", "Volume", VolumeAnalysis(Volume_rate_percent=vol_rate, price_change_percent=price_inc))
             return False
         except Exception as e:
-            logger.error(f"Error in analyse_inc_in_vol_and_dec_in_price for stock {stock.stock_symbol}: {str(e)}")
+            logger.error(f"Error in analyse_volume_and_price for stock {stock.stock_symbol}: {str(e)}")
             logger.error(f"Traceback: {traceback.format_exc()}")
             return False
+
 
  

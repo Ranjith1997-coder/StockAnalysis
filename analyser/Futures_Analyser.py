@@ -4,6 +4,7 @@ from common.Stock import Stock
 import common.constants as constant
 from common.helperFunctions import percentageChange
 from common.logging_util import logger
+from collections import namedtuple
 
 class FuturesAnalyser(BaseAnalyzer):
     FUTURE_OI_INCREASE_PERCENTAGE = 0
@@ -41,21 +42,23 @@ class FuturesAnalyser(BaseAnalyzer):
             price_percentage = percentageChange(curr_price, prev_price) 
             oi_percentage = percentageChange(curr_oi, prev_oi)
 
+            FutureActionAnalysis = namedtuple('FutureActionAnalysis', ['action', 'price_percentage', 'oi_percentage' ])
+
             if  price_percentage > FuturesAnalyser.FUTURE_PRICE_CHANGE_PERCENTAGE and \
                 oi_percentage > FuturesAnalyser.FUTURE_OI_INCREASE_PERCENTAGE:
-                stock.analysis["BULLISH"]["future_action"] = {"action" : "long_buildup", "price_percentage": price_percentage, "oi_percentage": oi_percentage}
+                stock.set_analysis("BULLISH", "future_action", FutureActionAnalysis("long_buildup", price_percentage, oi_percentage))
                 return True
             elif price_percentage < (-1 * FuturesAnalyser.FUTURE_PRICE_CHANGE_PERCENTAGE) and \
                 oi_percentage > FuturesAnalyser.FUTURE_OI_INCREASE_PERCENTAGE:
-                stock.analysis["BEARISH"]["future_action"] = {"action" : "short_buildup", "price_percentage": price_percentage, "oi_percentage": oi_percentage}
+                stock.set_analysis("BEARISH", "future_action", FutureActionAnalysis("short_buildup", price_percentage, oi_percentage))
                 return True
             elif price_percentage >  FuturesAnalyser.FUTURE_PRICE_CHANGE_PERCENTAGE and \
                 oi_percentage < (-1 * FuturesAnalyser.FUTURE_OI_INCREASE_PERCENTAGE):
-                stock.analysis["BULLISH"]["future_action"] = {"action" : "short_covering", "price_percentage": price_percentage, "oi_percentage": oi_percentage}
+                stock.set_analysis("BULLISH", "future_action", FutureActionAnalysis("short_covering", price_percentage, oi_percentage))
                 return True
             elif price_percentage <  (-1 * FuturesAnalyser.FUTURE_PRICE_CHANGE_PERCENTAGE) and \
                 oi_percentage < (-1 * FuturesAnalyser.FUTURE_OI_INCREASE_PERCENTAGE):
-                stock.analysis["BEARISH"]["future_action"] = {"action" : "long_covering", "price_percentage": price_percentage, "oi_percentage": oi_percentage}
+                stock.set_analysis("BULLISH", "future_action", FutureActionAnalysis("long_covering", price_percentage, oi_percentage))
                 return True
             return False
         except Exception as e:
@@ -81,21 +84,23 @@ class FuturesAnalyser(BaseAnalyzer):
             curr_price = (futures_data_curr_expiry.iloc[1]['SETTLE_PRICE'] + futures_data_next_expiry.iloc[1]['SETTLE_PRICE']) / 2
             price_percentage = percentageChange(curr_price, prev_price) 
 
+            FutureActionAnalysis = namedtuple('FutureActionAnalysis', ['action', 'price_percentage', 'oi_percentage' ])
+
             if  price_percentage > FuturesAnalyser.FUTURE_PRICE_CHANGE_PERCENTAGE and \
                 avg_oi_change_pct > FuturesAnalyser.FUTURE_OI_INCREASE_PERCENTAGE:
-                stock.analysis["BULLISH"]["future_action"] = {"action" : "long_buildup", "price_percentage": price_percentage, "oi_percentage": oi_percentage}
+                stock.set_analysis("BULLISH", "future_action", FutureActionAnalysis("long_buildup", price_percentage, avg_oi_change_pct))
                 return True
             elif price_percentage < (-1 * FuturesAnalyser.FUTURE_PRICE_CHANGE_PERCENTAGE) and \
                 avg_oi_change_pct > FuturesAnalyser.FUTURE_OI_INCREASE_PERCENTAGE:
-                stock.analysis["BEARISH"]["future_action"] = {"action" : "short_buildup", "price_percentage": price_percentage, "oi_percentage": oi_percentage}
+                stock.set_analysis("BULLISH", "future_action", FutureActionAnalysis("short_buildup", price_percentage, avg_oi_change_pct))
                 return True
             elif price_percentage >  FuturesAnalyser.FUTURE_PRICE_CHANGE_PERCENTAGE and \
                 avg_oi_change_pct < (-1 * FuturesAnalyser.FUTURE_OI_INCREASE_PERCENTAGE):
-                stock.analysis["BULLISH"]["future_action"] = {"action" : "short_covering", "price_percentage": price_percentage, "oi_percentage": oi_percentage}
+                stock.set_analysis("BULLISH", "future_action", FutureActionAnalysis("short_covering", price_percentage, avg_oi_change_pct))
                 return True
             elif price_percentage <  (-1 * FuturesAnalyser.FUTURE_PRICE_CHANGE_PERCENTAGE) and \
                 avg_oi_change_pct < (-1 * FuturesAnalyser.FUTURE_OI_INCREASE_PERCENTAGE):
-                stock.analysis["BEARISH"]["future_action"] = {"action" : "long_covering", "price_percentage": price_percentage, "oi_percentage": oi_percentage}
+                stock.set_analysis("BULLISH", "future_action", FutureActionAnalysis("long_covering", price_percentage, avg_oi_change_pct))
                 return True
             return False
         except Exception as e:

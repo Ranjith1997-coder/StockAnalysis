@@ -88,7 +88,16 @@ class Stock:
 
         return self.derivativesData
 
-
+    def set_analysis(self, trend : str, analysis_type: str, data):
+        if trend in ['BULLISH', 'BEARISH', 'NEUTRAL']:
+            self.analysis[trend][analysis_type] = data
+    
+    def reset_analysis(self):
+        self.analysis = {"Timestamp" : None,
+                            "BULLISH":{},
+                            "BEARISH":{},
+                            "NEUTRAL":{}
+                        }
     def get_stock_IV_data(self):
         try :
             self.ivData = getIVChartData(self.stockSymbolOpestra)[1]
@@ -106,12 +115,6 @@ class Stock:
     def reset_price_data(self):
         self.priceData = self.priceData[0:0]
     
-    def reset_analysis(self):
-        self.analysis = {"Timestamp" : None,
-                            "BULLISH":{},
-                            "BEARISH":{},
-                            "NEUTRAL":{}
-                        }
 
     def compute_rsi(self, rsi_lookback = 14):
         change = self.priceData['Close'].diff()
