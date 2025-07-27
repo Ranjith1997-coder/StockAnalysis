@@ -4,7 +4,7 @@ sys.path.append(os.getcwd())
 
 from notification.Notification import TELEGRAM_NOTIFICATIONS
 from datetime import datetime, time 
-from multiprocessing.pool import ThreadPool
+import concurrent.futures
 import common.constants as constant
 import common.shared as shared
 from common.Stock import Stock
@@ -18,6 +18,9 @@ from analyser.VolumeAnalyser import VolumeAnalyser
 from analyser.TechnicalAnalyser import TechnicalAnalyser
 from analyser.CandleStickPatternAnalyser import CandleStickAnalyser
 from common.logging_util import logger
+from typing import List, Tuple, Optional
+from enum import Enum
+import yfinance as yf
 
 class Trend (Enum):
     BULLISH = "BULLISH"
@@ -32,46 +35,64 @@ orchestrator : AnalyserOrchestrator = None
 PRODUCTION = False
 SHUTDOWN_SYSTEM = False
 
-def monitor(stock: Stock):
-        ticker = stock
-        stock_name = ticker.stockName
-        if ticker.is_price_data_empty():
-            return (1, "{} data not available".format(stock_name))
-        
-        try: 
-            ticker.compute_sma_of_volume(VOL_SMA_WIN_SIZE)
-            ticker.compute_rsi()
-            # ticker.compute_atr_rank()
-            ticker.reset_analysis()
-            ticker.compute_bollinger_band()
-            if constant.mode.name == constant.Mode.INTRADAY.name:
-                curr_data = ticker.priceData.iloc[-2]
-                prev_data = ticker.priceData.iloc[-3]
-            else:
-                curr_data = ticker.priceData.iloc[-1]
-                prev_data = ticker.priceData.iloc[-2]
+class MonitorResult(Enum):
+    SUCCESS = 0
+    NO_DATA = 1
+    ERROR = 2
 
-            trend_found = False
+def monitor(stock: Stock) -> Tuple[MonitorResult, bool, Optional[str]]:
+    """
+    Monitor a stock for trends and generate analysis.
+    
+    Args:
+        stock (Stock): The stock to monitor.
+    
+    Returns:
+        Tuple[MonitorResult, bool, Optional[str]]: 
+            - MonitorResult: The result of the monitoring process.
+            - bool: Whether a trend was found.
+            - Optional[str]: The analysis message if a trend was found, else None.
+    """
+    if stock.is_price_data_empty():
+        return MonitorResult.NO_DATA, False, f"{stock.stock_symbol} data not available"
+    
+    try:
+        stock.compute_sma_of_volume(VOL_SMA_WIN_SIZE)
+        stock.compute_rsi()
+        stock.reset_analysis()
+        stock.compute_bollinger_band()
 
-            if constant.mode.name == constant.Mode.POSITIONAL.name:
-                logger.debug("Positional analysis for {} stated.".format(ticker.stockName))
-                trend_found = orchestrator.run_all_positional(stock)
-                logger.debug("Positional analysis for {} completed.".format(ticker.stockName))
-            else : 
-                logger.debug("Intraday analysis for {} stated.".format(ticker.stockName))
-                trend_found = orchestrator.run_all_intraday(stock)
-                logger.debug("Intraday analysis for {} completed.".format(ticker.stockName))
-            
-            if trend_found:
-                logger.info("Trend found for {} ".format(ticker.stockName))
-                message = orchestrator.generate_analysis_message(ticker)
-                TELEGRAM_NOTIFICATIONS.send_notification(message)
-                return (0, trend_found, message)   
-            else:
-                return (0, trend_found, None)
-        except Exception as e : 
-            logger.error("Error occured while monitoring {}. \n Exception : {}".format(ticker.stockName, e))
+        analysis_type = "Positional" if constant.mode == constant.Mode.POSITIONAL else "Intraday"
+        logger.debug(f"{analysis_type} analysis for {stock.stockName} started.")
         
+        trend_found = (
+            orchestrator.run_all_positional(stock)
+            if constant.mode == constant.Mode.POSITIONAL
+            else orchestrator.run_all_intraday(stock)
+        )
+        
+        logger.debug(f"{analysis_type} analysis for {stock.stockName} completed.")
+        
+        if trend_found:
+            logger.info(f"Trend found for {stock.stockName}")
+            message = orchestrator.generate_analysis_message(stock)
+            TELEGRAM_NOTIFICATIONS.send_notification(message)
+            return MonitorResult.SUCCESS, True, message
+        
+        return MonitorResult.SUCCESS, False, None
+
+    except Exception as e:
+        logger.exception(f"Error occurred while monitoring {stock.stockName}")
+        return MonitorResult.ERROR, False, str(e)
+
+def process_monitor_results(results):
+    for result, trend_found, message in results:
+        if result == MonitorResult.NO_DATA:
+            logger.warning(message)
+        elif result == MonitorResult.ERROR:
+            logger.error(f"Error during monitoring: {message}")
+        elif trend_found:
+            logger.info(f"Trend found: {message}")
 
 def create_stock_objects(stock_list : list):
     count = 0
@@ -83,6 +104,87 @@ def create_stock_objects(stock_list : list):
         shared.stock_token_obj_dict[stock["instrument_token"]] = ticker
         shared.stocks_list.append(stock["tradingsymbol"])
         count += 1
+
+def fetch_price_data(stock_objs):
+    symbols = [stock.stockSymbolYFinance for stock in stock_objs]
+    if constant.mode.name == constant.Mode.POSITIONAL.name:
+        data = yf.download(symbols, period="2y", interval="1d", group_by='ticker')
+    else:
+        data = yf.download(symbols, period="2d", interval="5m", group_by='ticker')
+    
+    for stock in stock_objs:
+        try:
+            if len(symbols) > 1:
+                stock_data = data[stock.stockSymbolYFinance]
+            else:
+                stock_data = data
+            stock.priceData = stock_data
+            stock.last_price_update = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            logger.info(f"Price data fetched successfully for {stock.stockName}")
+        except Exception as e:
+            logger.error(f"Error fetching price data for {stock.stockName}: {e}")
+
+def fetch_futures_data(stock):
+    try:
+        if constant.mode.name == constant.Mode.POSITIONAL.name:
+            stock.get_futures_and_options_data_from_nse_positional()
+        else:
+            stock.get_futures_and_options_data_from_nse_intraday()
+        logger.info(f"Futures data fetched successfully for {stock.stockName}")
+    except Exception as e:
+        logger.error(f"Error fetching futures data for {stock.stockName}: {e}")
+
+
+def process_stock(stock: Stock) -> Tuple[MonitorResult, bool, Optional[str]]:
+    try:
+        return monitor(stock)
+    except Exception as exc:
+        logger.error(f"Error processing {stock.stockName}: {exc}")
+        return MonitorResult.ERROR, False, str(exc)
+
+def fetch_and_analyze_stocks() -> List[Tuple[MonitorResult, bool, Optional[str]]]:
+    logger.info("Fetching and analyzing data for all stocks")
+    
+    stock_objs = list(shared.stock_token_obj_dict.values())
+    
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        # Fetch price data for all stocks at once
+        price_future = executor.submit(fetch_price_data, stock_objs)
+        
+        # Fetch futures data for each stock in parallel
+        futures_futures = {executor.submit(fetch_futures_data, stock): stock for stock in stock_objs}
+        
+        # Wait for all data fetching to complete
+        concurrent.futures.wait([price_future] + list(futures_futures.keys()))
+        
+        # Check for any errors in price data fetching
+        try:
+            price_future.result()
+        except Exception as exc:
+            logger.error(f"Error fetching price data for stocks: {exc}")
+        
+        # Check for any errors in futures data fetching
+        for future in concurrent.futures.as_completed(futures_futures):
+            stock = futures_futures[future]
+            try:
+                future.result()
+            except Exception as exc:
+                logger.error(f"Error fetching futures data for {stock.stockName}: {exc}")
+        
+        # Monitor and analyze all stocks
+        monitor_futures = {executor.submit(process_stock, stock): stock for stock in stock_objs}
+        results = []
+        for future in concurrent.futures.as_completed(monitor_futures):
+            stock = monitor_futures[future]
+            try:
+                result = future.result()
+                results.append(result)
+            except Exception as exc:
+                logger.error(f"Unexpected error processing {stock.stockName}: {exc}")
+                results.append((MonitorResult.ERROR, False, str(exc)))
+
+    logger.info("Data fetching and analysis completed for all stocks")
+    return results
 
 
 def intraday_analysis():
@@ -98,16 +200,11 @@ def intraday_analysis():
     while(is_in_time_period):
         logger.info("current iteration time : {}".format(datetime.now()))
 
-        for stock in shared.stock_token_obj_dict:
-            shared.stock_token_obj_dict[stock].get_stock_price_data('2d','5m')
-            shared.stock_token_obj_dict[stock].get_futures_and_options_data_from_nse_intraday()
-        
-        for result in thread_pool.map(monitor, list(shared.stock_token_obj_dict.values())):
-            if result[0]:
-                print("Error : {}".format(result[1]))
-            else:
-                if result[1]:
-                    print(result[2])
+        try:
+            results = fetch_and_analyze_stocks()
+            process_monitor_results(results)
+        except Exception as e:
+            logger.error(f"Critical error in stock analysis: {e}")
         
         for stock in shared.stock_token_obj_dict:
             shared.stock_token_obj_dict[stock].reset_price_data()
@@ -137,17 +234,11 @@ def positional_analysis():
     logger.info("EOD analysis Started")
     TELEGRAM_NOTIFICATIONS.send_notification("*********** EOD Analysis ***********")
     orchestrator.reset_all_constants()
-    for stock in shared.stock_token_obj_dict:
-        shared.stock_token_obj_dict[stock].get_stock_price_data('2y','1d')
-        shared.stock_token_obj_dict[stock].get_futures_and_options_data_from_nse_positional()
-
-    logger.info("Data fetched for all stocks")
-    for result in thread_pool.map(monitor, list(shared.stock_token_obj_dict.values())):
-        if result[0]:
-            print("Error : {}".format(result[1]))
-        else:
-            if result[1]:
-                print(result[2])
+    try:
+        results = fetch_and_analyze_stocks()
+        process_monitor_results(results)
+    except Exception as e:
+        logger.error(f"Critical error in stock analysis: {e}")
     
     for stock in shared.stock_token_obj_dict:
         shared.stock_token_obj_dict[stock].reset_price_data()
@@ -178,7 +269,6 @@ def init():
     shared.stockExpires = NSE_DATA_CLASS.expiry_dates_future()
     stock_list = data["data"]["UnderlyingList"]
     create_stock_objects(stock_list)
-    thread_pool = ThreadPool(processes=10)
 
     orchestrator = AnalyserOrchestrator()
     orchestrator.register(FuturesAnalyser())
