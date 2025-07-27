@@ -30,7 +30,6 @@ class TELEGRAM_NOTIFICATIONS:
          # Pass your Access Token here
         # Make a dictionary that includes, title and body
         if not cls.is_production:
-            print(f" Message: {message}")
             return
         msg = {"chat_id": TELEGRAM_CHAT_ID, "text": message}
         # Sent a posts request
