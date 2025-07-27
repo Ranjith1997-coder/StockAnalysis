@@ -9,7 +9,9 @@ class TechnicalAnalyser(BaseAnalyzer):
 
     RSI_UPPER_THRESHOLD = 80
     RSI_LOWER_THRESHOLD = 20
+    RSI_LOOKUP_PERIOD = 14
     ATR_THRESHOLD = 0.97
+    
     def __init__(self) -> None:
         self.analyserName = "Technical Analyser"
         super().__init__()
@@ -22,13 +24,52 @@ class TechnicalAnalyser(BaseAnalyzer):
         logger.debug(f"Technical Analyser constants reset for mode {constant.mode.name}")
         logger.debug(f"RSI_UPPER_THRESHOLD = {TechnicalAnalyser.RSI_UPPER_THRESHOLD} , RSI_LOWER_THRESHOLD = {TechnicalAnalyser.RSI_LOWER_THRESHOLD}, ATR_THRESHOLD = {TechnicalAnalyser.ATR_THRESHOLD}")
 
+
+    def compute_rsi(self, close_series):
+        if len(close_series) < TechnicalAnalyser.RSI_LOOKUP_PERIOD + 1:
+            raise ValueError(f"Need at least {TechnicalAnalyser.RSI_LOOKUP_PERIOD  + 1} data points to compute RSI")
+
+        # change = close_series.diff()
+        # up_series = change.mask(change < 0, 0.0)
+        # down_series = -change.mask(change > 0, -0.0)
+
+        # #@numba.jit
+        # def rma(x, n):
+        #     """Running moving average"""
+        #     a = np.full_like(x, np.nan)
+        #     # pdb.set_trace()
+        #     a[n] = x[1:n+1].mean()
+        #     for i in range(n+1, len(x)):
+        #         a[i] = (a[i-1] * (n - 1) + x[i]) / n
+        #     return a
+
+        # avg_gain = rma(up_series.to_numpy(), TechnicalAnalyser.RSI_LOOKUP_PERIOD)
+        # avg_loss = rma(down_series.to_numpy(), TechnicalAnalyser.RSI_LOOKUP_PERIOD)
+
+        # rs = avg_gain / avg_loss
+        # rsi = 100 - (100 / (1 + rs))
+        # return rsi[-1]
+        delta = close_series.diff().dropna()
+
+        gains = delta.where(delta > 0, 0)
+        losses = -delta.where(delta < 0, 0)
+
+        # Use Wilder's smoothing method (EMA with adjust=False)
+        avg_gain = gains.ewm(span=TechnicalAnalyser.RSI_LOOKUP_PERIOD, adjust=False).mean()
+        avg_loss = losses.ewm(span=TechnicalAnalyser.RSI_LOOKUP_PERIOD, adjust=False).mean()
+
+        rs = avg_gain / avg_loss
+        rsi = 100 - (100 / (1 + rs))
+
+        return rsi.iloc[-1]
+    
     @BaseAnalyzer.both
     def analyse_rsi(self, stock: Stock):
         try : 
             logger.debug(f'Inside analyse_rsi for stock {stock.stock_symbol}')
-            curr_data = stock.current_equity_data
-            rsi_value = curr_data["rsi"]
-            RSIAnalysis = namedtuple("RSIAnalysis", ["value"])
+            rsi_value = self.compute_rsi(stock.priceData["Close"].iloc[(-TechnicalAnalyser.RSI_LOOKUP_PERIOD * 5 ) -1:])
+            RSIAnalysis = namedtuple("RSIAnalysis", ["value"])            
+
             if rsi_value > TechnicalAnalyser.RSI_UPPER_THRESHOLD: 
                 stock.set_analysis("BEARISH", "RSI", RSIAnalysis(value=rsi_value))
                 return True
@@ -45,16 +86,14 @@ class TechnicalAnalyser(BaseAnalyzer):
     def analyse_rsi_crossover(self, stock: Stock):
         try : 
             logger.debug(f'Inside analyse_rsi_crossover for stock {stock.stock_symbol}')
-            curr_data = stock.current_equity_data
-            prev_data = stock.previous_equity_data
-            curr_rsi_value = curr_data["rsi"]
-            prev_rsi_value = prev_data["rsi"]
+            curr_rsi_value = self.compute_rsi(stock.priceData["Close"].iloc[(-TechnicalAnalyser.RSI_LOOKUP_PERIOD * 5 ) - 1:])
+            prev_rsi_value = self.compute_rsi(stock.priceData["Close"].iloc[(-TechnicalAnalyser.RSI_LOOKUP_PERIOD * 5 ) - 2 : -1])
             RSICrossoverAnalysis = namedtuple("RSICrossoverAnalysis", ["value"])
             if prev_rsi_value > TechnicalAnalyser.RSI_UPPER_THRESHOLD and curr_rsi_value < TechnicalAnalyser.RSI_UPPER_THRESHOLD: 
-                stock.set_analysis("BULLISH", "rsi_crossover", RSICrossoverAnalysis(value=curr_data["rsi"]))
+                stock.set_analysis("BULLISH", "rsi_crossover", RSICrossoverAnalysis(value=curr_rsi_value))
                 return True
             elif prev_rsi_value < TechnicalAnalyser.RSI_LOWER_THRESHOLD and curr_rsi_value > TechnicalAnalyser.RSI_LOWER_THRESHOLD: 
-                stock.set_analysis("BEARISH", "rsi_crossover", RSICrossoverAnalysis(value=curr_data["rsi"]))
+                stock.set_analysis("BEARISH", "rsi_crossover", RSICrossoverAnalysis(value=curr_rsi_value))
                 return True
             return False
         except Exception as e:
@@ -65,13 +104,31 @@ class TechnicalAnalyser(BaseAnalyzer):
     @BaseAnalyzer.both
     def analyse_Bolinger_band(self, stock: Stock):
         try : 
+            def compute_latest_bollinger_bands(series, window=20, num_std=2):
+                """
+                Compute latest Bollinger Bands values using only the last 'window' points.
+                Returns: (sma, upper_band, lower_band)
+                """
+                if len(series) < window:
+                    raise ValueError("Not enough data to compute Bollinger Bands.")
+
+                recent = series[-window:]
+                sma = recent.mean()
+                std = recent.std()
+
+                upper = sma + num_std * std
+                lower = sma - num_std * std
+
+                return sma, upper, lower
+            
             logger.debug(f'Inside analyse_Bolinger_band for stock {stock.stock_symbol}')
+            sma , upper_band, lower_band = compute_latest_bollinger_bands(stock.priceData['Close'])
             curr_data = stock.current_equity_data
             BBAnalysis = namedtuple("BBAnalysis", ["close", "upper_band", "lower_band"])
-            if curr_data['Close'] > curr_data['BB_UPPER_BAND']: 
+            if curr_data['Close'] > upper_band: 
                 stock.set_analysis("BEARISH", "BollingerBand", BBAnalysis(close=curr_data['Close'], upper_band=curr_data['BB_UPPER_BAND'], lower_band=curr_data['BB_LOWER_BAND']))
                 return True
-            elif curr_data['Close'] < curr_data['BB_LOWER_BAND']:
+            elif curr_data['Close'] < lower_band:
                 stock.set_analysis("BULLISH", "BollingerBand", BBAnalysis(close=curr_data['Close'], upper_band=curr_data['BB_UPPER_BAND'], lower_band=curr_data['BB_LOWER_BAND']))
                 return True
             return False
