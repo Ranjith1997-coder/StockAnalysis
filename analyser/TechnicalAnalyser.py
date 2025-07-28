@@ -88,12 +88,12 @@ class TechnicalAnalyser(BaseAnalyzer):
             logger.debug(f'Inside analyse_rsi_crossover for stock {stock.stock_symbol}')
             curr_rsi_value = self.compute_rsi(stock.priceData["Close"].iloc[(-TechnicalAnalyser.RSI_LOOKUP_PERIOD * 5 ) - 1:])
             prev_rsi_value = self.compute_rsi(stock.priceData["Close"].iloc[(-TechnicalAnalyser.RSI_LOOKUP_PERIOD * 5 ) - 2 : -1])
-            RSICrossoverAnalysis = namedtuple("RSICrossoverAnalysis", ["value"])
+            RSICrossoverAnalysis = namedtuple("RSICrossoverAnalysis", ["curr_value", "prev_value"])
             if prev_rsi_value > TechnicalAnalyser.RSI_UPPER_THRESHOLD and curr_rsi_value < TechnicalAnalyser.RSI_UPPER_THRESHOLD: 
-                stock.set_analysis("BULLISH", "rsi_crossover", RSICrossoverAnalysis(value=curr_rsi_value))
+                stock.set_analysis("BEARISH", "rsi_crossover", RSICrossoverAnalysis(curr_value=curr_rsi_value, prev_value=prev_rsi_value))
                 return True
             elif prev_rsi_value < TechnicalAnalyser.RSI_LOWER_THRESHOLD and curr_rsi_value > TechnicalAnalyser.RSI_LOWER_THRESHOLD: 
-                stock.set_analysis("BEARISH", "rsi_crossover", RSICrossoverAnalysis(value=curr_rsi_value))
+                stock.set_analysis("BULLISH", "rsi_crossover", RSICrossoverAnalysis(curr_value=curr_rsi_value, prev_value=prev_rsi_value))
                 return True
             return False
         except Exception as e:
@@ -126,10 +126,10 @@ class TechnicalAnalyser(BaseAnalyzer):
             curr_data = stock.current_equity_data
             BBAnalysis = namedtuple("BBAnalysis", ["close", "upper_band", "lower_band"])
             if curr_data['Close'] > upper_band: 
-                stock.set_analysis("BEARISH", "BollingerBand", BBAnalysis(close=curr_data['Close'], upper_band=curr_data['BB_UPPER_BAND'], lower_band=curr_data['BB_LOWER_BAND']))
+                stock.set_analysis("BEARISH", "BollingerBand", BBAnalysis(close=curr_data['Close'], upper_band=upper_band, lower_band=lower_band))
                 return True
             elif curr_data['Close'] < lower_band:
-                stock.set_analysis("BULLISH", "BollingerBand", BBAnalysis(close=curr_data['Close'], upper_band=curr_data['BB_UPPER_BAND'], lower_band=curr_data['BB_LOWER_BAND']))
+                stock.set_analysis("BULLISH", "BollingerBand", BBAnalysis(close=curr_data['Close'], upper_band=upper_band, lower_band=lower_band))
                 return True
             return False
         except Exception as e:
