@@ -8,7 +8,7 @@ import concurrent.futures
 import common.constants as constant
 import common.shared as shared
 from common.Stock import Stock
-from common.helperFunctions import get_stock_objects_from_json, isNowInTimePeriod
+from common.helperFunctions import *
 from enum import Enum
 from time import sleep
 from nse.nse_derivative_data import NSE_DATA_CLASS
@@ -89,13 +89,24 @@ def process_monitor_results(results):
         elif trend_found:
             logger.info(f"Trend found: \n{message}")
 
-def create_stock_objects(stock_list : list):
+def create_stock_objects():
     count = 0
+    stock_list = get_stock_objects_from_json()
+    stock_OHLCV_list = get_stock_OHLCV_from_json()
+
+    stock_OHLCV_dict = {stock["tradingsymbol"]: stock for stock in stock_OHLCV_list}
 
     for stock in stock_list:
         if not PRODUCTION and constant.NO_OF_STOCKS != -1 and count >= constant.NO_OF_STOCKS:
             break
         ticker = Stock(stock["name"], stock["tradingsymbol"])
+        if stock["tradingsymbol"] in stock_OHLCV_dict.keys():
+            open = stock_OHLCV_dict[stock["tradingsymbol"]]["OPEN"]
+            close = stock_OHLCV_dict[stock["tradingsymbol"]]["CLOSE"]
+            high = stock_OHLCV_dict[stock["tradingsymbol"]]["HIGH"]
+            low = stock_OHLCV_dict[stock["tradingsymbol"]]["LOW"]
+            volume = stock_OHLCV_dict[stock["tradingsymbol"]]["VOLUME"]
+            ticker.set_prev_day_ohlcv(open, close, high, low, volume)
         shared.stock_token_obj_dict[stock["instrument_token"]] = ticker
         shared.stocks_list.append(stock["tradingsymbol"])
         count += 1
@@ -189,6 +200,70 @@ def fetch_and_analyze_stocks() -> List[Tuple[MonitorResult, bool, Optional[str]]
     logger.info("Data fetching and analysis completed for all stocks")
     return results
 
+def get_top_gainers_and_losers(stock_objs):
+    """
+    Returns the top 5 gainers and top 5 losers based on percentage change in stock prices.
+
+    Args:
+        stock_objs (list): List of Stock objects with price data.
+
+    Returns:
+        Tuple[List[Tuple[str, float]], List[Tuple[str, float]]]: 
+            - List of top 5 gainers as tuples of (stock symbol, percentage gain).
+            - List of top 5 losers as tuples of (stock symbol, percentage loss).
+    """
+    gainers = []
+    losers = []
+
+    for _ , stock in stock_objs.items():
+        try:
+            # Assuming stock.priceData contains a DataFrame with 'Close' prices
+            if not stock.is_price_data_empty() and stock.prevDayOHLCV is not None:
+                current_close = stock.priceData['Close'].iloc[-1]
+                # previous_close = stock.priceData['Close'].iloc[-2]
+                previous_close = stock.prevDayOHLCV['CLOSE']
+                change_percent = percentageChange(current_close, previous_close)
+                
+                if change_percent > 0:
+                    gainers.append((stock.stock_symbol, change_percent))
+                else:
+                    losers.append((stock.stock_symbol, change_percent))
+        except Exception as e:
+            logger.error(f"Error calculating percentage change for {stock.stock_symbol}: {e}")
+
+    # Sort gainers and losers by percentage change
+    gainers.sort(key=lambda x: x[1], reverse=True)
+    losers.sort(key=lambda x: x[1])
+
+    # Return top 5 gainers and top 5 losers
+    return gainers[:5], losers[:5]
+
+def generate_top_gainers_and_losers_report(gainers, losers):
+    """
+    Generates a report with top gainers and top losers based on percentage change in stock prices.
+
+    Args:
+        gainers (list): List of tuples of (stock symbol, percentage gain).
+        losers (list): List of tuples of (stock symbol, percentage loss).
+
+    Returns:
+        str: Report as a string.
+    """
+    report = "*********** Top Gainers ***********\n"
+    for i, (stock, change_percent) in enumerate(gainers):
+        report += f"{i+1}. {stock}: {change_percent:.2f}%\n"
+
+    report += "\n*********** Top Losers ***********\n"
+    for i, (stock, change_percent) in enumerate(losers):
+        report += f"{i+1}. {stock}: {change_percent:.2f}%\n"
+
+    return report
+
+def report_top_gainers_and_losers():
+    top_gainers , top_losers = get_top_gainers_and_losers(shared.stock_token_obj_dict)
+    report = generate_top_gainers_and_losers_report(top_gainers, top_losers)
+    TELEGRAM_NOTIFICATIONS.send_notification(report)
+    logger.info(f"EOD Report\n {report}")
 
 def intraday_analysis():
     constant.mode = constant.Mode.INTRADAY
@@ -208,7 +283,9 @@ def intraday_analysis():
             process_monitor_results(results)
         except Exception as e:
             logger.error(f"Critical error in stock analysis: {e}")
-        
+
+        report_top_gainers_and_losers()
+
         for stock in shared.stock_token_obj_dict:
             shared.stock_token_obj_dict[stock].reset_price_data()
 
@@ -246,7 +323,11 @@ def positional_analysis():
         process_monitor_results(results)
     except Exception as e:
         logger.error(f"Critical error in stock analysis: {e}")
-    
+
+    report_top_gainers_and_losers()
+    if PRODUCTION:
+        save_stock_objects_into_json(shared.stock_token_obj_dict)
+
     for stock in shared.stock_token_obj_dict:
         shared.stock_token_obj_dict[stock].reset_price_data()
 
@@ -272,11 +353,8 @@ def init():
         logger.info("Shutdown mode disabled")
         SHUTDOWN_SYSTEM = False
     
-    data = get_stock_objects_from_json()
     # shared.stockExpires = NSE_DATA_CLASS.expiry_dates_future()
-    stock_list = data["data"]["UnderlyingList"]
-    create_stock_objects(stock_list)
-
+    create_stock_objects()
     orchestrator = AnalyserOrchestrator()
     # orchestrator.register(FuturesAnalyser())
     orchestrator.register(VolumeAnalyser())

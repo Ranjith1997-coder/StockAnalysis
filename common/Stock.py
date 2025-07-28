@@ -24,6 +24,7 @@ class Stock:
         self.stockName = stockName
         self.stock_symbol = stockSymbol
         self.stockSymbolYFinance = stockSymbol+".NS"
+        self.prevDayOHLCV = None
         self.last_price_update = None
         self.stockSymbolOpestra = stockSymbol
         self.priceData = pd.DataFrame()
@@ -48,7 +49,8 @@ class Stock:
             logger.error("Error while getting the stock price data")
             raise Exception()
         return  self.priceData
-    
+    def set_prev_day_ohlcv(self, open, close, high, low, volume):
+        self.prevDayOHLCV = {"OPEN":open, "HIGH":high, "LOW":low, "CLOSE":close, "VOLUME":volume}
     def get_futures_and_options_data_from_nse_intraday(self):
         currexpiry = shared.stockExpires[0]
         nextexpiry = shared.stockExpires[1]
