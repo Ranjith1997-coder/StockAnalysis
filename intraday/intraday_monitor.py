@@ -146,26 +146,33 @@ def fetch_and_analyze_stocks() -> List[Tuple[MonitorResult, bool, Optional[str]]
     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
         # Fetch price data for all stocks at once
         price_future = executor.submit(fetch_price_data, stock_objs)
-        
-        # Fetch futures data for each stock in parallel
-        futures_futures = {executor.submit(fetch_futures_data, stock): stock for stock in stock_objs}
-        
-        # Wait for all data fetching to complete
-        concurrent.futures.wait([price_future] + list(futures_futures.keys()))
-        
-        # Check for any errors in price data fetching
+
+         # Wait for price data fetching to complete
         try:
-            price_future.result()
+            price_future.result()  # This will block until the price data fetching is complete
         except Exception as exc:
             logger.error(f"Error fetching price data for stocks: {exc}")
+            return [(MonitorResult.ERROR, False, str(exc))]
         
-        # Check for any errors in futures data fetching
-        for future in concurrent.futures.as_completed(futures_futures):
-            stock = futures_futures[future]
-            try:
-                future.result()
-            except Exception as exc:
-                logger.error(f"Error fetching futures data for {stock.stockName}: {exc}")
+        # # Fetch futures data for each stock in parallel
+        # futures_futures = {executor.submit(fetch_futures_data, stock): stock for stock in stock_objs}
+        
+        # # Wait for all data fetching to complete
+        # concurrent.futures.wait([price_future] + list(futures_futures.keys()))
+        
+        # # Check for any errors in price data fetching
+        # try:
+        #     price_future.result()
+        # except Exception as exc:
+        #     logger.error(f"Error fetching price data for stocks: {exc}")
+        
+        # # Check for any errors in futures data fetching
+        # for future in concurrent.futures.as_completed(futures_futures):
+        #     stock = futures_futures[future]
+        #     try:
+        #         future.result()
+        #     except Exception as exc:
+        #         logger.error(f"Error fetching futures data for {stock.stockName}: {exc}")
         
         # Monitor and analyze all stocks
         monitor_futures = {executor.submit(process_stock, stock): stock for stock in stock_objs}
@@ -266,12 +273,12 @@ def init():
         SHUTDOWN_SYSTEM = False
     
     data = get_stock_objects_from_json()
-    shared.stockExpires = NSE_DATA_CLASS.expiry_dates_future()
+    # shared.stockExpires = NSE_DATA_CLASS.expiry_dates_future()
     stock_list = data["data"]["UnderlyingList"]
     create_stock_objects(stock_list)
 
     orchestrator = AnalyserOrchestrator()
-    orchestrator.register(FuturesAnalyser())
+    # orchestrator.register(FuturesAnalyser())
     orchestrator.register(VolumeAnalyser())
     orchestrator.register(TechnicalAnalyser())
     orchestrator.register(CandleStickAnalyser())
