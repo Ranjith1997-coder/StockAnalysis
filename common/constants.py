@@ -29,6 +29,10 @@ TELEGRAM_TOKEN = '7042349293:AAGW0-OzOwfvbKdkuM6G40UfcXIHcs_YJwk'
 TELEGRAM_CHAT_ID = "1462841143"
 TELEGRAM_URL = 'https://api.telegram.org/bot'
 
+#FILE NAMES
+DERIVATIVE_LIST_FILENAME = "final_derivatives_list.json"
+STOCK_DATA_FILENAME = "stock_data.json"
+
 
 NseOptionChainURL = "https://www.nseindia.com/option-chain"
 
