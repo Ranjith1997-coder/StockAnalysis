@@ -1,89 +1,153 @@
-from positional.Analyser import Analyser
-from math import log
+import traceback
+from analyser.Analyser import BaseAnalyzer
+from common.Stock import Stock
+import common.constants as constant
+from common.logging_util import logger
+from collections import namedtuple
 
+class TechnicalAnalyser(BaseAnalyzer):
 
-
-class TechnicalAnalyser(Analyser):
-    def __init__(self , rsi_upper_limit = 75, rsi_lower_limit = 25):
-        super().__init__()
+    RSI_UPPER_THRESHOLD = 80
+    RSI_LOWER_THRESHOLD = 20
+    RSI_LOOKUP_PERIOD = 14
+    ATR_THRESHOLD = 0.97
+    
+    def __init__(self) -> None:
         self.analyserName = "Technical Analyser"
-        self.rsi_upper_limit = rsi_upper_limit
-        self.rsi_lower_limit = rsi_lower_limit
-        self.rsi_crossover_lookback = 5
-        self.analysisMethods = (
-        {"method": self.rsiIndicator, "imputData": self.InputData.PRICE_DATA},
-        {"method": self.rsiCrossoverIndicator, "imputData": self.InputData.PRICE_DATA},
-        {"method": self.MACDIndicator, "imputData": self.InputData.PRICE_DATA},
-        {"method": self.BollingerBandIndicator, "imputData": self.InputData.PRICE_DATA},
-        {"method": self.price_52_week, "imputData": self.InputData.PRICE_DATA},
-        {"method": self.daily_return, "imputData": self.InputData.PRICE_DATA})
+        super().__init__()
+    
+    def reset_constants(self):
+        # if constant.mode.name == constant.Mode.INTRADAY.name:
+        #     #add something later on this
+        # else:
+        #      #add something later on this
+        logger.debug(f"Technical Analyser constants reset for mode {constant.mode.name}")
+        logger.debug(f"RSI_UPPER_THRESHOLD = {TechnicalAnalyser.RSI_UPPER_THRESHOLD} , RSI_LOWER_THRESHOLD = {TechnicalAnalyser.RSI_LOWER_THRESHOLD}, ATR_THRESHOLD = {TechnicalAnalyser.ATR_THRESHOLD}")
 
-    def rsiIndicator(self, priceData):
-        currentRSI = priceData['rsi'].iloc[-1]
-        if (currentRSI > self.rsi_upper_limit):
-            return (True,self.Trend.Bearish, "Stock is overbought , RSI is {}".format(currentRSI))
-        elif (currentRSI < self.rsi_lower_limit):
-            return (True, self.Trend.Bullish, "Stock is oversold , RSI is {}".format(currentRSI))
-        return (False,None,None)
 
-    def rsiCrossoverIndicator(self, priceData):
-        currentRSI = priceData['rsi'].iloc[-1]
-        previousRSIData = priceData['rsi'].tail(self.rsi_crossover_lookback + 1)
-        if (currentRSI < self.rsi_upper_limit) and (currentRSI > self.rsi_lower_limit):
-            for i in range(len(previousRSIData)):
-                if (previousRSIData.iloc[i]) >= self.rsi_upper_limit:
-                    return (True, self.Trend.Bearish, "Rsi made crossover from overbought , RSI is {}".format(currentRSI))
-                elif (previousRSIData.iloc[i]) <= self.rsi_lower_limit:
-                    return (True, self.Trend.Bullish, "Rsi made crossover from oversold , RSI is {}".format(currentRSI))
-        return (False, None, None)
+    def compute_rsi(self, close_series):
+        if len(close_series) < TechnicalAnalyser.RSI_LOOKUP_PERIOD + 1:
+            raise ValueError(f"Need at least {TechnicalAnalyser.RSI_LOOKUP_PERIOD  + 1} data points to compute RSI")
 
-    def MACDIndicator(self,priceData):
+        # change = close_series.diff()
+        # up_series = change.mask(change < 0, 0.0)
+        # down_series = -change.mask(change > 0, -0.0)
 
-        k = priceData['Close'].ewm(span=12, adjust=False, min_periods=12).mean()
-        d = priceData['Close'].ewm(span=26, adjust=False, min_periods=26).mean()
+        # #@numba.jit
+        # def rma(x, n):
+        #     """Running moving average"""
+        #     a = np.full_like(x, np.nan)
+        #     # pdb.set_trace()
+        #     a[n] = x[1:n+1].mean()
+        #     for i in range(n+1, len(x)):
+        #         a[i] = (a[i-1] * (n - 1) + x[i]) / n
+        #     return a
 
-        macd = k - d
-        macd_s = macd.ewm(span=9, adjust=False, min_periods=9).mean()
+        # avg_gain = rma(up_series.to_numpy(), TechnicalAnalyser.RSI_LOOKUP_PERIOD)
+        # avg_loss = rma(down_series.to_numpy(), TechnicalAnalyser.RSI_LOOKUP_PERIOD)
 
-        if (macd[-2] < macd_s[-2]) and (macd[-1] > macd_s[-1]):
-            return (True, self.Trend.Bullish, "MACD Bullish crossover ")
-        elif (macd[-2] > macd_s[-2]) and (macd[-1] < macd_s[-1]):
-            return (True, self.Trend.Bearish, "MACD Bearish crossover ")
-        return (False, None, None)
+        # rs = avg_gain / avg_loss
+        # rsi = 100 - (100 / (1 + rs))
+        # return rsi[-1]
+        delta = close_series.diff().dropna()
 
-    def BollingerBandIndicator(self, priceData):
+        gains = delta.where(delta > 0, 0)
+        losses = -delta.where(delta < 0, 0)
 
-        if priceData['Close'].iloc[-2] > priceData['lower_bb'].iloc[-2] and priceData['Close'].iloc[-1] < priceData['lower_bb'].iloc[-1]:
-            return (True, self.Trend.Bullish, "Bollinger Band Bullish indicator")
-        elif priceData['Close'].iloc[-2] < priceData['upper_bb'].iloc[-2] and priceData['Close'].iloc[-1] > priceData['upper_bb'].iloc[-1]:
-            return (True, self.Trend.Bearish, "Bollinger Band Bearish indicator")
-        return (False, None, None)
+        # Use Wilder's smoothing method (EMA with adjust=False)
+        avg_gain = gains.ewm(span=TechnicalAnalyser.RSI_LOOKUP_PERIOD, adjust=False).mean()
+        avg_loss = losses.ewm(span=TechnicalAnalyser.RSI_LOOKUP_PERIOD, adjust=False).mean()
 
-    def price_52_week(self,priceData, percent = 2):
+        rs = avg_gain / avg_loss
+        rsi = 100 - (100 / (1 + rs))
 
-        trailing_year_data = priceData['Close'].tail(252)
-        currentValue = trailing_year_data[-1]
-        min_value = trailing_year_data.min()
-        max_value = trailing_year_data.max()
-        max_percent = ((max_value - currentValue) / currentValue) * 100
-        min_percent = ((currentValue - min_value) / currentValue) * 100
+        return rsi.iloc[-1]
+    
+    @BaseAnalyzer.both
+    def analyse_rsi(self, stock: Stock):
+        try : 
+            logger.debug(f'Inside analyse_rsi for stock {stock.stock_symbol}')
+            rsi_value = self.compute_rsi(stock.priceData["Close"].iloc[(-TechnicalAnalyser.RSI_LOOKUP_PERIOD * 5 ) -1:])
+            RSIAnalysis = namedtuple("RSIAnalysis", ["value"])            
 
-        if (currentValue == max_value):
-            return (True, self.Trend.Neutral, "Price is 52 week high")
-        elif (max_percent <= percent):
-            return (True, self.Trend.Neutral, "Price is {}% close to 52 week high".format(max_percent))
-        elif (currentValue == min_value):
-            return (True, self.Trend.Neutral, "Price is 52 week low")
-        elif (min_percent <= percent):
-            return (True, self.Trend.Neutral, "Price is {}% close to 52 week low".format(min_percent))
-        return (False, None, None)
+            if rsi_value > TechnicalAnalyser.RSI_UPPER_THRESHOLD: 
+                stock.set_analysis("BEARISH", "RSI", RSIAnalysis(value=rsi_value))
+                return True
+            elif rsi_value < TechnicalAnalyser.RSI_LOWER_THRESHOLD:
+                stock.set_analysis("BULLISH", "RSI", RSIAnalysis(value=rsi_value))
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"Error in analyse_rsi for stock {stock.stock_symbol}: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            return False
+    
+    @BaseAnalyzer.both
+    def analyse_rsi_crossover(self, stock: Stock):
+        try : 
+            logger.debug(f'Inside analyse_rsi_crossover for stock {stock.stock_symbol}')
+            curr_rsi_value = self.compute_rsi(stock.priceData["Close"].iloc[(-TechnicalAnalyser.RSI_LOOKUP_PERIOD * 5 ) - 1:])
+            prev_rsi_value = self.compute_rsi(stock.priceData["Close"].iloc[(-TechnicalAnalyser.RSI_LOOKUP_PERIOD * 5 ) - 2 : -1])
+            RSICrossoverAnalysis = namedtuple("RSICrossoverAnalysis", ["curr_value", "prev_value"])
+            if prev_rsi_value > TechnicalAnalyser.RSI_UPPER_THRESHOLD and curr_rsi_value < TechnicalAnalyser.RSI_UPPER_THRESHOLD: 
+                stock.set_analysis("BEARISH", "rsi_crossover", RSICrossoverAnalysis(curr_value=curr_rsi_value, prev_value=prev_rsi_value))
+                return True
+            elif prev_rsi_value < TechnicalAnalyser.RSI_LOWER_THRESHOLD and curr_rsi_value > TechnicalAnalyser.RSI_LOWER_THRESHOLD: 
+                stock.set_analysis("BULLISH", "rsi_crossover", RSICrossoverAnalysis(curr_value=curr_rsi_value, prev_value=prev_rsi_value))
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"Error in analyse_rsi_crossover for stock {stock.stock_symbol}: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            return False
+    
+    @BaseAnalyzer.both
+    def analyse_Bolinger_band(self, stock: Stock):
+        try : 
+            def compute_latest_bollinger_bands(series, window=20, num_std=2):
+                """
+                Compute latest Bollinger Bands values using only the last 'window' points.
+                Returns: (sma, upper_band, lower_band)
+                """
+                if len(series) < window:
+                    raise ValueError("Not enough data to compute Bollinger Bands.")
 
-    def daily_return(self,priceData, max_daily_return = 5 ):
+                recent = series[-window:]
+                sma = recent.mean()
+                std = recent.std()
 
-        currentPrice = priceData['Close'].iloc[-1]
-        previousPrice = priceData['Close'].iloc[-2]
+                upper = sma + num_std * std
+                lower = sma - num_std * std
 
-        daily_return = log(currentPrice/previousPrice)*100
-        if (daily_return <= -max_daily_return) or (daily_return >= max_daily_return):
-            return (True, self.Trend.Neutral, "Daily return is {}%".format(daily_return))
-        return (False, None, None)
+                return sma, upper, lower
+            
+            logger.debug(f'Inside analyse_Bolinger_band for stock {stock.stock_symbol}')
+            sma , upper_band, lower_band = compute_latest_bollinger_bands(stock.priceData['Close'])
+            curr_data = stock.current_equity_data
+            BBAnalysis = namedtuple("BBAnalysis", ["close", "upper_band", "lower_band"])
+            if curr_data['Close'] > upper_band: 
+                stock.set_analysis("BEARISH", "BollingerBand", BBAnalysis(close=curr_data['Close'], upper_band=upper_band, lower_band=lower_band))
+                return True
+            elif curr_data['Close'] < lower_band:
+                stock.set_analysis("BULLISH", "BollingerBand", BBAnalysis(close=curr_data['Close'], upper_band=upper_band, lower_band=lower_band))
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"Error in analyse_Bolinger_band for stock {stock.stock_symbol}: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            return False
+    
+    @BaseAnalyzer.positional
+    def analyse_is_52_week(self, stock: Stock):
+        try : 
+            logger.debug(f'Inside analyse_is_52_week for stock {stock.stock_symbol}')
+            status = stock.check_52_week_status()
+            if status == 1:
+                stock.set_analysis("NEUTRAL", "52-week-high", True)
+            elif status == -1:
+                stock.set_analysis("NEUTRAL", "52-week-low", True)
+            return False
+        except Exception as e:
+            logger.error(f"Error in analyse_is_52_week for stock {stock.stock_symbol}: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            return False
