@@ -32,13 +32,18 @@ class FuturesAnalyser(BaseAnalyzer):
             futures_data_curr_expiry = stock.derivativesData["futuresData"]["currExpiry"]
             futures_data_next_expiry = stock.derivativesData["futuresData"]["nextExpiry"]
 
-            if len(futures_data_next_expiry) <= 1 or len(futures_data_curr_expiry) <= 1 :
+            if futures_data_curr_expiry is None or futures_data_next_expiry is None:
+                logger.warning(f"No futures data found for stock {stock.stock_symbol}")
                 return False
 
-            prev_oi = futures_data_curr_expiry.iloc[-2]['OPEN_INT'] + futures_data_next_expiry.iloc[-2]['OPEN_INT']
-            curr_oi = futures_data_curr_expiry.iloc[-1]['OPEN_INT'] + futures_data_next_expiry.iloc[-1]['OPEN_INT']
-            prev_price = (futures_data_curr_expiry.iloc[-2]['LAST_TRADED_PRICE'] + futures_data_next_expiry.iloc[-2]['LAST_TRADED_PRICE']) / 2
-            curr_price = (futures_data_curr_expiry.iloc[-1]['LAST_TRADED_PRICE'] + futures_data_next_expiry.iloc[-1]['LAST_TRADED_PRICE']) / 2
+            if len(futures_data_curr_expiry) <= 1 or len(futures_data_next_expiry) <= 1 :
+                return False
+            
+
+            prev_oi = futures_data_curr_expiry.iloc[-2]['OPEN_INT'] if futures_data_next_expiry is None else futures_data_curr_expiry.iloc[-2]['OPEN_INT'] + futures_data_next_expiry.iloc[-2]['OPEN_INT']
+            curr_oi = futures_data_curr_expiry.iloc[-1]['OPEN_INT'] if futures_data_next_expiry is None else futures_data_curr_expiry.iloc[-1]['OPEN_INT'] + futures_data_next_expiry.iloc[-1]['OPEN_INT']
+            prev_price = futures_data_curr_expiry.iloc[-2]['LAST_TRADED_PRICE'] if futures_data_next_expiry is None else (futures_data_curr_expiry.iloc[-2]['LAST_TRADED_PRICE'] + futures_data_next_expiry.iloc[-2]['LAST_TRADED_PRICE']) / 2
+            curr_price = futures_data_curr_expiry.iloc[-1]['LAST_TRADED_PRICE'] if futures_data_next_expiry is None else (futures_data_curr_expiry.iloc[-1]['LAST_TRADED_PRICE'] + futures_data_next_expiry.iloc[-1]['LAST_TRADED_PRICE']) / 2
             price_percentage = percentageChange(curr_price, prev_price) 
             oi_percentage = percentageChange(curr_oi, prev_oi)
 
