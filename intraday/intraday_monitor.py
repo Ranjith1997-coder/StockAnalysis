@@ -16,7 +16,7 @@ from analyser.Analyser import AnalyserOrchestrator
 from analyser.Futures_Analyser import FuturesAnalyser
 from analyser.VolumeAnalyser import VolumeAnalyser
 from analyser.TechnicalAnalyser import TechnicalAnalyser
-from analyser.CandleStickPatternAnalyser import CandleStickAnalyser
+from analyser.candleStickPatternAnalyser import CandleStickAnalyser
 from common.logging_util import logger
 from typing import List, Tuple, Optional
 from enum import Enum
@@ -205,11 +205,15 @@ def intraday_analysis():
         for stock in shared.stock_token_obj_dict:
             shared.stock_token_obj_dict[stock].reset_price_data()
 
-        sleeptime = (constant.INTRADAY_SLEEP_TIME) - (datetime.now().second + ((datetime.now().minute % 5) * 60))
-        logger.info("sleeping for {} sec".format(sleeptime))
-        sleep(sleeptime)
+        if PRODUCTION:
+            sleeptime = (constant.INTRADAY_SLEEP_TIME) - (datetime.now().second + ((datetime.now().minute % 5) * 60))
+            logger.info("sleeping for {} sec".format(sleeptime))
+            sleep(sleeptime)
 
-        is_in_time_period = isNowInTimePeriod(time(9,15), time(15,30), datetime.now().time())
+            is_in_time_period = isNowInTimePeriod(time(9,15), time(15,30), datetime.now().time())
+        else:
+            is_in_time_period = False
+            break
 
     logger.info("Market time closed")
 
@@ -268,9 +272,9 @@ def init():
 
     orchestrator = AnalyserOrchestrator()
     orchestrator.register(FuturesAnalyser())
-    # orchestrator.register(VolumeAnalyser())
-    # orchestrator.register(TechnicalAnalyser())
-    # orchestrator.register(CandleStickAnalyser())
+    orchestrator.register(VolumeAnalyser())
+    orchestrator.register(TechnicalAnalyser())
+    orchestrator.register(CandleStickAnalyser())
     
 
 if __name__ =="__main__":
@@ -301,7 +305,7 @@ if __name__ =="__main__":
     else:
         logger.info("Running in development mode. No shutdown operation.")
         run_intraday = False
-        run_positional = True
+        run_positional = False
         if os.getenv(constant.ENV_DEV_POSITIONAL, "False") == "True":
             logger.debug("Intraday analysis enabled")
             run_positional = True

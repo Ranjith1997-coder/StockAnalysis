@@ -49,13 +49,13 @@ class CandleStickAnalyser(BaseAnalyzer):
                 and (abs(percentageChange(closePrice,openPrice)) >= CandleStickAnalyser.MARUBASU_THRESHOLD)):
                 stock.set_analysis("BEARISH", "Single_candle_stick_pattern", "Marubasu, rate: {:.2f}%".format(percentageChange(closePrice, openPrice)))
                 return True
-            elif ((openPrice < closePrice) and ((closePrice == highPrice) or (percentageChange(highPrice, closePrice) <= CandleStickAnalyser.WICK_PERCENTAGE)) and \
-                    (openPrice > lowPrice) and (abs(percentageChange(lowPrice,openPrice)) >= 2 * percentageChange(closePrice, openPrice))):
-                stock.set_analysis("BULLISH", "Single_candle_stick_pattern", "Hammer")
-                return True
-            elif ((openPrice > closePrice) and ((closePrice == lowPrice) or (percentageChange(closePrice, lowPrice) <= CandleStickAnalyser.WICK_PERCENTAGE)) and \
-                    (openPrice < highPrice) and (percentageChange(highPrice,openPrice)) >= 2 * abs(percentageChange(closePrice, openPrice))):
-                stock.set_analysis("BEARISH", "Single_candle_stick_pattern", "shooting star")
+            # elif ((openPrice < closePrice) and ((closePrice == highPrice) or (percentageChange(highPrice, closePrice) <= CandleStickAnalyser.WICK_PERCENTAGE)) and \
+            #         (openPrice > lowPrice) and (abs(percentageChange(lowPrice,openPrice)) >= 2 * percentageChange(closePrice, openPrice))):
+            #     stock.set_analysis("BULLISH", "Single_candle_stick_pattern", "Hammer")
+            #     return True
+            # elif ((openPrice > closePrice) and ((closePrice == lowPrice) or (percentageChange(closePrice, lowPrice) <= CandleStickAnalyser.WICK_PERCENTAGE)) and \
+            #         (openPrice < highPrice) and (percentageChange(highPrice,openPrice)) >= 2 * abs(percentageChange(closePrice, openPrice))):
+            #     stock.set_analysis("BEARISH", "Single_candle_stick_pattern", "shooting star")
             return False
         except Exception as e:
             logger.error(f"Error in singleCandleStickPattern for stock {stock.stock_symbol}")
@@ -80,13 +80,13 @@ class CandleStickAnalyser(BaseAnalyzer):
             prevHighPrice = prevData['High']
             prevLowPrice = prevData['Low']
 
-            if (prevClosePrice < prevOpenPrice) and (closePrice > openPrice) and (openPrice > prevClosePrice) and (closePrice < prevOpenPrice):
-                stock.set_analysis("BULLISH", "Double_candle_stick_pattern", "Harami")
-                return True
-            elif (prevClosePrice > prevOpenPrice) and (closePrice < openPrice) and (openPrice < prevClosePrice) and (closePrice > prevOpenPrice):
-                stock.set_analysis("BEARISH", "Double_candle_stick_pattern", "Harami")
-                return True
-            elif (prevOpenPrice < prevClosePrice) and (openPrice < closePrice) and (closePrice > prevClosePrice ) and (percentageChange(closePrice, prevOpenPrice) >= CandleStickAnalyser.TWO_CONT_INC_OR_DEC_THRESHOLD):
+            # if (prevClosePrice < prevOpenPrice) and (closePrice > openPrice) and (openPrice > prevClosePrice) and (closePrice < prevOpenPrice):
+            #     stock.set_analysis("BULLISH", "Double_candle_stick_pattern", "Harami")
+            #     return True
+            # elif (prevClosePrice > prevOpenPrice) and (closePrice < openPrice) and (openPrice < prevClosePrice) and (closePrice > prevOpenPrice):
+            #     stock.set_analysis("BEARISH", "Double_candle_stick_pattern", "Harami")
+            #     return True
+            if (prevOpenPrice < prevClosePrice) and (openPrice < closePrice) and (closePrice > prevClosePrice ) and (percentageChange(closePrice, prevOpenPrice) >= CandleStickAnalyser.TWO_CONT_INC_OR_DEC_THRESHOLD):
                 stock.set_analysis("BULLISH", "Double_candle_stick_pattern", "2_cont_inc, rate:{:.2f}%".format(percentageChange(closePrice, prevOpenPrice)))
                 return True
             elif (prevOpenPrice > prevClosePrice) and (openPrice > closePrice) and (closePrice < prevClosePrice ) and (abs(percentageChange(closePrice, prevOpenPrice)) >= CandleStickAnalyser.TWO_CONT_INC_OR_DEC_THRESHOLD):
