@@ -268,9 +268,9 @@ def init():
 
     orchestrator = AnalyserOrchestrator()
     orchestrator.register(FuturesAnalyser())
-    orchestrator.register(VolumeAnalyser())
-    orchestrator.register(TechnicalAnalyser())
-    orchestrator.register(CandleStickAnalyser())
+    # orchestrator.register(VolumeAnalyser())
+    # orchestrator.register(TechnicalAnalyser())
+    # orchestrator.register(CandleStickAnalyser())
     
 
 if __name__ =="__main__":

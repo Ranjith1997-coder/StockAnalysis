@@ -85,7 +85,7 @@ class AnalyserOrchestrator:
                     elif analysis_type == 'RSI':
                         message_parts.append(f"  RSI value: {data.value:.2f}")
                     elif analysis_type == 'rsi_crossover':
-                        message_parts.append(f"  RSI crossover: {data.value:.2f}")
+                        message_parts.append(f"  RSI crossover: pv:{data.prev_value:.2f}, cv:{data.curr_value:.2f} ")
                     elif analysis_type == 'BollingerBand':
                         def format_bollinger_band(data, trend):
                             close_price = f"{data.close:.2f}"
@@ -101,7 +101,7 @@ class AnalyserOrchestrator:
                     elif analysis_type == "Triple_candle_stick_pattern":
                         message_parts.append(f" Triple Candle stick Pattern: {data}")
                     elif analysis_type == 'future_action':
-                        message_parts.append(f"  Futures action: {data.action}")
+                        message_parts.append(f"  Futures action: {data.action}, p% = {data.price_percentage:.2f}, oi% = {data.oi_percentage:.2f}")
 
         if stock.analysis['NEUTRAL']:
             message_parts.append("NEUTRAL:")
