@@ -1,4 +1,5 @@
 from common.logging_util import logger
+import common.constants as constant
 
 class BaseAnalyzer():
     def __init__(self) -> None:
@@ -57,16 +58,20 @@ class AnalyserOrchestrator:
         logger.debug("Starting all analyses for stock {}".format(stock.stock_symbol))
         found_trend = False
         for analyser in self.analysers:
-            found_trend |= analyser.run_all_intraday_analyses(stock)
+            analyser.run_all_intraday_analyses(stock)
         logger.debug("All analyses complete for stock {}".format(stock.stock_symbol))
+        if stock.analysis["NoOfTrends"] >= constant.REQUIRED_TRENDS:
+            found_trend = True
         return found_trend
     
     def run_all_positional(self, stock):
         logger.debug("Starting all analyses for stock {}".format(stock.stock_symbol))
         found_trend = False
         for analyser in self.analysers:
-            found_trend |= analyser.run_all_positional_analyses(stock)
+            analyser.run_all_positional_analyses(stock)
         logger.debug("All analyses complete for stock {}".format(stock.stock_symbol))
+        if stock.analysis["NoOfTrends"] >= constant.REQUIRED_TRENDS:
+            found_trend = True
         return found_trend
     
     def generate_analysis_message(self, stock):
