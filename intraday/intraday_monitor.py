@@ -8,7 +8,7 @@ import concurrent.futures
 import common.constants as constant
 import common.shared as shared
 from common.Stock import Stock
-from common.helperFunctions import get_stock_objects_from_json, isNowInTimePeriod
+from common.helperFunctions import *
 from enum import Enum
 from time import sleep
 from nse.nse_derivative_data import NSE_DATA_CLASS
@@ -32,6 +32,7 @@ thread_pool = None
 orchestrator : AnalyserOrchestrator = None
 PRODUCTION = False
 SHUTDOWN_SYSTEM = False
+ENABLE_DERIVATIVES = False
 
 class MonitorResult(Enum):
     SUCCESS = 0
@@ -89,13 +90,23 @@ def process_monitor_results(results):
         elif trend_found:
             logger.info(f"Trend found: \n{message}")
 
-def create_stock_objects(stock_list : list):
+def create_stock_objects():
     count = 0
+    stock_list = get_stock_objects_from_json()
+
+    yfinanceSymbols = [stock["tradingsymbol"]+".NS" for stock in stock_list]
+   
+    prevDaydata = yf.download(yfinanceSymbols, period="2D", interval="1d", group_by='ticker')
+    logger.info(f"Price data fetched to update previous OHLCV")
 
     for stock in stock_list:
         if not PRODUCTION and constant.NO_OF_STOCKS != -1 and count >= constant.NO_OF_STOCKS:
             break
         ticker = Stock(stock["name"], stock["tradingsymbol"])
+        stock_prev_OHLCV_df =  prevDaydata[stock["tradingsymbol"]+ ".NS"].iloc[-2]
+        ticker.set_prev_day_ohlcv(stock_prev_OHLCV_df["Open"], stock_prev_OHLCV_df["Close"], 
+                                  stock_prev_OHLCV_df["High"], stock_prev_OHLCV_df["Low"], 
+                                  stock_prev_OHLCV_df["Volume"])
         shared.stock_token_obj_dict[stock["instrument_token"]] = ticker
         shared.stocks_list.append(stock["tradingsymbol"])
         count += 1
@@ -116,7 +127,7 @@ def fetch_price_data(stock_objs):
             stock_data = data[stock.stockSymbolYFinance]
             stock.priceData = stock_data
             stock.last_price_update = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            logger.info(f"Price data fetched successfully for {stock.stockName}")
+            logger.debug(f"Price data fetched successfully for {stock.stockName}")
         except Exception as e:
             logger.error(f"Error fetching price data for {stock.stockName}: {e}")
 
@@ -126,7 +137,7 @@ def fetch_futures_data(stock):
             stock.get_futures_and_options_data_from_nse_positional()
         else:
             stock.get_futures_and_options_data_from_nse_intraday()
-        logger.info(f"Futures data fetched successfully for {stock.stockName}")
+        logger.debug(f"Futures data fetched successfully for {stock.stockName}")
     except Exception as e:
         logger.error(f"Error fetching futures data for {stock.stockName}: {e}")
 
@@ -147,32 +158,35 @@ def fetch_and_analyze_stocks() -> List[Tuple[MonitorResult, bool, Optional[str]]
         # Fetch price data for all stocks at once
         price_future = executor.submit(fetch_price_data, stock_objs)
 
-         # Wait for price data fetching to complete
-        try:
-            price_future.result()  # This will block until the price data fetching is complete
-        except Exception as exc:
-            logger.error(f"Error fetching price data for stocks: {exc}")
-            return [(MonitorResult.ERROR, False, str(exc))]
+        if ENABLE_DERIVATIVES:
+            # Fetch futures data for each stock in parallel
+            futures_futures = {executor.submit(fetch_futures_data, stock): stock for stock in stock_objs}
+            
+            # Wait for all data fetching to complete
+            concurrent.futures.wait([price_future] + list(futures_futures.keys()))
+            
+            # Check for any errors in price data fetching
+            try:
+                price_future.result()
+            except Exception as exc:
+                logger.error(f"Error fetching price data for stocks: {exc}")
+            
+            # Check for any errors in futures data fetching
+            for future in concurrent.futures.as_completed(futures_futures):
+                stock = futures_futures[future]
+                try:
+                    future.result()
+                except Exception as exc:
+                    logger.error(f"Error fetching futures data for {stock.stockName}: {exc}")
+        else:
+            # Wait for price data fetching to complete
+            try:
+                price_future.result()  # This will block until the price data fetching is complete
+            except Exception as exc:
+                logger.error(f"Error fetching price data for stocks: {exc}")
+                return [(MonitorResult.ERROR, False, str(exc))]
+            
         
-        # # Fetch futures data for each stock in parallel
-        # futures_futures = {executor.submit(fetch_futures_data, stock): stock for stock in stock_objs}
-        
-        # # Wait for all data fetching to complete
-        # concurrent.futures.wait([price_future] + list(futures_futures.keys()))
-        
-        # # Check for any errors in price data fetching
-        # try:
-        #     price_future.result()
-        # except Exception as exc:
-        #     logger.error(f"Error fetching price data for stocks: {exc}")
-        
-        # # Check for any errors in futures data fetching
-        # for future in concurrent.futures.as_completed(futures_futures):
-        #     stock = futures_futures[future]
-        #     try:
-        #         future.result()
-        #     except Exception as exc:
-        #         logger.error(f"Error fetching futures data for {stock.stockName}: {exc}")
         
         # Monitor and analyze all stocks
         monitor_futures = {executor.submit(process_stock, stock): stock for stock in stock_objs}
@@ -189,6 +203,70 @@ def fetch_and_analyze_stocks() -> List[Tuple[MonitorResult, bool, Optional[str]]
     logger.info("Data fetching and analysis completed for all stocks")
     return results
 
+def get_top_gainers_and_losers(stock_objs):
+    """
+    Returns the top 5 gainers and top 5 losers based on percentage change in stock prices.
+
+    Args:
+        stock_objs (list): List of Stock objects with price data.
+
+    Returns:
+        Tuple[List[Tuple[str, float]], List[Tuple[str, float]]]: 
+            - List of top 5 gainers as tuples of (stock symbol, percentage gain).
+            - List of top 5 losers as tuples of (stock symbol, percentage loss).
+    """
+    gainers = []
+    losers = []
+
+    for _ , stock in stock_objs.items():
+        try:
+            # Assuming stock.priceData contains a DataFrame with 'Close' prices
+            if not stock.is_price_data_empty() and stock.prevDayOHLCV is not None:
+                current_close = stock.priceData['Close'].iloc[-1]
+                # previous_close = stock.priceData['Close'].iloc[-2]
+                previous_close = stock.prevDayOHLCV['CLOSE']
+                change_percent = percentageChange(current_close, previous_close)
+                
+                if change_percent > 0:
+                    gainers.append((stock.stock_symbol, change_percent))
+                else:
+                    losers.append((stock.stock_symbol, change_percent))
+        except Exception as e:
+            logger.error(f"Error calculating percentage change for {stock.stock_symbol}: {e}")
+
+    # Sort gainers and losers by percentage change
+    gainers.sort(key=lambda x: x[1], reverse=True)
+    losers.sort(key=lambda x: x[1])
+
+    # Return top 5 gainers and top 5 losers
+    return gainers[:5], losers[:5]
+
+def generate_top_gainers_and_losers_report(gainers, losers):
+    """
+    Generates a report with top gainers and top losers based on percentage change in stock prices.
+
+    Args:
+        gainers (list): List of tuples of (stock symbol, percentage gain).
+        losers (list): List of tuples of (stock symbol, percentage loss).
+
+    Returns:
+        str: Report as a string.
+    """
+    report = "*********** Top Gainers ***********\n"
+    for i, (stock, change_percent) in enumerate(gainers):
+        report += f"{i+1}. {stock}: {change_percent:.2f}%\n"
+
+    report += "\n*********** Top Losers ***********\n"
+    for i, (stock, change_percent) in enumerate(losers):
+        report += f"{i+1}. {stock}: {change_percent:.2f}%\n"
+
+    return report
+
+def report_top_gainers_and_losers():
+    top_gainers , top_losers = get_top_gainers_and_losers(shared.stock_token_obj_dict)
+    report = generate_top_gainers_and_losers_report(top_gainers, top_losers)
+    TELEGRAM_NOTIFICATIONS.send_notification(report)
+    logger.info(f"EOD Report\n {report}")
 
 def intraday_analysis():
     constant.mode = constant.Mode.INTRADAY
@@ -208,7 +286,9 @@ def intraday_analysis():
             process_monitor_results(results)
         except Exception as e:
             logger.error(f"Critical error in stock analysis: {e}")
-        
+
+        report_top_gainers_and_losers()
+
         for stock in shared.stock_token_obj_dict:
             shared.stock_token_obj_dict[stock].reset_price_data()
 
@@ -246,7 +326,9 @@ def positional_analysis():
         process_monitor_results(results)
     except Exception as e:
         logger.error(f"Critical error in stock analysis: {e}")
-    
+
+    report_top_gainers_and_losers()
+
     for stock in shared.stock_token_obj_dict:
         shared.stock_token_obj_dict[stock].reset_price_data()
 
@@ -257,32 +339,37 @@ def init():
     global orchestrator
     global PRODUCTION
     global SHUTDOWN_SYSTEM
+    global ENABLE_DERIVATIVES
 
-    if os.getenv(constant.ENV_PRODUCTION, "False") == "True":
+    if os.getenv(constant.ENV_PRODUCTION, "0") == "1":
         logger.info("Running in production mode")
         PRODUCTION = True
     else:
         logger.info("Running in development mode")
         PRODUCTION = False
     
-    if os.getenv(constant.ENV_SHUTDOWN, "False") == "True":
+    if os.getenv(constant.ENV_SHUTDOWN, "0") == "1":
         logger.info("Shutdown mode enabled")
         SHUTDOWN_SYSTEM = True
     else:
         logger.info("Shutdown mode disabled")
         SHUTDOWN_SYSTEM = False
     
-    data = get_stock_objects_from_json()
-    # shared.stockExpires = NSE_DATA_CLASS.expiry_dates_future()
-    stock_list = data["data"]["UnderlyingList"]
-    create_stock_objects(stock_list)
-
+    if os.getenv(constant.ENV_ENABLE_DERIVATIVES, "0") == "1":
+        logger.info(" Derivative analysis enabled")
+        ENABLE_DERIVATIVES = True
+    else:
+        logger.info(" Derivative analysis disabled")
+        ENABLE_DERIVATIVES = False
+    
+    create_stock_objects()
     orchestrator = AnalyserOrchestrator()
-    # orchestrator.register(FuturesAnalyser())
     orchestrator.register(VolumeAnalyser())
     orchestrator.register(TechnicalAnalyser())
     orchestrator.register(CandleStickAnalyser())
-    
+    if ENABLE_DERIVATIVES:
+        shared.stockExpires = NSE_DATA_CLASS.expiry_dates_future()
+        orchestrator.register(FuturesAnalyser())
 
 if __name__ =="__main__":
 
@@ -313,10 +400,10 @@ if __name__ =="__main__":
         logger.info("Running in development mode. No shutdown operation.")
         run_intraday = False
         run_positional = False
-        if os.getenv(constant.ENV_DEV_POSITIONAL, "False") == "True":
+        if os.getenv(constant.ENV_DEV_POSITIONAL, "0") == "1":
             logger.debug("Intraday analysis enabled")
             run_positional = True
-        if os.getenv(constant.ENV_DEV_INTRADAY, "False") == "True":
+        if os.getenv(constant.ENV_DEV_INTRADAY, "0") == "1":
             logger.debug("Positional analysis enabled")
             run_intraday = True
         
