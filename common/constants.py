@@ -8,6 +8,7 @@ mode = None
 #ENVS
 ENV_PRODUCTION = "PRODUCTION"
 ENV_SHUTDOWN = "SHUTDOWN"
+ENV_ENABLE_DERIVATIVES = "ENABLE_DERIVATIVES"
 
 
 #DEV ENVIRONMENTS
@@ -32,6 +33,10 @@ TELEGRAM_URL = 'https://api.telegram.org/bot'
 #FILE NAMES
 DERIVATIVE_LIST_FILENAME = "final_derivatives_list.json"
 STOCK_DATA_FILENAME = "stock_data.json"
+
+
+#ANALYSIS CONSTANTS
+REQUIRED_TRENDS = 2
 
 
 NseOptionChainURL = "https://www.nseindia.com/option-chain"

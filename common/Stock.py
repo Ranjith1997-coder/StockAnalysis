@@ -38,7 +38,8 @@ class Stock:
         self.analysis = {"Timestamp" : None,
                         "BULLISH":{},
                         "BEARISH":{},
-                        "NEUTRAL":{}
+                        "NEUTRAL":{},
+                        "NoOfTrends": 0,
                         }
 
     def get_stock_price_data(self, period:str , interval:str):
@@ -93,12 +94,14 @@ class Stock:
     def set_analysis(self, trend : str, analysis_type: str, data):
         if trend in ['BULLISH', 'BEARISH', 'NEUTRAL']:
             self.analysis[trend][analysis_type] = data
+            self.analysis['NoOfTrends'] += 1
     
     def reset_analysis(self):
         self.analysis = {"Timestamp" : None,
                             "BULLISH":{},
                             "BEARISH":{},
-                            "NEUTRAL":{}
+                            "NEUTRAL":{},
+                            "NoOfTrends": 0,
                         }
     def get_stock_IV_data(self):
         try :
