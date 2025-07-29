@@ -104,6 +104,7 @@ def create_stock_objects():
             break
         ticker = Stock(stock["name"], stock["tradingsymbol"])
         stock_prev_OHLCV_df =  prevDaydata[stock["tradingsymbol"]+ ".NS"].iloc[-2]
+
         ticker.set_prev_day_ohlcv(stock_prev_OHLCV_df["Open"], stock_prev_OHLCV_df["Close"], 
                                   stock_prev_OHLCV_df["High"], stock_prev_OHLCV_df["Low"], 
                                   stock_prev_OHLCV_df["Volume"])
@@ -125,6 +126,7 @@ def fetch_price_data(stock_objs):
             # else:
             #     stock_data = data
             stock_data = data[stock.stockSymbolYFinance]
+            stock_data.index = stock_data.index.tz_convert('Asia/Kolkata')
             stock.priceData = stock_data
             stock.last_price_update = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             logger.debug(f"Price data fetched successfully for {stock.stockName}")
@@ -283,7 +285,7 @@ def intraday_analysis():
     orchestrator.reset_all_constants()
     is_in_time_period = isNowInTimePeriod(time(9,15), time(15,30), datetime.now().time())
 
-    while(is_in_time_period):
+    while(is_in_time_period or not PRODUCTION):
         logger.info("current iteration time : {}".format(datetime.now()))
 
         try:

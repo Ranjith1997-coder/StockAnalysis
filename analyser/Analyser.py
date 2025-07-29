@@ -85,19 +85,19 @@ class AnalyserOrchestrator:
                 message_parts.append(f"{trend}:")
                 for analysis_type, data in stock.analysis[trend].items():
                     if analysis_type == 'Volume':
-                        message_parts.append(f"  Volume {trend.lower()}: {data.Volume_rate_percent:.2f}%")
-                        message_parts.append(f"  Price {trend.lower()}: {data.price_change_percent:.2f}%")
+                        message_parts.append(f" Volume {trend.lower()}: {data.Volume_rate_percent:.2f}%")
+                        message_parts.append(f" Price {trend.lower()}: {data.price_change_percent:.2f}%")
                     elif analysis_type == 'RSI':
-                        message_parts.append(f"  RSI value: {data.value:.2f}")
+                        message_parts.append(f" RSI value: {data.value:.2f}")
                     elif analysis_type == 'rsi_crossover':
-                        message_parts.append(f"  RSI crossover: pv:{data.prev_value:.2f}, cv:{data.curr_value:.2f} ")
+                        message_parts.append(f" RSI crossover: pv:{data.prev_value:.2f}, cv:{data.curr_value:.2f} ")
                     elif analysis_type == 'BollingerBand':
                         def format_bollinger_band(data, trend):
                             close_price = f"{data.close:.2f}"
                             comparison = '<' if trend == 'BULLISH' else '>'
                             band_type = 'Lower' if trend == 'BULLISH' else 'Upper'
                             band_value = f"{data.lower_band:.2f}" if trend == 'BULLISH' else f"{data.upper_band:.2f}"
-                            return f"  Bollinger Band: Price({close_price}) {comparison} {band_type}_band ({band_value})"
+                            return f" Bollinger Band: Price({close_price}) {comparison} {band_type}_band ({band_value})"
                         message_parts.append(format_bollinger_band(data, trend))
                     elif analysis_type == 'Single_candle_stick_pattern':
                         message_parts.append(f" Single Candle stick Pattern: {data}")
@@ -106,7 +106,10 @@ class AnalyserOrchestrator:
                     elif analysis_type == "Triple_candle_stick_pattern":
                         message_parts.append(f" Triple Candle stick Pattern: {data}")
                     elif analysis_type == 'future_action':
-                        message_parts.append(f"  Futures action: {data.action}, p% = {data.price_percentage:.2f}, oi% = {data.oi_percentage:.2f}")
+                        message_parts.append(f" Futures action: {data.action}, p% = {data.price_percentage:.2f}, oi% = {data.oi_percentage:.2f}")
+                    elif analysis_type == 'vwap_deviation':
+                        message_parts.append(f" VWAP: Close({data.close:.2f}) {'<' if trend == 'BULLISH' else '>'} VWAP({data.vwap:.2f})")
+                        message_parts.append(f"   Intervals {'below' if trend == 'BULLISH' else 'above'} VWAP: {data.vwap_days}")
 
         if stock.analysis['NEUTRAL']:
             message_parts.append("NEUTRAL:")
