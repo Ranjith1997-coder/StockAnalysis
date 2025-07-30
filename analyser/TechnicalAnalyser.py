@@ -4,6 +4,9 @@ from common.Stock import Stock
 import common.constants as constant
 from common.logging_util import logger
 from collections import namedtuple
+import pandas as pd
+from datetime import datetime
+from common.helperFunctions import percentageChange
 
 class TechnicalAnalyser(BaseAnalyzer):
 
@@ -11,6 +14,8 @@ class TechnicalAnalyser(BaseAnalyzer):
     RSI_LOWER_THRESHOLD = 20
     RSI_LOOKUP_PERIOD = 14
     ATR_THRESHOLD = 0.97
+    VWAP_DEVIATION_PERCENTAGE = 0.5
+    VWAP_DAYS = 1
     
     def __init__(self) -> None:
         self.analyserName = "Technical Analyser"
@@ -149,5 +154,65 @@ class TechnicalAnalyser(BaseAnalyzer):
             return False
         except Exception as e:
             logger.error(f"Error in analyse_is_52_week for stock {stock.stock_symbol}: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            return False
+    
+    @BaseAnalyzer.intraday
+    def analyse_vwap(self, stock: Stock):
+        try : 
+            def calculate_vwap(price_data: pd.DataFrame) -> pd.Series:
+                """
+                Calculate the Volume Weighted Average Price (VWAP) for a given price data.
+
+                Args:
+                    price_data (pd.DataFrame): DataFrame containing 'High', 'Low', 'Close', and 'Volume' columns.
+
+                Returns:
+                    pd.Series: A Series representing the VWAP for each row in the DataFrame.
+                """
+                # Calculate the typical price
+                typical_price = (price_data['High'] + price_data['Low'] + price_data['Close']) / 3
+                # Calculate the VWAP
+                vwap = (typical_price * price_data['Volume']).cumsum() / price_data['Volume'].cumsum()
+                return vwap
+            logger.debug(f'Inside analyse_vwap for stock {stock.stock_symbol}')
+            import pytz
+            from datetime import datetime, timedelta
+            ist = pytz.timezone('Asia/Kolkata')
+            yesterday = (datetime.now(ist) - timedelta(days=1)).date()
+            # today = datetime.now().date()
+            # today_data = stock.priceData[stock.priceData.index.date == today]
+            today_data = stock.priceData[stock.priceData.index.date == yesterday]
+            vwap = calculate_vwap(today_data)
+
+            latest_close = stock.priceData['Close'].iloc[-1]
+            latest_vwap = vwap.iloc[-1]
+
+            deviation = percentageChange(latest_close, latest_vwap)
+            VwapAnalysis = namedtuple("VWAPAnalysis", ["close", "vwap", "vwap_days"])
+            
+            if deviation > TechnicalAnalyser.VWAP_DEVIATION_PERCENTAGE:
+                above_vwap_days = 1
+                for i in range(len(today_data) - 2, -1, -1):  # Start from the second last day
+                    if today_data['Close'].iloc[i] > vwap.iloc[i]:
+                        above_vwap_days += 1
+                    else:
+                        break
+                if above_vwap_days > TechnicalAnalyser.VWAP_DAYS:
+                    stock.set_analysis("BEARISH", "vwap_deviation", VwapAnalysis(close=latest_close, vwap=latest_vwap, vwap_days=above_vwap_days))
+                    return True
+            elif deviation < (-1 * TechnicalAnalyser.VWAP_DEVIATION_PERCENTAGE):
+                below_vwap_days = 1
+                for i in range(len(today_data) - 2, -1, -1):  # Start from the second last day
+                    if today_data['Close'].iloc[i] < vwap.iloc[i]:
+                        below_vwap_days += 1
+                    else:
+                        break
+                if below_vwap_days > TechnicalAnalyser.VWAP_DAYS:
+                    stock.set_analysis("BULLISH", "vwap_deviation", VwapAnalysis(close=latest_close , vwap=latest_vwap, vwap_days=below_vwap_days))
+                    return True
+            return False
+        except Exception as e:
+            logger.error(f"Error in analyse_vwap for stock {stock.stock_symbol}: {str(e)}")
             logger.error(f"Traceback: {traceback.format_exc()}")
             return False
