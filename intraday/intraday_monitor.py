@@ -126,7 +126,12 @@ def fetch_price_data(stock_objs):
             # else:
             #     stock_data = data
             stock_data = data[stock.stockSymbolYFinance]
-            stock_data.index = stock_data.index.tz_convert('Asia/Kolkata')
+            if constant.mode.name == constant.Mode.POSITIONAL.name:
+                stock_data.index = stock_data.index.tz_localize('UTC').tz_convert('Asia/Kolkata')
+            else:
+                stock_data.index = stock_data.index.tz_convert('Asia/Kolkata')
+
+            
             stock.priceData = stock_data
             stock.last_price_update = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             logger.debug(f"Price data fetched successfully for {stock.stockName}")
