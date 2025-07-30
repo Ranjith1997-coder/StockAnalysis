@@ -35,13 +35,13 @@ class VolumeAnalyser(BaseAnalyzer):
             curr_data = stock.current_equity_data
             prev_data = stock.previous_equity_data
 
-            curr_vol = curr_data['Volume'], 
-            prev_vol = prev_data["Volume"],
+            curr_vol = curr_data['Volume'] 
+            prev_vol = prev_data["Volume"]
             if constant.mode.name == constant.Mode.INTRADAY.name:
                 curr_vol_sma = stock.priceData['Volume'].iloc[-VolumeAnalyser.VOLUME_MA_PERIOD:].ewm(span=VolumeAnalyser.VOLUME_MA_PERIOD, adjust=False).mean().iloc[-1]
             else:
                 curr_vol_sma = stock.priceData['Volume'].iloc[-VolumeAnalyser.VOLUME_MA_PERIOD:].mean()
-            curr_price = curr_data['Close'],
+            curr_price = curr_data['Close']
             prev_price = prev_data['Close']
             VolumeAnalysis = namedtuple("VolumeAnalysis", ["Volume_rate_percent", "price_change_percent"])
             if curr_vol_sma != 'NaN' and curr_vol > VolumeAnalyser.TIMES_VOLUME * prev_vol \
