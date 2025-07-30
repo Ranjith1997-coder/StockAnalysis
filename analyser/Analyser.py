@@ -108,7 +108,7 @@ class AnalyserOrchestrator:
                     elif analysis_type == 'future_action':
                         message_parts.append(f" Futures action: {data.action}, p% = {data.price_percentage:.2f}, oi% = {data.oi_percentage:.2f}")
                     elif analysis_type == 'vwap_deviation':
-                        message_parts.append(f" VWAP: Close({data.close:.2f}) {'<' if trend == 'BULLISH' else '>'} VWAP({data.vwap:.2f})")
+                        message_parts.append(f" VWAP: Close({data.close:.2f}) {'<' if trend == 'BULLISH' else '>'} VWAP({data.vwap:.2f}) DEVIATION: {data.deviation:.2f}%")
                         message_parts.append(f"   Intervals {'below' if trend == 'BULLISH' else 'above'} VWAP: {data.vwap_days}")
 
         if stock.analysis['NEUTRAL']:
