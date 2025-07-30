@@ -189,7 +189,7 @@ class TechnicalAnalyser(BaseAnalyzer):
             latest_vwap = vwap.iloc[-1]
 
             deviation = percentageChange(latest_close, latest_vwap)
-            VwapAnalysis = namedtuple("VWAPAnalysis", ["close", "vwap", "vwap_days"])
+            VwapAnalysis = namedtuple("VWAPAnalysis", ["close", "vwap", "vwap_days", "deviation"])
             
             if deviation > TechnicalAnalyser.VWAP_DEVIATION_PERCENTAGE:
                 above_vwap_days = 1
@@ -199,7 +199,7 @@ class TechnicalAnalyser(BaseAnalyzer):
                     else:
                         break
                 if above_vwap_days > TechnicalAnalyser.VWAP_DAYS:
-                    stock.set_analysis("BEARISH", "vwap_deviation", VwapAnalysis(close=latest_close, vwap=latest_vwap, vwap_days=above_vwap_days))
+                    stock.set_analysis("BEARISH", "vwap_deviation", VwapAnalysis(close=latest_close, vwap=latest_vwap, vwap_days=above_vwap_days, deviation=deviation))
                     return True
             elif deviation < (-1 * TechnicalAnalyser.VWAP_DEVIATION_PERCENTAGE):
                 below_vwap_days = 1
@@ -209,7 +209,7 @@ class TechnicalAnalyser(BaseAnalyzer):
                     else:
                         break
                 if below_vwap_days > TechnicalAnalyser.VWAP_DAYS:
-                    stock.set_analysis("BULLISH", "vwap_deviation", VwapAnalysis(close=latest_close , vwap=latest_vwap, vwap_days=below_vwap_days))
+                    stock.set_analysis("BULLISH", "vwap_deviation", VwapAnalysis(close=latest_close , vwap=latest_vwap, vwap_days=below_vwap_days, deviation=deviation))
                     return True
             return False
         except Exception as e:
