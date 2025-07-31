@@ -88,7 +88,7 @@ class AnalyserOrchestrator:
             raise TypeError("Analyser must inherit from BaseAnalyser")
         self.analysers.append(analyser)
     
-    def reset_all_constants(self):
+    def reset_all_constants(self, is_index = False):
         for analyser in self.analysers:
             analyser.reset_constants()
 
@@ -122,8 +122,8 @@ class AnalyserOrchestrator:
         # return message
         message_parts = [
         f"Stock: {stock.stock_symbol}",
+        f"Price: {stock.ltp:.2f} {stock.ltp_change_perc:.2f}%",
         ]
-
         for trend in ['BULLISH', 'BEARISH']:
             if stock.analysis[trend]:
                 message_parts.append(f"{trend}:")

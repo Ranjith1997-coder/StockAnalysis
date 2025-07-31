@@ -69,6 +69,7 @@ class TechnicalAnalyser(BaseAnalyzer):
         return rsi.iloc[-1]
     
     @BaseAnalyzer.both
+    @BaseAnalyzer.index_both
     def analyse_rsi(self, stock: Stock):
         try : 
             logger.debug(f'Inside analyse_rsi for stock {stock.stock_symbol}')
@@ -88,6 +89,7 @@ class TechnicalAnalyser(BaseAnalyzer):
             return False
     
     @BaseAnalyzer.both
+    @BaseAnalyzer.index_both
     def analyse_rsi_crossover(self, stock: Stock):
         try : 
             logger.debug(f'Inside analyse_rsi_crossover for stock {stock.stock_symbol}')
@@ -107,6 +109,7 @@ class TechnicalAnalyser(BaseAnalyzer):
             return False
     
     @BaseAnalyzer.both
+    @BaseAnalyzer.index_both
     def analyse_Bolinger_band(self, stock: Stock):
         try : 
             def compute_latest_bollinger_bands(series, window=20, num_std=2):
@@ -143,6 +146,7 @@ class TechnicalAnalyser(BaseAnalyzer):
             return False
     
     @BaseAnalyzer.positional
+    @BaseAnalyzer.index_positional
     def analyse_is_52_week(self, stock: Stock):
         try : 
             logger.debug(f'Inside analyse_is_52_week for stock {stock.stock_symbol}')

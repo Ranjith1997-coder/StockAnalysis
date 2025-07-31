@@ -20,12 +20,6 @@
                 "instrument_token": 3
             },
             {
-                "name": "Nifty MIDCAP SELECT",
-                "tradingsymbol": "MIDCPNIFTY",
-                "yfinancetradingsymbol": "NIFTY_MID_SELECT.NS",
-                "instrument_token": 4
-            },
-            {
                 "name": "Nifty NEXT 50",
                 "tradingsymbol": "NIFTYNXT50",
                 "yfinancetradingsymbol": "^NSMIDCP",
