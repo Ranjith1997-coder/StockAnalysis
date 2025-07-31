@@ -179,10 +179,10 @@ class TechnicalAnalyser(BaseAnalyzer):
             import pytz
             from datetime import datetime, timedelta
             ist = pytz.timezone('Asia/Kolkata')
-            yesterday = (datetime.now(ist) - timedelta(days=1)).date()
-            # today = datetime.now().date()
-            # today_data = stock.priceData[stock.priceData.index.date == today]
-            today_data = stock.priceData[stock.priceData.index.date == yesterday]
+            # yesterday = (datetime.now(ist) - timedelta(days=1)).date()
+            # today_data = stock.priceData[stock.priceData.index.date == yesterday]
+            today = datetime.now().date()
+            today_data = stock.priceData[stock.priceData.index.date == today]
             vwap = calculate_vwap(today_data)
 
             latest_close = stock.priceData['Close'].iloc[-1]
