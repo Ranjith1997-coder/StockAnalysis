@@ -22,7 +22,7 @@ class CandleStickAnalyser(BaseAnalyzer):
             CandleStickAnalyser.TWO_CONT_INC_OR_DEC_THRESHOLD = 1    
             CandleStickAnalyser.MARUBASU_THRESHOLD = 1.5
         else:
-            CandleStickAnalyser.THREE_CONT_INC_OR_DEC_THRESHOLD = 4  
+            CandleStickAnalyser.THREE_CONT_INC_OR_DEC_THRESHOLD = 5  
             CandleStickAnalyser.TWO_CONT_INC_OR_DEC_THRESHOLD = 4   
             CandleStickAnalyser.MARUBASU_THRESHOLD = 3 
              #add something later on this
