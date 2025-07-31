@@ -57,6 +57,7 @@ def monitor(stock: Stock) -> Tuple[MonitorResult, bool, Optional[str]]:
     
     try:
         stock.reset_analysis()
+        stock.update_latest_data()
 
         analysis_type = "Positional" if constant.mode == constant.Mode.POSITIONAL else "Intraday"
         logger.debug(f"{analysis_type} analysis for {stock.stockName} started.")
@@ -90,20 +91,58 @@ def process_monitor_results(results):
         elif trend_found:
             logger.info(f"Trend found: \n{message}")
 
-def create_stock_objects():
-    count = 0
-    stock_list = get_stock_objects_from_json()
+def create_stock_and_index_objects():
+    def is_before_market_open():
+        now = datetime.now()
+        return now.weekday() < 5 and now.time() < time(9, 15)
+    
+    stock_list, index_list= get_stock_objects_from_json()
 
     yfinanceSymbols = [stock["tradingsymbol"]+".NS" for stock in stock_list]
-   
+    yfinanceIndexSymbols = [index["yfinancetradingsymbol"] for index in index_list]
+
     prevDaydata = yf.download(yfinanceSymbols, period="2D", interval="1d", group_by='ticker')
+    prevDayIndexData = yf.download(yfinanceIndexSymbols, period="2D", interval="1d", group_by='ticker')
     logger.info(f"Price data fetched to update previous OHLCV")
 
+    count = 0
+    for index in index_list:
+        if not PRODUCTION and constant.NO_OF_INDEX != -1 and count >= constant.NO_OF_INDEX:
+            break
+        ticker = Stock(index["name"], index["tradingsymbol"], yfinanceSymbol=index["yfinancetradingsymbol"], is_index=True)
+        if constant.mode.name == constant.Mode.INTRADAY.name:
+            if is_before_market_open():
+                stock_prev_OHLCV_df = prevDayIndexData[ticker.stockSymbolYFinance].iloc[-1]
+                logger.debug(f"Using second-to-last day's data for {index['tradingsymbol']} (before market open)")
+            else:
+                stock_prev_OHLCV_df = prevDayIndexData[ticker.stockSymbolYFinance].iloc[-2]
+                logger.debug(f"Using last day's data for {index['tradingsymbol']} (after market open)")
+        else:
+            stock_prev_OHLCV_df = prevDayIndexData[ticker.stockSymbolYFinance].iloc[-2]
+            logger.debug(f"Using second-to-last day's data for {index['tradingsymbol']}")
+
+        ticker.set_prev_day_ohlcv(stock_prev_OHLCV_df["Open"], stock_prev_OHLCV_df["Close"], 
+                                  stock_prev_OHLCV_df["High"], stock_prev_OHLCV_df["Low"], 
+                                  stock_prev_OHLCV_df["Volume"])
+        shared.index_token_obj_dict[index["instrument_token"]] = ticker
+        shared.index_list.append(index["tradingsymbol"])
+        count += 1
+
+    count = 0
     for stock in stock_list:
         if not PRODUCTION and constant.NO_OF_STOCKS != -1 and count >= constant.NO_OF_STOCKS:
             break
         ticker = Stock(stock["name"], stock["tradingsymbol"])
-        stock_prev_OHLCV_df =  prevDaydata[stock["tradingsymbol"]+ ".NS"].iloc[-2]
+        if constant.mode.name == constant.Mode.INTRADAY.name:
+            if is_before_market_open():
+                stock_prev_OHLCV_df = prevDaydata[stock["tradingsymbol"] + ".NS"].iloc[-1]
+                logger.debug(f"Using second-to-last day's data for {stock['tradingsymbol']} (before market open)")
+            else:
+                stock_prev_OHLCV_df = prevDaydata[stock["tradingsymbol"] + ".NS"].iloc[-2]
+                logger.debug(f"Using last day's data for {stock['tradingsymbol']} (after market open)")
+        else:
+            stock_prev_OHLCV_df = prevDaydata[stock["tradingsymbol"] + ".NS"].iloc[-2]
+            logger.debug(f"Using second-to-last day's data for {stock['tradingsymbol']}")
 
         ticker.set_prev_day_ohlcv(stock_prev_OHLCV_df["Open"], stock_prev_OHLCV_df["Close"], 
                                   stock_prev_OHLCV_df["High"], stock_prev_OHLCV_df["Low"], 
@@ -112,31 +151,37 @@ def create_stock_objects():
         shared.stocks_list.append(stock["tradingsymbol"])
         count += 1
 
-def fetch_price_data(stock_objs):
-    symbols = [stock.stockSymbolYFinance for stock in stock_objs]
+def fetch_price_data(stock_objs, index_objs):
+    stockSymbols = [stock.stockSymbolYFinance for stock in stock_objs]
+    indexSymbols = [index.stockSymbolYFinance for index in index_objs]
+
     if constant.mode.name == constant.Mode.POSITIONAL.name:
-        data = yf.download(symbols, period="2y", interval="1d", group_by='ticker')
+        stockData = yf.download(stockSymbols, period="2y", interval="1d", group_by='ticker')
+        indexData = yf.download(indexSymbols, period="2y", interval="1d", group_by='ticker')
     else:
-        data = yf.download(symbols, period="2d", interval="5m", group_by='ticker')
+        stockData = yf.download(stockSymbols, period="2d", interval="5m", group_by='ticker')
+        indexData = yf.download(indexSymbols, period="2d", interval="5m", group_by='ticker')
+
+    def update_price_data(ticker : Stock, data):
+        try:
+            if constant.mode.name == constant.Mode.POSITIONAL.name:
+                data.index = data.index.tz_localize('UTC').tz_convert('Asia/Kolkata')
+            else:
+                data.index = data.index.tz_convert('Asia/Kolkata')
+
+            ticker.priceData = data
+            ticker.last_price_update = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            logger.debug(f"Price data fetched successfully for {ticker.stockName}")
+        except Exception as e:
+            logger.error(f"Error fetching price data for {ticker.stockName}: {e}")
     
     for stock in stock_objs:
-        try:
-            # if len(symbols) > 1:
-            #     stock_data = data[stock.stockSymbolYFinance]
-            # else:
-            #     stock_data = data
-            stock_data = data[stock.stockSymbolYFinance]
-            if constant.mode.name == constant.Mode.POSITIONAL.name:
-                stock_data.index = stock_data.index.tz_localize('UTC').tz_convert('Asia/Kolkata')
-            else:
-                stock_data.index = stock_data.index.tz_convert('Asia/Kolkata')
+        stock_data = stockData[stock.stockSymbolYFinance]
+        update_price_data(stock, stock_data)
 
-            
-            stock.priceData = stock_data
-            stock.last_price_update = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            logger.debug(f"Price data fetched successfully for {stock.stockName}")
-        except Exception as e:
-            logger.error(f"Error fetching price data for {stock.stockName}: {e}")
+    for index in index_objs:
+        index_data = indexData[index.stockSymbolYFinance]
+        update_price_data(index, index_data)
 
 def fetch_futures_data(stock):
     try:
@@ -160,10 +205,11 @@ def fetch_and_analyze_stocks() -> List[Tuple[MonitorResult, bool, Optional[str]]
     logger.info("Fetching and analyzing data for all stocks")
     
     stock_objs = list(shared.stock_token_obj_dict.values())
+    index_objs = list(shared.index_token_obj_dict.values())
     
     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
         # Fetch price data for all stocks at once
-        price_future = executor.submit(fetch_price_data, stock_objs)
+        price_future = executor.submit(fetch_price_data, stock_objs, index_objs)
 
         if ENABLE_DERIVATIVES:
             # Fetch futures data for each stock in parallel
@@ -192,12 +238,24 @@ def fetch_and_analyze_stocks() -> List[Tuple[MonitorResult, bool, Optional[str]]
             except Exception as exc:
                 logger.error(f"Error fetching price data for stocks: {exc}")
                 return [(MonitorResult.ERROR, False, str(exc))]
-            
         
+        # Monitor and analyze all index
+        results = []
+        monitor_futures = {executor.submit(process_stock, index): index for index in index_objs}
+        orchestrator.reset_all_constants(is_index=True)
+        for future in concurrent.futures.as_completed(monitor_futures):
+            index = monitor_futures[future]
+            try:
+                result = future.result()
+                results.append(result)
+            except Exception as exc:
+                logger.error(f"Unexpected error processing {index.stockName}: {exc}")
+                results.append((MonitorResult.ERROR, False, str(exc)))
         
         # Monitor and analyze all stocks
+
         monitor_futures = {executor.submit(process_stock, stock): stock for stock in stock_objs}
-        results = []
+        orchestrator.reset_all_constants(is_index=False)
         for future in concurrent.futures.as_completed(monitor_futures):
             stock = monitor_futures[future]
             try:
@@ -374,7 +432,22 @@ def init():
         logger.info(" Derivative analysis disabled")
         ENABLE_DERIVATIVES = False
     
-    create_stock_objects()
+    if PRODUCTION:
+        if datetime.now().time() < time(9,15) or isNowInTimePeriod(time(9,15), time(15,30), datetime.now().time()):
+            constant.mode = constant.Mode.INTRADAY
+        else:
+            constant.mode = constant.Mode.POSITIONAL
+    else:
+        if os.getenv(constant.ENV_DEV_POSITIONAL, "0") == "1":
+            logger.debug("Intraday analysis enabled")
+            constant.mode = constant.Mode.POSITIONAL
+        
+        if os.getenv(constant.ENV_DEV_INTRADAY, "0") == "1":
+            logger.debug("Positional analysis enabled")
+            constant.mode = constant.Mode.INTRADAY
+
+    
+    create_stock_and_index_objects()
     orchestrator = AnalyserOrchestrator()
     orchestrator.register(VolumeAnalyser())
     orchestrator.register(TechnicalAnalyser())
@@ -396,7 +469,6 @@ if __name__ =="__main__":
             sleep(time_to_sleep.total_seconds())
 
         is_in_time_period = isNowInTimePeriod(time(9,15), time(15,30), datetime.now().time())
-
         if is_in_time_period:
             intraday_analysis()
         else:
@@ -410,22 +482,10 @@ if __name__ =="__main__":
             run(["/sbin/shutdown", "-h", "now"])
     else:
         logger.info("Running in development mode. No shutdown operation.")
-        run_intraday = False
-        run_positional = False
-        if os.getenv(constant.ENV_DEV_POSITIONAL, "0") == "1":
-            logger.debug("Intraday analysis enabled")
-            run_positional = True
-        if os.getenv(constant.ENV_DEV_INTRADAY, "0") == "1":
-            logger.debug("Positional analysis enabled")
-            run_intraday = True
         
-        if not run_intraday and not run_positional:
-            logger.info("No analysis enabled. Exiting.")
-            exit(0)
-        
-        if run_intraday:
+        if constant.mode.name == constant.Mode.INTRADAY.name:
             intraday_analysis()
-        if run_positional:
+        if constant.mode.name == constant.Mode.POSITIONAL.name:
             positional_analysis()
 
     

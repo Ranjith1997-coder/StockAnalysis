@@ -58,15 +58,18 @@ def get_futures_and_options_data_from_nse_positional(self):
     return self.derivativesData
 
 class Stock:
-    def __init__(self, stockName : str , stockSymbol : str, yfinanceSymbol = None):
+    def __init__(self, stockName : str , stockSymbol : str, yfinanceSymbol = None, is_index = False):
         self.stockName = stockName
         self.stock_symbol = stockSymbol
+        self.is_index = is_index
         if yfinanceSymbol is not None:
             self.stockSymbolYFinance = yfinanceSymbol
         else :
             self.stockSymbolYFinance = stockSymbol+".NS"
         self.prevDayOHLCV = None
         self.last_price_update = None
+        self.ltp = None
+        self.ltp_change_perc = None
         self._priceData = pd.DataFrame()
         self.last_trend_timestamp = None
         self.derivativesData = { 
@@ -83,6 +86,14 @@ class Stock:
     def set_prev_day_ohlcv(self, open, close, high, low, volume):
         self.prevDayOHLCV = {"OPEN":open, "HIGH":high, "LOW":low, "CLOSE":close, "VOLUME":volume}
     
+    def update_latest_data(self):
+        current_close = self.priceData['Close'].iloc[-1]
+        # previous_close = stock.priceData['Close'].iloc[-2]
+        previous_close = self.prevDayOHLCV['CLOSE']
+        change_percent = percentageChange(current_close, previous_close)
+        self.ltp = current_close
+        self.ltp_change_perc = change_percent
+
     @property
     def priceData(self):
         """Getter for priceData"""
