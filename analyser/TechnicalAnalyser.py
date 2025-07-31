@@ -14,8 +14,8 @@ class TechnicalAnalyser(BaseAnalyzer):
     RSI_LOWER_THRESHOLD = 20
     RSI_LOOKUP_PERIOD = 14
     ATR_THRESHOLD = 0.97
-    VWAP_DEVIATION_PERCENTAGE = 0.5
-    VWAP_DAYS = 1
+    VWAP_DEVIATION_PERCENTAGE = 2
+    VWAP_DAYS = 10
     
     def __init__(self) -> None:
         self.analyserName = "Technical Analyser"
