@@ -11,6 +11,14 @@ class BaseAnalyzer():
             getattr(self, name) for name in dir(self)
             if callable(getattr(self, name)) and getattr(getattr(self, name), "_is_positional", False)
         ]
+        self._intraday_index_methods = [
+            getattr(self, name) for name in dir(self)
+            if callable(getattr(self, name)) and getattr(getattr(self, name), "_is_index_intraday", False)
+        ]
+        self._positional_index_methods = [
+            getattr(self, name) for name in dir(self)
+            if callable(getattr(self, name)) and getattr(getattr(self, name), "_is_index_positional", False)
+        ]
                 
     @staticmethod
     def intraday(func):
@@ -28,6 +36,23 @@ class BaseAnalyzer():
         func._is_positional = True
         return func
     
+    @staticmethod
+    def index_intraday(func):
+        func._is_index_intraday = True
+        return func
+
+    @staticmethod
+    def index_positional(func):
+        func._is_index_positional = True
+        return func
+
+    @staticmethod
+    def index_both(func):
+        func._is_index_intraday = True
+        func._is_index_positional = True
+        return func
+
+    
     def run_all_intraday_analyses(self, stock):
         found_trend = False
         for method in self._intraday_methods:
@@ -39,6 +64,19 @@ class BaseAnalyzer():
         for method in self._positional_methods:
             found_trend |= method(stock)  # Call each method
         return found_trend
+    
+    def run_all_index_intraday_analyses(self, stock):
+        found_trend = False
+        for method in self._intraday_index_methods:
+            found_trend |= method(stock)  # Call each method
+        return found_trend
+    
+    def run_all_index_positional_analyses(self, stock):
+        found_trend = False
+        for method in self._positional_index_methods:
+            found_trend |= method(stock)  # Call each method
+        return found_trend
+
 
 
 class AnalyserOrchestrator:
@@ -50,25 +88,31 @@ class AnalyserOrchestrator:
             raise TypeError("Analyser must inherit from BaseAnalyser")
         self.analysers.append(analyser)
     
-    def reset_all_constants(self):
+    def reset_all_constants(self, is_index = False):
         for analyser in self.analysers:
             analyser.reset_constants()
 
-    def run_all_intraday(self, stock):
+    def run_all_intraday(self, stock, index = False):
         logger.debug("Starting all analyses for stock {}".format(stock.stock_symbol))
         found_trend = False
         for analyser in self.analysers:
-            analyser.run_all_intraday_analyses(stock)
+            if index:
+                analyser.run_all_index_intraday_analyses(stock)
+            else:
+                analyser.run_all_intraday_analyses(stock)
         logger.debug("All analyses complete for stock {}".format(stock.stock_symbol))
         if stock.analysis["NoOfTrends"] >= constant.REQUIRED_TRENDS:
             found_trend = True
         return found_trend
     
-    def run_all_positional(self, stock):
+    def run_all_positional(self, stock, index = False):
         logger.debug("Starting all analyses for stock {}".format(stock.stock_symbol))
         found_trend = False
         for analyser in self.analysers:
-            analyser.run_all_positional_analyses(stock)
+            if index:
+                analyser.run_all_index_positional_analyses(stock)
+            else:
+                analyser.run_all_positional_analyses(stock)
         logger.debug("All analyses complete for stock {}".format(stock.stock_symbol))
         if stock.analysis["NoOfTrends"] >= constant.REQUIRED_TRENDS:
             found_trend = True
@@ -77,9 +121,8 @@ class AnalyserOrchestrator:
     def generate_analysis_message(self, stock):
         # return message
         message_parts = [
-        f"Stock: {stock.stock_symbol}",
+        f"Stock: {stock.stock_symbol}: {stock.ltp:.2f} {stock.ltp_change_perc:.2f}%",
         ]
-
         for trend in ['BULLISH', 'BEARISH']:
             if stock.analysis[trend]:
                 message_parts.append(f"{trend}:")
