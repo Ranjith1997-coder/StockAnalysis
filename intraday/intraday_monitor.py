@@ -338,6 +338,18 @@ def report_top_gainers_and_losers():
     TELEGRAM_NOTIFICATIONS.send_notification(report)
     logger.info(f"EOD Report\n {report}")
 
+def report_index_data():
+    logger.info("Reporting index data")
+    report = "*********** Index Report ***********\n"
+    index_objs = list(shared.index_token_obj_dict.values())
+    for index in index_objs:
+        try:
+            report += f"  {index.stock_symbol}: {index.ltp:.2f} {index.ltp_change_perc:.2f}%\n"
+        except Exception as e:
+            logger.error(f"Error while getting index data for {index}: {e}")
+    TELEGRAM_NOTIFICATIONS.send_notification(report)
+    logger.info(f"Index Report\n {report}")
+
 def intraday_analysis():
     constant.mode = constant.Mode.INTRADAY
 
@@ -358,6 +370,7 @@ def intraday_analysis():
             logger.error(f"Critical error in stock analysis: {e}")
 
         report_top_gainers_and_losers()
+        report_index_data()
 
         for stock in shared.stock_token_obj_dict:
             shared.stock_token_obj_dict[stock].reset_price_data()
@@ -398,6 +411,7 @@ def positional_analysis():
         logger.error(f"Critical error in stock analysis: {e}")
 
     report_top_gainers_and_losers()
+    report_index_data()
 
     for stock in shared.stock_token_obj_dict:
         shared.stock_token_obj_dict[stock].reset_price_data()
