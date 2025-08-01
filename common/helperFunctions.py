@@ -13,7 +13,7 @@ def get_stock_objects_from_json():
     STOCKS_JSON_FILE = getcwd() + "/" + constants.DERIVATIVE_LIST_FILENAME
     with open(STOCKS_JSON_FILE, "r") as file:
         stocks = json.load(file)
-        return stocks["data"]["UnderlyingList"]
+        return stocks["data"]["UnderlyingList"] , stocks["data"]["IndexList"]
 
 def get_stock_OHLCV_from_json():
     STOCKS_JSON_FILE = getcwd() + "/" + constants.STOCK_DATA_FILENAME

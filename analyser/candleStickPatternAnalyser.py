@@ -16,20 +16,32 @@ class CandleStickAnalyser(BaseAnalyzer):
         super().__init__()
         self.analyserName = "Candle Stick Pattern Analyser"
 
-    def reset_constants(self):
+    def reset_constants(self, is_index = False):
         if constant.mode.name == constant.Mode.INTRADAY.name:
-            CandleStickAnalyser.THREE_CONT_INC_OR_DEC_THRESHOLD = 1.5  
-            CandleStickAnalyser.TWO_CONT_INC_OR_DEC_THRESHOLD = 1    
-            CandleStickAnalyser.MARUBASU_THRESHOLD = 1.5
+            if is_index:
+                CandleStickAnalyser.THREE_CONT_INC_OR_DEC_THRESHOLD = 1  
+                CandleStickAnalyser.TWO_CONT_INC_OR_DEC_THRESHOLD = 0.75    
+                CandleStickAnalyser.MARUBASU_THRESHOLD = 0.5
+            else:
+                CandleStickAnalyser.THREE_CONT_INC_OR_DEC_THRESHOLD = 1.5  
+                CandleStickAnalyser.TWO_CONT_INC_OR_DEC_THRESHOLD = 1    
+                CandleStickAnalyser.MARUBASU_THRESHOLD = 1.5
         else:
-            CandleStickAnalyser.THREE_CONT_INC_OR_DEC_THRESHOLD = 5  
-            CandleStickAnalyser.TWO_CONT_INC_OR_DEC_THRESHOLD = 4   
-            CandleStickAnalyser.MARUBASU_THRESHOLD = 3 
+            if is_index:
+                CandleStickAnalyser.THREE_CONT_INC_OR_DEC_THRESHOLD = 2.5  
+                CandleStickAnalyser.TWO_CONT_INC_OR_DEC_THRESHOLD = 2   
+                CandleStickAnalyser.MARUBASU_THRESHOLD = 1.5
+            else:  
+                CandleStickAnalyser.THREE_CONT_INC_OR_DEC_THRESHOLD = 5  
+                CandleStickAnalyser.TWO_CONT_INC_OR_DEC_THRESHOLD = 4   
+                CandleStickAnalyser.MARUBASU_THRESHOLD = 3 
              #add something later on this
         logger.debug(f"CandleStickAnalyser constants reset for mode {constant.mode.name}")
         logger.debug(f"THREE_CONT_INC_OR_DEC_THRESHOLD = {CandleStickAnalyser.THREE_CONT_INC_OR_DEC_THRESHOLD} , TWO_CONT_INC_OR_DEC_THRESHOLD = {CandleStickAnalyser.TWO_CONT_INC_OR_DEC_THRESHOLD} " )
         logger.debug(f"MARUBASU_THRESHOLD = {CandleStickAnalyser.MARUBASU_THRESHOLD} , WICK_PERCENTAGE = {CandleStickAnalyser.WICK_PERCENTAGE}")
+    
     @BaseAnalyzer.both
+    @BaseAnalyzer.index_both
     def singleCandleStickPattern(self, stock: Stock):   
         try:
             logger.debug(f'Inside singleCandleStickPattern for stock {stock.stock_symbol}')
@@ -64,6 +76,7 @@ class CandleStickAnalyser(BaseAnalyzer):
 
 
     @BaseAnalyzer.both
+    @BaseAnalyzer.index_both
     def doubleCandleStickPattern(self, stock: Stock):
         try:
             logger.debug(f'Inside singleCandleStickPattern for stock {stock.stock_symbol}')
@@ -99,6 +112,7 @@ class CandleStickAnalyser(BaseAnalyzer):
             return False
     
     @BaseAnalyzer.both
+    @BaseAnalyzer.index_both
     def tripleCandleStickPattern(self, stock: Stock):
         try:
             logger.debug(f'Inside tripleCandleStickPattern for stock {stock.stock_symbol}')
