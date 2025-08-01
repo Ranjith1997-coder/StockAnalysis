@@ -14,8 +14,8 @@ class TechnicalAnalyser(BaseAnalyzer):
     RSI_LOWER_THRESHOLD = 20
     RSI_LOOKUP_PERIOD = 14
     ATR_THRESHOLD = 0.97
-    VWAP_DEVIATION_PERCENTAGE = 0.5
-    VWAP_DAYS = 1
+    VWAP_DEVIATION_PERCENTAGE = 2
+    VWAP_DAYS = 10
     
     def __init__(self) -> None:
         self.analyserName = "Technical Analyser"
@@ -183,10 +183,10 @@ class TechnicalAnalyser(BaseAnalyzer):
             import pytz
             from datetime import datetime, timedelta
             ist = pytz.timezone('Asia/Kolkata')
-            yesterday = (datetime.now(ist) - timedelta(days=1)).date()
-            # today = datetime.now().date()
-            # today_data = stock.priceData[stock.priceData.index.date == today]
-            today_data = stock.priceData[stock.priceData.index.date == yesterday]
+            # yesterday = (datetime.now(ist) - timedelta(days=1)).date()
+            # today_data = stock.priceData[stock.priceData.index.date == yesterday]
+            today = datetime.now().date()
+            today_data = stock.priceData[stock.priceData.index.date == today]
             vwap = calculate_vwap(today_data)
 
             latest_close = stock.priceData['Close'].iloc[-1]

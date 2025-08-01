@@ -21,7 +21,7 @@ class CandleStickAnalyser(BaseAnalyzer):
             if is_index:
                 CandleStickAnalyser.THREE_CONT_INC_OR_DEC_THRESHOLD = 1  
                 CandleStickAnalyser.TWO_CONT_INC_OR_DEC_THRESHOLD = 0.75    
-                CandleStickAnalyser.MARUBASU_THRESHOLD = 1
+                CandleStickAnalyser.MARUBASU_THRESHOLD = 0.5
             else:
                 CandleStickAnalyser.THREE_CONT_INC_OR_DEC_THRESHOLD = 1.5  
                 CandleStickAnalyser.TWO_CONT_INC_OR_DEC_THRESHOLD = 1    
@@ -30,9 +30,9 @@ class CandleStickAnalyser(BaseAnalyzer):
             if is_index:
                 CandleStickAnalyser.THREE_CONT_INC_OR_DEC_THRESHOLD = 2.5  
                 CandleStickAnalyser.TWO_CONT_INC_OR_DEC_THRESHOLD = 2   
-                CandleStickAnalyser.MARUBASU_THRESHOLD = 2.5
+                CandleStickAnalyser.MARUBASU_THRESHOLD = 1.5
             else:  
-                CandleStickAnalyser.THREE_CONT_INC_OR_DEC_THRESHOLD = 4  
+                CandleStickAnalyser.THREE_CONT_INC_OR_DEC_THRESHOLD = 5  
                 CandleStickAnalyser.TWO_CONT_INC_OR_DEC_THRESHOLD = 4   
                 CandleStickAnalyser.MARUBASU_THRESHOLD = 3 
              #add something later on this
