@@ -121,8 +121,7 @@ class AnalyserOrchestrator:
     def generate_analysis_message(self, stock):
         # return message
         message_parts = [
-        f"Stock: {stock.stock_symbol}",
-        f"Price: {stock.ltp:.2f} {stock.ltp_change_perc:.2f}%",
+        f"Stock: {stock.stock_symbol}: {stock.ltp:.2f} {stock.ltp_change_perc:.2f}%",
         ]
         for trend in ['BULLISH', 'BEARISH']:
             if stock.analysis[trend]:
