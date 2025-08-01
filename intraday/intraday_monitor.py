@@ -62,11 +62,18 @@ def monitor(stock: Stock) -> Tuple[MonitorResult, bool, Optional[str]]:
         analysis_type = "Positional" if constant.mode == constant.Mode.POSITIONAL else "Intraday"
         logger.debug(f"{analysis_type} analysis for {stock.stockName} started.")
         
-        trend_found = (
-            orchestrator.run_all_positional(stock)
-            if constant.mode == constant.Mode.POSITIONAL
-            else orchestrator.run_all_intraday(stock)
-        )
+        if stock.is_index:
+            trend_found = (
+                orchestrator.run_all_positional(stock, index=True)
+                if constant.mode == constant.Mode.POSITIONAL
+                else orchestrator.run_all_intraday(stock, index=True)
+            )
+        else: 
+            trend_found = (
+                orchestrator.run_all_positional(stock)
+                if constant.mode == constant.Mode.POSITIONAL
+                else orchestrator.run_all_intraday(stock)
+            )
         
         logger.debug(f"{analysis_type} analysis for {stock.stockName} completed.")
         
@@ -452,7 +459,7 @@ def init():
         else:
             constant.mode = constant.Mode.POSITIONAL
     else:
-        if os.getenv(constant.ENV_DEV_POSITIONAL, "0") == "1":
+        if os.getenv(constant.ENV_DEV_POSITIONAL, "1") == "1":
             logger.debug("Intraday analysis enabled")
             constant.mode = constant.Mode.POSITIONAL
         
