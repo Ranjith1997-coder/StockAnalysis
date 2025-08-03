@@ -2,6 +2,7 @@ import sys
 import os
 sys.path.append(os.getcwd())
 
+import argparse 
 from notification.Notification import TELEGRAM_NOTIFICATIONS
 from datetime import datetime, time 
 import concurrent.futures
@@ -98,77 +99,83 @@ def process_monitor_results(results):
         elif trend_found:
             logger.info(f"Trend found: \n{message}")
 
-def create_stock_and_index_objects():
+def create_stock_and_index_objects(stockName = None, indexName = None ):
     def is_before_market_open():
         now = datetime.now()
         return now.weekday() < 5 and now.time() < time(9, 15)
     
     stock_list, index_list= get_stock_objects_from_json()
 
-    yfinanceSymbols = [stock["tradingsymbol"]+".NS" for stock in stock_list]
-    yfinanceIndexSymbols = [index["yfinancetradingsymbol"] for index in index_list]
-
-    prevDaydata = yf.download(yfinanceSymbols, period="2D", interval="1d", group_by='ticker')
-    prevDayIndexData = yf.download(yfinanceIndexSymbols, period="2D", interval="1d", group_by='ticker')
-    logger.info(f"Price data fetched to update previous OHLCV")
-
     count = 0
+    yfinanceIndexSymbols = []
     for index in index_list:
         if not PRODUCTION and constant.NO_OF_INDEX != -1 and count >= constant.NO_OF_INDEX:
             break
-        ticker = Stock(index["name"], index["tradingsymbol"], yfinanceSymbol=index["yfinancetradingsymbol"], is_index=True)
-        if constant.mode.name == constant.Mode.INTRADAY.name:
-            if is_before_market_open():
-                stock_prev_OHLCV_df = prevDayIndexData[ticker.stockSymbolYFinance].iloc[-1]
-                logger.debug(f"Using second-to-last day's data for {index['tradingsymbol']} (before market open)")
-            else:
-                stock_prev_OHLCV_df = prevDayIndexData[ticker.stockSymbolYFinance].iloc[-2]
-                logger.debug(f"Using last day's data for {index['tradingsymbol']} (after market open)")
-        else:
-            stock_prev_OHLCV_df = prevDayIndexData[ticker.stockSymbolYFinance].iloc[-2]
-            logger.debug(f"Using second-to-last day's data for {index['tradingsymbol']}")
+        if indexName and index["tradingsymbol"] != indexName:
+            continue
+        
+        yfinanceIndexSymbols.append(index["yfinancetradingsymbol"]) 
 
-        ticker.set_prev_day_ohlcv(stock_prev_OHLCV_df["Open"], stock_prev_OHLCV_df["Close"], 
-                                  stock_prev_OHLCV_df["High"], stock_prev_OHLCV_df["Low"], 
-                                  stock_prev_OHLCV_df["Volume"])
+        ticker = Stock(index["name"], index["tradingsymbol"], yfinanceSymbol=index["yfinancetradingsymbol"], is_index=True)
         shared.index_token_obj_dict[index["instrument_token"]] = ticker
         shared.index_list.append(index["tradingsymbol"])
         count += 1
 
+    if yfinanceIndexSymbols:
+        prevDayIndexData = yf.download(yfinanceIndexSymbols, period="2D", interval="1d", group_by='ticker')
+        logger.debug(f"Price data fetched to update previous OHLCV for indices")
+        for index in  shared.index_token_obj_dict.values():
+            if constant.mode.name == constant.Mode.INTRADAY.name:
+                if is_before_market_open():
+                    stock_prev_OHLCV_df = prevDayIndexData[index.stockSymbolYFinance].iloc[-1]
+                    logger.debug(f"Using second-to-last day's data for {index.stock_symbol} (before market open)")
+                else:
+                    stock_prev_OHLCV_df = prevDayIndexData[index.stockSymbolYFinance].iloc[-2]
+                    logger.debug(f"Using last day's data for {index.stock_symbol} (after market open)")
+            else:
+                stock_prev_OHLCV_df = prevDayIndexData[index.stockSymbolYFinance].iloc[-2]
+                logger.debug(f"Using second-to-last day's data for {index.stock_symbol}")
+
+            index.set_prev_day_ohlcv(stock_prev_OHLCV_df["Open"], stock_prev_OHLCV_df["Close"], 
+                                        stock_prev_OHLCV_df["High"], stock_prev_OHLCV_df["Low"], 
+                                        stock_prev_OHLCV_df["Volume"])
+        
+
     count = 0
+    yfinanceSymbols = []
     for stock in stock_list:
         if not PRODUCTION and constant.NO_OF_STOCKS != -1 and count >= constant.NO_OF_STOCKS:
             break
+        if stockName and stock["tradingsymbol"] != stockName:
+            continue
+        yfinanceSymbols.append(stock["tradingsymbol"]+".NS") 
         ticker = Stock(stock["name"], stock["tradingsymbol"])
-        if constant.mode.name == constant.Mode.INTRADAY.name:
-            if is_before_market_open():
-                stock_prev_OHLCV_df = prevDaydata[stock["tradingsymbol"] + ".NS"].iloc[-1]
-                logger.debug(f"Using second-to-last day's data for {stock['tradingsymbol']} (before market open)")
-            else:
-                stock_prev_OHLCV_df = prevDaydata[stock["tradingsymbol"] + ".NS"].iloc[-2]
-                logger.debug(f"Using last day's data for {stock['tradingsymbol']} (after market open)")
-        else:
-            stock_prev_OHLCV_df = prevDaydata[stock["tradingsymbol"] + ".NS"].iloc[-2]
-            logger.debug(f"Using second-to-last day's data for {stock['tradingsymbol']}")
-
-        ticker.set_prev_day_ohlcv(stock_prev_OHLCV_df["Open"], stock_prev_OHLCV_df["Close"], 
-                                  stock_prev_OHLCV_df["High"], stock_prev_OHLCV_df["Low"], 
-                                  stock_prev_OHLCV_df["Volume"])
         shared.stock_token_obj_dict[stock["instrument_token"]] = ticker
         shared.stocks_list.append(stock["tradingsymbol"])
         count += 1
+    
+    if yfinanceSymbols:
+        prevDaydata = yf.download(yfinanceSymbols, period="2D", interval="1d", group_by='ticker')
+        logger.debug(f"Price data fetched to update previous OHLCV for stocks")
+        for stock in shared.stock_token_obj_dict.values():
+            if constant.mode.name == constant.Mode.INTRADAY.name:
+                if is_before_market_open():
+                    stock_prev_OHLCV_df = prevDaydata[stock.stockSymbolYFinance].iloc[-1]
+                    logger.debug(f"Using second-to-last day's data for {stock.stock_symbol} (before market open)")
+                else:
+                    stock_prev_OHLCV_df = prevDaydata[stock.stockSymbolYFinance].iloc[-2]
+                    logger.debug(f"Using last day's data for {stock.stock_symbol} (after market open)")
+            else:
+                stock_prev_OHLCV_df = prevDaydata[stock.stockSymbolYFinance].iloc[-2]
+                logger.debug(f"Using second-to-last day's data for {stock.stock_symbol}")
+
+            stock.set_prev_day_ohlcv(stock_prev_OHLCV_df["Open"], stock_prev_OHLCV_df["Close"], 
+                                        stock_prev_OHLCV_df["High"], stock_prev_OHLCV_df["Low"], 
+                                        stock_prev_OHLCV_df["Volume"])
+    
 
 def fetch_price_data(stock_objs, index_objs):
-    stockSymbols = [stock.stockSymbolYFinance for stock in stock_objs]
-    indexSymbols = [index.stockSymbolYFinance for index in index_objs]
-
-    if constant.mode.name == constant.Mode.POSITIONAL.name:
-        stockData = yf.download(stockSymbols, period="2y", interval="1d", group_by='ticker')
-        indexData = yf.download(indexSymbols, period="2y", interval="1d", group_by='ticker')
-    else:
-        stockData = yf.download(stockSymbols, period="2d", interval="5m", group_by='ticker')
-        indexData = yf.download(indexSymbols, period="2d", interval="5m", group_by='ticker')
-
+    
     def update_price_data(ticker : Stock, data):
         try:
             if constant.mode.name == constant.Mode.POSITIONAL.name:
@@ -182,13 +189,23 @@ def fetch_price_data(stock_objs, index_objs):
         except Exception as e:
             logger.error(f"Error fetching price data for {ticker.stockName}: {e}")
     
-    for stock in stock_objs:
-        stock_data = stockData[stock.stockSymbolYFinance]
-        update_price_data(stock, stock_data)
+    stockSymbols = [stock.stockSymbolYFinance for stock in stock_objs]
+    indexSymbols = [index.stockSymbolYFinance for index in index_objs]
 
-    for index in index_objs:
-        index_data = indexData[index.stockSymbolYFinance]
-        update_price_data(index, index_data)
+    period = "2y" if constant.mode.name == constant.Mode.POSITIONAL.name else "2D"
+    interval = "1d" if constant.mode.name == constant.Mode.POSITIONAL.name else "5m"
+
+    if stockSymbols:
+        stockData = yf.download(stockSymbols, period=period, interval=interval, group_by='ticker')
+        for stock in stock_objs:
+            stock_data = stockData[stock.stockSymbolYFinance]
+            update_price_data(stock, stock_data)
+    
+    if indexSymbols:
+        indexData = yf.download(indexSymbols, period=period, interval=interval, group_by='ticker')
+        for index in index_objs:
+            index_data = indexData[index.stockSymbolYFinance]
+            update_price_data(index, index_data)
 
 def fetch_futures_data(stock):
     try:
@@ -467,8 +484,9 @@ def init():
             logger.debug("Positional analysis enabled")
             constant.mode = constant.Mode.INTRADAY
 
+    args = parse_arguments()
     
-    create_stock_and_index_objects()
+    create_stock_and_index_objects(args.stock, args.index)
     orchestrator = AnalyserOrchestrator()
     orchestrator.register(VolumeAnalyser())
     orchestrator.register(TechnicalAnalyser())
@@ -476,6 +494,12 @@ def init():
     if ENABLE_DERIVATIVES:
         shared.stockExpires = NSE_DATA_CLASS.expiry_dates_future()
         orchestrator.register(FuturesAnalyser())
+    
+def parse_arguments():
+    parser = argparse.ArgumentParser(description="Stock Analysis Tool")
+    parser.add_argument("--stock", type=str, help="Name of the stock to analyze (optional)")
+    parser.add_argument("--index", type=str, help="Name of the index to analyze (optional)")
+    return parser.parse_args()
 
 if __name__ =="__main__":
 

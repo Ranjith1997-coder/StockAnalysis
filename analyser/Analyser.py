@@ -131,7 +131,7 @@ class AnalyserOrchestrator:
                         message_parts.append(f" Volume {trend.lower()}: {data.Volume_rate_percent:.2f}%")
                         message_parts.append(f" Price {trend.lower()}: {data.price_change_percent:.2f}%")
                     elif analysis_type == 'RSI':
-                        message_parts.append(f" RSI value: {data.value:.2f}")
+                        message_parts.append(f" RSI value: {data.value:.2f}, strength: {data.strength}")
                     elif analysis_type == 'rsi_crossover':
                         message_parts.append(f" RSI crossover: pv:{data.prev_value:.2f}, cv:{data.curr_value:.2f} ")
                     elif analysis_type == 'BollingerBand':
@@ -153,6 +153,11 @@ class AnalyserOrchestrator:
                     elif analysis_type == 'vwap_deviation':
                         message_parts.append(f" VWAP: Close({data.close:.2f}) {'<' if trend == 'BULLISH' else '>'} VWAP({data.vwap:.2f}) DEVIATION: {data.deviation:.2f}%")
                         message_parts.append(f"   Intervals {'below' if trend == 'BULLISH' else 'above'} VWAP: {data.vwap_days}")
+                    elif analysis_type == 'MACD':
+                        message_parts.append(f" MACD : {data}")
+                    elif analysis_type == 'ATR':
+                        message_parts.append(f" ATR : {data.atr_value:.2f} {data.atr_percentage:.2f}% ")
+
 
         if stock.analysis['NEUTRAL']:
             message_parts.append("NEUTRAL:")
