@@ -7,15 +7,24 @@ from collections import namedtuple
 import pandas as pd
 from datetime import datetime
 from common.helperFunctions import percentageChange
+import numpy as np
 
 class TechnicalAnalyser(BaseAnalyzer):
 
     RSI_UPPER_THRESHOLD = 80
     RSI_LOWER_THRESHOLD = 20
     RSI_LOOKUP_PERIOD = 14
-    ATR_THRESHOLD = 0.97
+    RSI_TREND_PERIODS = 3
+    RSI_STRENGTH_THRESHOLD = 2
+    RSI_MOMENTUM_THRESHOLD = 2
+
     VWAP_DEVIATION_PERCENTAGE = 2
     VWAP_DAYS = 10
+
+    ATR_PERIOD = 14
+    ATR_THRESHOLD = 3  # ATR multiplier for significance
+    ATR_TREND_PERIODS = 3  # Number of periods to confirm trend
+    
     
     def __init__(self) -> None:
         self.analyserName = "Technical Analyser"
@@ -30,81 +39,77 @@ class TechnicalAnalyser(BaseAnalyzer):
         logger.debug(f"RSI_UPPER_THRESHOLD = {TechnicalAnalyser.RSI_UPPER_THRESHOLD} , RSI_LOWER_THRESHOLD = {TechnicalAnalyser.RSI_LOWER_THRESHOLD}, ATR_THRESHOLD = {TechnicalAnalyser.ATR_THRESHOLD}")
 
 
-    def compute_rsi(self, close_series):
-        if len(close_series) < TechnicalAnalyser.RSI_LOOKUP_PERIOD + 1:
-            raise ValueError(f"Need at least {TechnicalAnalyser.RSI_LOOKUP_PERIOD  + 1} data points to compute RSI")
-
-        # change = close_series.diff()
-        # up_series = change.mask(change < 0, 0.0)
-        # down_series = -change.mask(change > 0, -0.0)
-
-        # #@numba.jit
-        # def rma(x, n):
-        #     """Running moving average"""
-        #     a = np.full_like(x, np.nan)
-        #     # pdb.set_trace()
-        #     a[n] = x[1:n+1].mean()
-        #     for i in range(n+1, len(x)):
-        #         a[i] = (a[i-1] * (n - 1) + x[i]) / n
-        #     return a
-
-        # avg_gain = rma(up_series.to_numpy(), TechnicalAnalyser.RSI_LOOKUP_PERIOD)
-        # avg_loss = rma(down_series.to_numpy(), TechnicalAnalyser.RSI_LOOKUP_PERIOD)
-
-        # rs = avg_gain / avg_loss
-        # rsi = 100 - (100 / (1 + rs))
-        # return rsi[-1]
-        delta = close_series.diff().dropna()
-
-        gains = delta.where(delta > 0, 0)
-        losses = -delta.where(delta < 0, 0)
-
-        # Use Wilder's smoothing method (EMA with adjust=False)
-        avg_gain = gains.ewm(span=TechnicalAnalyser.RSI_LOOKUP_PERIOD, adjust=False).mean()
-        avg_loss = losses.ewm(span=TechnicalAnalyser.RSI_LOOKUP_PERIOD, adjust=False).mean()
-
-        rs = avg_gain / avg_loss
-        rsi = 100 - (100 / (1 + rs))
-
-        return rsi.iloc[-1]
+    
     
     @BaseAnalyzer.both
     @BaseAnalyzer.index_both
     def analyse_rsi(self, stock: Stock):
         try : 
-            logger.debug(f'Inside analyse_rsi for stock {stock.stock_symbol}')
-            rsi_value = self.compute_rsi(stock.priceData["Close"].iloc[(-TechnicalAnalyser.RSI_LOOKUP_PERIOD * 5 ) -1:])
-            RSIAnalysis = namedtuple("RSIAnalysis", ["value"])            
+            def compute_rsi(close_series):
+                if len(close_series) < TechnicalAnalyser.RSI_LOOKUP_PERIOD + 1:
+                    raise ValueError(f"Need at least {TechnicalAnalyser.RSI_LOOKUP_PERIOD  + 1} data points to compute RSI")
 
-            if rsi_value > TechnicalAnalyser.RSI_UPPER_THRESHOLD: 
-                stock.set_analysis("BEARISH", "RSI", RSIAnalysis(value=rsi_value))
-                return True
-            elif rsi_value < TechnicalAnalyser.RSI_LOWER_THRESHOLD:
-                stock.set_analysis("BULLISH", "RSI", RSIAnalysis(value=rsi_value))
-                return True
-            return False
+                delta = close_series.diff().dropna()
+
+                gains = delta.where(delta > 0, 0)
+                losses = -delta.where(delta < 0, 0)
+
+                # Use Wilder's smoothing method (EMA with adjust=False)
+                avg_gain = gains.ewm(span=TechnicalAnalyser.RSI_LOOKUP_PERIOD, adjust=False).mean()
+                avg_loss = losses.ewm(span=TechnicalAnalyser.RSI_LOOKUP_PERIOD, adjust=False).mean()
+
+                rs = avg_gain / avg_loss
+                rsi = 100 - (100 / (1 + rs))
+
+                return rsi
+            logger.debug(f'Inside analyse_rsi for stock {stock.stock_symbol}')
+            rsi_series = compute_rsi(stock.priceData["Close"].iloc[-100:])
+            RSIAnalysis = namedtuple("RSIAnalysis", ["value", "previous_value", "trend", "strength"])
+
+            current_rsi = rsi_series.iloc[-1]
+            previous_rsi = rsi_series.iloc[-2]
+
+
+            trend_found = False
+
+            if current_rsi > TechnicalAnalyser.RSI_UPPER_THRESHOLD: 
+                trend = "Overbought" if all(rsi > TechnicalAnalyser.RSI_UPPER_THRESHOLD for rsi in rsi_series.iloc[-self.RSI_TREND_PERIODS:]) else "Weakening"
+                strength = min(int((current_rsi - TechnicalAnalyser.RSI_UPPER_THRESHOLD) / self.RSI_STRENGTH_THRESHOLD), 5)
+                momentum = min(int((current_rsi - previous_rsi) / self.RSI_MOMENTUM_THRESHOLD), 5)
+                
+                if trend == "Overbought" and strength >= 3 and momentum >= 2:
+                    stock.set_analysis("BEARISH", "RSI", RSIAnalysis(
+                        value=current_rsi,
+                        previous_value=previous_rsi,
+                        trend=trend,
+                        strength=strength
+                    ))
+                    trend_found = True
+            elif current_rsi < TechnicalAnalyser.RSI_LOWER_THRESHOLD:
+                trend = "Oversold" if all(rsi < TechnicalAnalyser.RSI_LOWER_THRESHOLD for rsi in rsi_series.iloc[-self.RSI_TREND_PERIODS:]) else "Strengthening"
+                strength = min(int((TechnicalAnalyser.RSI_LOWER_THRESHOLD - current_rsi) / self.RSI_STRENGTH_THRESHOLD), 5)
+                momentum = min(int((previous_rsi - current_rsi) / self.RSI_MOMENTUM_THRESHOLD), 5)
+                
+                if trend == "Oversold" and strength >= 3 and momentum >= 2:
+                    stock.set_analysis("BULLISH", "RSI", RSIAnalysis(
+                        value=current_rsi,
+                        previous_value=previous_rsi,
+                        trend=trend,
+                        strength=strength
+                    ))
+                    trend_found = True
+            
+            RSICrossoverAnalysis = namedtuple("RSICrossoverAnalysis", ["curr_value", "prev_value"])
+            if previous_rsi > TechnicalAnalyser.RSI_UPPER_THRESHOLD and current_rsi < TechnicalAnalyser.RSI_UPPER_THRESHOLD: 
+                stock.set_analysis("BEARISH", "rsi_crossover", RSICrossoverAnalysis(curr_value=current_rsi, prev_value=previous_rsi))
+                trend_found = True
+            elif previous_rsi < TechnicalAnalyser.RSI_LOWER_THRESHOLD and current_rsi > TechnicalAnalyser.RSI_LOWER_THRESHOLD: 
+                stock.set_analysis("BULLISH", "rsi_crossover", RSICrossoverAnalysis(curr_value=current_rsi, prev_value=previous_rsi))
+                trend_found = True
+
+            return trend_found
         except Exception as e:
             logger.error(f"Error in analyse_rsi for stock {stock.stock_symbol}: {str(e)}")
-            logger.error(f"Traceback: {traceback.format_exc()}")
-            return False
-    
-    @BaseAnalyzer.both
-    @BaseAnalyzer.index_both
-    def analyse_rsi_crossover(self, stock: Stock):
-        try : 
-            logger.debug(f'Inside analyse_rsi_crossover for stock {stock.stock_symbol}')
-            curr_rsi_value = self.compute_rsi(stock.priceData["Close"].iloc[(-TechnicalAnalyser.RSI_LOOKUP_PERIOD * 5 ) - 1:])
-            prev_rsi_value = self.compute_rsi(stock.priceData["Close"].iloc[(-TechnicalAnalyser.RSI_LOOKUP_PERIOD * 5 ) - 2 : -1])
-            RSICrossoverAnalysis = namedtuple("RSICrossoverAnalysis", ["curr_value", "prev_value"])
-            if prev_rsi_value > TechnicalAnalyser.RSI_UPPER_THRESHOLD and curr_rsi_value < TechnicalAnalyser.RSI_UPPER_THRESHOLD: 
-                stock.set_analysis("BEARISH", "rsi_crossover", RSICrossoverAnalysis(curr_value=curr_rsi_value, prev_value=prev_rsi_value))
-                return True
-            elif prev_rsi_value < TechnicalAnalyser.RSI_LOWER_THRESHOLD and curr_rsi_value > TechnicalAnalyser.RSI_LOWER_THRESHOLD: 
-                stock.set_analysis("BULLISH", "rsi_crossover", RSICrossoverAnalysis(curr_value=curr_rsi_value, prev_value=prev_rsi_value))
-                return True
-            return False
-        except Exception as e:
-            logger.error(f"Error in analyse_rsi_crossover for stock {stock.stock_symbol}: {str(e)}")
             logger.error(f"Traceback: {traceback.format_exc()}")
             return False
     
@@ -218,5 +223,147 @@ class TechnicalAnalyser(BaseAnalyzer):
             return False
         except Exception as e:
             logger.error(f"Error in analyse_vwap for stock {stock.stock_symbol}: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            return False
+    
+    @BaseAnalyzer.both
+    @BaseAnalyzer.index_both
+    def analyze_macd(self, stock: Stock):
+        def calculate_latest_macd(data, fast_period=12, slow_period=26, signal_period=9):
+            """
+            Calculate MACD, Signal line, and Histogram for the entire dataset.
+    
+            :param data: pandas DataFrame with a 'Close' column
+            :param fast_period: The short-term EMA period (default: 12)
+            :param slow_period: The long-term EMA period (default: 26)
+            :param signal_period: The signal line EMA period (default: 9)
+            :return: DataFrame with MACD, Signal, and Histogram columns
+            """
+            close = data['Close']
+            
+            # Calculate EMAs
+            ema_fast = close.ewm(span=fast_period, adjust=False).mean()
+            ema_slow = close.ewm(span=slow_period, adjust=False).mean()
+            
+            # Calculate MACD line
+            macd_line = ema_fast - ema_slow
+            
+            # Calculate Signal line
+            signal_line = macd_line.ewm(span=signal_period, adjust=False).mean()
+            
+            # Calculate MACD histogram
+            macd_histogram = macd_line - signal_line
+            
+            return pd.DataFrame({
+                'MACD': macd_line,
+                'Signal': signal_line,
+                'Histogram': macd_histogram
+            })
+        try:
+            logger.debug(f'Analyzing MACD for stock {stock.stock_symbol}')
+            # Get the stock's price data
+            price_data = stock.priceData
+            
+            # Calculate latest MACD values
+            macd_data = calculate_latest_macd(price_data)
+            
+            latest_macd = macd_data.iloc[-1]
+            previous_macd = macd_data.iloc[-2]
+            
+            # 1. Minimum histogram value change
+            MIN_HISTOGRAM_CHANGE = 0.1  # Adjust this value as needed
+            histogram_change = abs(latest_macd['Histogram'] - previous_macd['Histogram'])
+
+            # 2. Check for consecutive histogram changes
+            CONSECUTIVE_CHANGES = 3
+            histogram_values = macd_data['Histogram'].iloc[-CONSECUTIVE_CHANGES:]
+
+            # 5. Trend strength
+            TREND_STRENGTH_THRESHOLD = 0.02  # 2% change
+
+            # Check for bullish crossover
+            if (latest_macd['MACD'] > latest_macd['Signal'] and 
+                previous_macd['MACD'] <= previous_macd['Signal'] and
+                histogram_change > MIN_HISTOGRAM_CHANGE and
+                histogram_values.is_monotonic_increasing and
+                (latest_macd['MACD'] - latest_macd['Signal']) / latest_macd['Signal'] > TREND_STRENGTH_THRESHOLD):
+                stock.set_analysis("BULLISH", "MACD", "Strong Bullish crossover")
+                return True
+
+            # Check for bearish crossover
+            elif (latest_macd['MACD'] < latest_macd['Signal'] and 
+                previous_macd['MACD'] >= previous_macd['Signal'] and
+                histogram_change > MIN_HISTOGRAM_CHANGE and
+                 histogram_values.is_monotonic_decreasing and
+                (latest_macd['Signal'] - latest_macd['MACD']) / latest_macd['Signal'] > TREND_STRENGTH_THRESHOLD):
+                
+                stock.set_analysis("BEARISH", "MACD", "Strong Bearish crossover")
+                return True
+
+            return False
+        except Exception as e:
+            logger.error(f"Error in analyze_macd for stock {stock.stock_symbol}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            return False
+    
+   
+
+    @BaseAnalyzer.both
+    @BaseAnalyzer.index_both
+    def analyse_atr(self, stock: Stock):
+        try:
+            def calculate_atr(high, low, close, period=self.ATR_PERIOD):
+                high_low = high - low
+                high_close = np.abs(high - close.shift())
+                low_close = np.abs(low - close.shift())
+                ranges = pd.concat([high_low, high_close, low_close], axis=1)
+                true_range = np.max(ranges, axis=1)
+                return true_range.rolling(period).mean()
+            logger.debug(f'Inside analyse_atr for stock {stock.stock_symbol}')
+            # Calculate ATR
+            atr = calculate_atr(stock.priceData['High'], stock.priceData['Low'], stock.priceData['Close'])
+            
+            # Get the latest price data
+            latest_close = stock.priceData['Close'].iloc[-1]
+            latest_atr = atr.iloc[-1]
+            
+            # Calculate the ATR percentage
+            atr_percentage = (latest_atr / latest_close) * 100
+            
+            # Check for high volatility
+            is_high_volatility = atr_percentage > self.ATR_THRESHOLD
+            
+            # Check for price breakout
+            # upper_band = stock.priceData['Close'].rolling(self.ATR_TREND_PERIODS).mean() + (self.ATR_THRESHOLD * atr)
+            # lower_band = stock.priceData['Close'].rolling(self.ATR_TREND_PERIODS).mean() - (self.ATR_THRESHOLD * atr)
+            
+            # is_upward_breakout = all(stock.priceData['Close'].iloc[-self.ATR_TREND_PERIODS:] > upper_band.iloc[-self.ATR_TREND_PERIODS:])
+            # is_downward_breakout = all(stock.priceData['Close'].iloc[-self.ATR_TREND_PERIODS:] < lower_band.iloc[-self.ATR_TREND_PERIODS:])
+            
+            # Check for ATR expansion
+            is_atr_expanding = all(atr.diff().iloc[-self.ATR_TREND_PERIODS:] > 0)
+            
+            ATRAnalysis = namedtuple("ATRAnalysis", ["atr_value", "atr_percentage", "volatility", "breakout"])
+            
+            if is_high_volatility  and is_atr_expanding:
+                stock.set_analysis("BULLISH", "ATR", ATRAnalysis(
+                    atr_value=latest_atr,
+                    atr_percentage=atr_percentage,
+                    volatility="High",
+                    breakout="Upward"
+                ))
+                return True
+            elif is_high_volatility  and is_atr_expanding:
+                stock.set_analysis("BEARISH", "ATR", ATRAnalysis(
+                    atr_value=latest_atr,
+                    atr_percentage=atr_percentage,
+                    volatility="High",
+                    breakout="Downward"
+                ))
+                return True
+            
+            return False
+        except Exception as e:
+            logger.error(f"Error in analyse_atr for stock {stock.stock_symbol}: {str(e)}")
             logger.error(f"Traceback: {traceback.format_exc()}")
             return False
