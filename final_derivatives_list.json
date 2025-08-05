@@ -24,6 +24,12 @@
                 "tradingsymbol": "NIFTYNXT50",
                 "yfinancetradingsymbol": "^NSMIDCP",
                 "instrument_token": 5
+            }, 
+            {
+                "name": "India VIX",
+                "tradingsymbol": "INDIA_VIX",
+                "yfinancetradingsymbol": "^INDIAVIX",
+                "instrument_token": 6
             }
         ],
         "UnderlyingList": [
