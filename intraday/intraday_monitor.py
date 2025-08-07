@@ -474,6 +474,7 @@ def init():
     if os.getenv(constant.ENV_PRODUCTION, "0") == "1":
         logger.info("Running in production mode")
         PRODUCTION = True
+        TELEGRAM_NOTIFICATIONS.is_production = True
     else:
         logger.info("Running in development mode")
         PRODUCTION = False
