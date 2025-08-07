@@ -2,16 +2,11 @@ import sys
 import os
 sys.path.append(os.getcwd())
 
-from datetime import datetime
-
-import yfinance as yf
-from fno.OptionOpstraCollection import getIVChartData
 import pandas as pd
 import common.constants as constant
 from common.helperFunctions import percentageChange
 import pandas as pd
-from threading import Lock
-import numpy as np
+import threading
 from nse.nse_derivative_data import NSE_DATA_CLASS
 import  common.shared as shared
 from common.logging_util import logger
@@ -76,6 +71,22 @@ class Stock:
                         "futuresData": {"currExpiry" : None, "nextExpiry" : None} , 
                         "optionsData": {"currExpiry" : None, "nextExpiry" : None} 
         }
+        self._zerodha_data = {
+            "volume_traded": 0,
+            "last_price": 0,
+            "open": 0,
+            "high" : 0,
+            "close": 0,
+            "low": 0,
+            "change": 0,
+            "average_traded_price": 0,
+            "total_buy_quantity": 0,
+            "total_sell_quantity": 0
+        }
+        self.zerodha_ctx = {
+            "last_notification_time": None,
+        }
+        self._zerodha_lock = threading.Lock()
         self.analysis = {"Timestamp" : None,
                         "BULLISH":{},
                         "BEARISH":{},
@@ -93,6 +104,32 @@ class Stock:
         change_percent = percentageChange(current_close, previous_close)
         self.ltp = current_close
         self.ltp_change_perc = change_percent
+
+    @property
+    def zerodha_data(self):
+        """Thread-safe getter for zerodha_data"""
+        with self._zerodha_lock:
+            return self._zerodha_data.copy()  # Return a copy to prevent external modifications
+    
+    def update_zerodha_data(self, ticker_data):
+        """
+        Thread-safe update of the Zerodha data for total buy and sell quantities.
+
+        Args:
+            buy_quantity (int): The buy quantity to be added.
+            sell_quantity (int): The sell quantity to be added.
+        """
+        with self._zerodha_lock:
+            self._zerodha_data["volume_traded"] = ticker_data["volume_traded"]
+            self._zerodha_data["last_price"] = ticker_data["last_price"]
+            self._zerodha_data["open"] = ticker_data["ohlc"]["open"]
+            self._zerodha_data["high"] = ticker_data["ohlc"]["high"]
+            self._zerodha_data["close"] = ticker_data["ohlc"]["close"]
+            self._zerodha_data["low"] = ticker_data["ohlc"]["low"] 
+            self._zerodha_data["change"] = ticker_data["change"]
+            self._zerodha_data["average_traded_price"] = ticker_data["average_traded_price"]  
+            self._zerodha_data["total_buy_quantity"] = ticker_data["total_buy_quantity"]
+            self._zerodha_data["total_sell_quantity"] = ticker_data["total_sell_quantity"]
 
     @property
     def priceData(self):
