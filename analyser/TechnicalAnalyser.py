@@ -24,6 +24,8 @@ class TechnicalAnalyser(BaseAnalyzer):
     ATR_PERIOD = 14
     ATR_THRESHOLD = 3  # ATR multiplier for significance
     ATR_TREND_PERIODS = 3  # Number of periods to confirm trend
+
+    BUY_SELL_QUANTITY = 3
     
     
     def __init__(self) -> None:
@@ -64,7 +66,7 @@ class TechnicalAnalyser(BaseAnalyzer):
                 return rsi
             logger.debug(f'Inside analyse_rsi for stock {stock.stock_symbol}')
             rsi_series = compute_rsi(stock.priceData["Close"].iloc[-100:])
-            RSIAnalysis = namedtuple("RSIAnalysis", ["value", "previous_value", "trend", "strength"])
+            RSIAnalysis = namedtuple("RSIAnalysis", ["value", "previous_value", "trend",])
 
             current_rsi = rsi_series.iloc[-1]
             previous_rsi = rsi_series.iloc[-2]
@@ -74,28 +76,28 @@ class TechnicalAnalyser(BaseAnalyzer):
 
             if current_rsi > TechnicalAnalyser.RSI_UPPER_THRESHOLD: 
                 trend = "Overbought" if all(rsi > TechnicalAnalyser.RSI_UPPER_THRESHOLD for rsi in rsi_series.iloc[-self.RSI_TREND_PERIODS:]) else "Weakening"
-                strength = min(int((current_rsi - TechnicalAnalyser.RSI_UPPER_THRESHOLD) / self.RSI_STRENGTH_THRESHOLD), 5)
-                momentum = min(int((current_rsi - previous_rsi) / self.RSI_MOMENTUM_THRESHOLD), 5)
+                # strength = min(int((current_rsi - TechnicalAnalyser.RSI_UPPER_THRESHOLD) / self.RSI_STRENGTH_THRESHOLD), 5)
+                # momentum = min(int((current_rsi - previous_rsi) / self.RSI_MOMENTUM_THRESHOLD), 5)
                 
-                if trend == "Overbought" and strength >= 3 and momentum >= 2:
+                # if trend == "Overbought" and strength >= 3 and momentum >= 2:
+                if trend == "Overbought":
                     stock.set_analysis("BEARISH", "RSI", RSIAnalysis(
                         value=current_rsi,
                         previous_value=previous_rsi,
-                        trend=trend,
-                        strength=strength
+                        trend=trend
                     ))
                     trend_found = True
             elif current_rsi < TechnicalAnalyser.RSI_LOWER_THRESHOLD:
                 trend = "Oversold" if all(rsi < TechnicalAnalyser.RSI_LOWER_THRESHOLD for rsi in rsi_series.iloc[-self.RSI_TREND_PERIODS:]) else "Strengthening"
-                strength = min(int((TechnicalAnalyser.RSI_LOWER_THRESHOLD - current_rsi) / self.RSI_STRENGTH_THRESHOLD), 5)
-                momentum = min(int((previous_rsi - current_rsi) / self.RSI_MOMENTUM_THRESHOLD), 5)
+                # strength = min(int((TechnicalAnalyser.RSI_LOWER_THRESHOLD - current_rsi) / self.RSI_STRENGTH_THRESHOLD), 5)
+                # momentum = min(int((previous_rsi - current_rsi) / self.RSI_MOMENTUM_THRESHOLD), 5)
                 
-                if trend == "Oversold" and strength >= 3 and momentum >= 2:
+                # if trend == "Oversold" and strength >= 3 and momentum >= 2:
+                if trend == "Oversold":
                     stock.set_analysis("BULLISH", "RSI", RSIAnalysis(
                         value=current_rsi,
                         previous_value=previous_rsi,
-                        trend=trend,
-                        strength=strength
+                        trend=trend
                     ))
                     trend_found = True
             
@@ -344,26 +346,53 @@ class TechnicalAnalyser(BaseAnalyzer):
             is_atr_expanding = all(atr.diff().iloc[-self.ATR_TREND_PERIODS:] > 0)
             
             ATRAnalysis = namedtuple("ATRAnalysis", ["atr_value", "atr_percentage", "volatility", "breakout"])
-            
+
             if is_high_volatility  and is_atr_expanding:
-                stock.set_analysis("BULLISH", "ATR", ATRAnalysis(
+                stock.set_analysis("NEUTRAL", "ATR", ATRAnalysis(
                     atr_value=latest_atr,
                     atr_percentage=atr_percentage,
                     volatility="High",
                     breakout="Upward"
                 ))
                 return True
-            elif is_high_volatility  and is_atr_expanding:
-                stock.set_analysis("BEARISH", "ATR", ATRAnalysis(
-                    atr_value=latest_atr,
-                    atr_percentage=atr_percentage,
-                    volatility="High",
-                    breakout="Downward"
-                ))
-                return True
+            
+            # if is_high_volatility  and is_atr_expanding:
+            #     stock.set_analysis("BULLISH", "ATR", ATRAnalysis(
+            #         atr_value=latest_atr,
+            #         atr_percentage=atr_percentage,
+            #         volatility="High",
+            #         breakout="Upward"
+            #     ))
+            #     return True
+            # elif is_high_volatility  and is_atr_expanding:
+            #     stock.set_analysis("BEARISH", "ATR", ATRAnalysis(
+            #         atr_value=latest_atr,
+            #         atr_percentage=atr_percentage,
+            #         volatility="High",
+            #         breakout="Downward"
+            #     ))
+            #     return True
             
             return False
         except Exception as e:
             logger.error(f"Error in analyse_atr for stock {stock.stock_symbol}: {str(e)}")
             logger.error(f"Traceback: {traceback.format_exc()}")
             return False
+    
+    @BaseAnalyzer.intraday
+    def analyze_buy_sell_quantity(self, stock:Stock):
+        try:
+            zerodha_data = stock.zerodha_data
+
+            buy_quantity = zerodha_data.get("buy_quantity", 0)
+            sell_quantity = zerodha_data.get("sell_quantity", 0)
+            
+            buySellAnalysis = namedtuple("buySellAnalysis", ["buy_quantity", "sell_quantity"])
+
+            if buy_quantity > 2 * sell_quantity:
+                stock.set_analysis("BULLISH", "BUY_SELL", buySellAnalysis(buy_quantity=buy_quantity, sell_quantity=sell_quantity))
+            elif sell_quantity > 2 * buy_quantity:
+                stock.set_analysis("BEARISH", "BUY_SELL", buySellAnalysis(buy_quantity=buy_quantity, sell_quantity=sell_quantity))
+        except Exception as e:
+            logger.error(f"Error in analyze_buy_sell_quantity tick for stock {stock.stock_symbol}: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")

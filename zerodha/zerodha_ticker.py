@@ -443,7 +443,7 @@ class KiteTicker(object):
         self.socket_url = "{root}?api_key={api_key}" \
             "&user_id={user_name}"\
             "&enctoken={access_token}" \
-            "&uid=1754232206412&" \
+            "&uid=1754417292784&" \
             "user-agent=kite3-web" \
             "&version=3.0.0".format(
                 root=self.root,

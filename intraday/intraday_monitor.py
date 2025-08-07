@@ -1,7 +1,4 @@
-import sys
 import os
-sys.path.append(os.getcwd())
-
 import argparse 
 from notification.Notification import TELEGRAM_NOTIFICATIONS
 from datetime import datetime, time 
@@ -22,6 +19,8 @@ from common.logging_util import logger
 from typing import List, Tuple, Optional
 from enum import Enum
 import yfinance as yf
+from zerodha.zerodha_analysis import ZerodhaTickerManager
+from dotenv import load_dotenv
 
 class Trend (Enum):
     BULLISH = "BULLISH"
@@ -30,10 +29,12 @@ class Trend (Enum):
 
 
 thread_pool = None
-orchestrator : AnalyserOrchestrator = None
+orchestrator : AnalyserOrchestrator =  None
+zd_ticker_manager : ZerodhaTickerManager = None
 PRODUCTION = False
 SHUTDOWN_SYSTEM = False
 ENABLE_DERIVATIVES = False
+ENABLE_ZERODHA_API = False
 
 class MonitorResult(Enum):
     SUCCESS = 0
@@ -384,8 +385,25 @@ def intraday_analysis():
     orchestrator.reset_all_constants()
     is_in_time_period = isNowInTimePeriod(time(9,15), time(15,30), datetime.now().time())
 
+    if ENABLE_ZERODHA_API and not zd_ticker_manager.connected:
+        logger.info("Connecting to Zerodha Ticker")
+        rc = zd_ticker_manager.connect()
+        if rc!= 0:
+            logger.error("Failed to connect to Zerodha Ticker")
+        else:
+            logger.info("Connected to Zerodha Ticker")
+
     while(is_in_time_period or not PRODUCTION):
         logger.info("current iteration time : {}".format(datetime.now()))
+
+        if ENABLE_ZERODHA_API:
+            if not zd_ticker_manager.connected and zd_ticker_manager.is_enctoken_updated:
+                logger.info("Reconnecting to Zerodha Ticker")
+                rc = zd_ticker_manager.connect()
+                if rc!= 0:
+                    logger.error("Failed to reconnect to Zerodha Ticker")
+                else:
+                    logger.info("Reconnected to Zerodha Ticker")
 
         try:
             results = fetch_and_analyze_stocks()
@@ -443,11 +461,15 @@ def positional_analysis():
     logger.info("EOD analysis completed.")
 
 def init():
+    load_dotenv()
     global thread_pool
     global orchestrator
+    global zd_ticker_manager
     global PRODUCTION
     global SHUTDOWN_SYSTEM
     global ENABLE_DERIVATIVES
+    global ENABLE_ZERODHA_API
+    
 
     if os.getenv(constant.ENV_PRODUCTION, "0") == "1":
         logger.info("Running in production mode")
@@ -470,18 +492,25 @@ def init():
         logger.info(" Derivative analysis disabled")
         ENABLE_DERIVATIVES = False
     
+    if os.getenv(constant.ENV_ENABLE_ZERODHA_API, "0") == "1":
+        logger.info(" Zerodha analysis enabled")
+        ENABLE_ZERODHA_API = True
+    else:
+        logger.info(" Zerodha analysis disabled")
+        ENABLE_ZERODHA_API = False
+    
     if PRODUCTION:
         if datetime.now().time() < time(9,15) or isNowInTimePeriod(time(9,15), time(15,30), datetime.now().time()):
             constant.mode = constant.Mode.INTRADAY
         else:
             constant.mode = constant.Mode.POSITIONAL
     else:
-        if os.getenv(constant.ENV_DEV_POSITIONAL, "1") == "1":
-            logger.debug("Intraday analysis enabled")
+        if os.getenv(constant.ENV_DEV_POSITIONAL, "0") == "1":
+            logger.info("Positional analysis enabled")
             constant.mode = constant.Mode.POSITIONAL
         
         if os.getenv(constant.ENV_DEV_INTRADAY, "0") == "1":
-            logger.debug("Positional analysis enabled")
+            logger.info("Intraday analysis enabled")
             constant.mode = constant.Mode.INTRADAY
 
     args = parse_arguments()
@@ -495,6 +524,14 @@ def init():
         shared.stockExpires = NSE_DATA_CLASS.expiry_dates_future()
         orchestrator.register(FuturesAnalyser())
     
+    if ENABLE_ZERODHA_API:
+        logger.info("Zerodha API enabled")
+        userName = os.getenv(constant.ENV_ZERODHA_USERNAME)
+        password = os.getenv(constant.ENV_ZERODHA_PASSWORD)
+        encToken = os.getenv(constant.ENV_ZERODHA_ENC_TOKEN)
+        zd_ticker_manager = ZerodhaTickerManager(userName, password, encToken)
+
+
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Stock Analysis Tool")
     parser.add_argument("--stock", type=str, help="Name of the stock to analyze (optional)")
