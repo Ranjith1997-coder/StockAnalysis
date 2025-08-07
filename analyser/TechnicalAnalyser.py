@@ -395,6 +395,7 @@ class TechnicalAnalyser(BaseAnalyzer):
             elif sell_quantity > self.BUY_SELL_QUANTITY * buy_quantity:
                 stock.set_analysis("BEARISH", "BUY_SELL", buySellAnalysis(buy_quantity=buy_quantity, sell_quantity=sell_quantity))
                 return True
+            return False
         except Exception as e:
             logger.error(f"Error in analyze_buy_sell_quantity tick for stock {stock.stock_symbol}: {str(e)}")
             logger.error(f"Traceback: {traceback.format_exc()}")
