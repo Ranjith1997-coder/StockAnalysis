@@ -155,8 +155,8 @@ class AnalyserOrchestrator:
                         message_parts.append(f"   Intervals {'below' if trend == 'BULLISH' else 'above'} VWAP: {data.vwap_days}")
                     elif analysis_type == 'MACD':
                         message_parts.append(f" MACD : {data}")
-                    elif analysis_type == 'ATR':
-                        message_parts.append(f" ATR : {data.atr_value:.2f} {data.atr_percentage:.2f}% ")
+                    elif analysis_type == 'BUY_SELL':
+                        message_parts.append(f" BUY_SELL : buy_quantity: {data.buy_quantity:.2f} {'>' if trend == 'BULLISH' else '<'} sell_quantity: {data.sell_quantity:.2f} ")
 
 
         if stock.analysis['NEUTRAL']:
@@ -166,6 +166,8 @@ class AnalyserOrchestrator:
                     message_parts.append("  Price at 52 WEEK HIGH")
                 elif analysis_type == '52-week-low':
                     message_parts.append("  Price at 52 WEEK LOW")
+                elif analysis_type == 'ATR':
+                        message_parts.append(f" ATR : {data.atr_value:.2f} {data.atr_percentage:.2f}% ")
 
         return "\n".join(message_parts)
 
