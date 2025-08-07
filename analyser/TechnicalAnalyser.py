@@ -25,7 +25,7 @@ class TechnicalAnalyser(BaseAnalyzer):
     ATR_THRESHOLD = 3  # ATR multiplier for significance
     ATR_TREND_PERIODS = 3  # Number of periods to confirm trend
 
-    BUY_SELL_QUANTITY = 3
+    BUY_SELL_QUANTITY = 2
     
     
     def __init__(self) -> None:
@@ -389,10 +389,13 @@ class TechnicalAnalyser(BaseAnalyzer):
             
             buySellAnalysis = namedtuple("buySellAnalysis", ["buy_quantity", "sell_quantity"])
 
-            if buy_quantity > 2 * sell_quantity:
+            if buy_quantity > self.BUY_SELL_QUANTITY * sell_quantity:
                 stock.set_analysis("BULLISH", "BUY_SELL", buySellAnalysis(buy_quantity=buy_quantity, sell_quantity=sell_quantity))
-            elif sell_quantity > 2 * buy_quantity:
+                return True
+            elif sell_quantity > self.BUY_SELL_QUANTITY * buy_quantity:
                 stock.set_analysis("BEARISH", "BUY_SELL", buySellAnalysis(buy_quantity=buy_quantity, sell_quantity=sell_quantity))
+                return True
         except Exception as e:
             logger.error(f"Error in analyze_buy_sell_quantity tick for stock {stock.stock_symbol}: {str(e)}")
             logger.error(f"Traceback: {traceback.format_exc()}")
+            return False
