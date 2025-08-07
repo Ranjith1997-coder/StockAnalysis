@@ -131,7 +131,7 @@ class AnalyserOrchestrator:
                         message_parts.append(f" Volume {trend.lower()}: {data.Volume_rate_percent:.2f}%")
                         message_parts.append(f" Price {trend.lower()}: {data.price_change_percent:.2f}%")
                     elif analysis_type == 'RSI':
-                        message_parts.append(f" RSI value: {data.value:.2f}, strength: {data.strength}")
+                        message_parts.append(f" RSI value: {data.value:.2f}")
                     elif analysis_type == 'rsi_crossover':
                         message_parts.append(f" RSI crossover: pv:{data.prev_value:.2f}, cv:{data.curr_value:.2f} ")
                     elif analysis_type == 'BollingerBand':
