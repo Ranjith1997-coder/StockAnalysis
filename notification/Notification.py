@@ -9,7 +9,7 @@ from common.logging_util import logger
 # Function to send Push Notification
  
 class TELEGRAM_NOTIFICATIONS:
-    is_production = os.getenv(ENV_PRODUCTION, "0") == "1"
+    is_production = 0
     @classmethod
     def pushbullet_notif(cls,title, body):
     
