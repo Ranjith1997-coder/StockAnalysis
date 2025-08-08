@@ -387,8 +387,7 @@ def intraday_analysis():
 
     if ENABLE_ZERODHA_API and not zd_ticker_manager.connected:
         logger.info("Connecting to Zerodha Ticker")
-        rc = zd_ticker_manager.connect()
-        if rc!= 0:
+        if not zd_ticker_manager.connect():
             logger.error("Failed to connect to Zerodha Ticker")
         else:
             logger.info("Connected to Zerodha Ticker")
@@ -399,8 +398,7 @@ def intraday_analysis():
         if ENABLE_ZERODHA_API:
             if not zd_ticker_manager.connected and zd_ticker_manager.is_enctoken_updated:
                 logger.info("Reconnecting to Zerodha Ticker")
-                rc = zd_ticker_manager.connect()
-                if rc!= 0:
+                if not zd_ticker_manager.connect():
                     logger.error("Failed to reconnect to Zerodha Ticker")
                 else:
                     logger.info("Reconnected to Zerodha Ticker")

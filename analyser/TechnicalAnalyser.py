@@ -384,9 +384,8 @@ class TechnicalAnalyser(BaseAnalyzer):
         try:
             zerodha_data = stock.zerodha_data
 
-            buy_quantity = zerodha_data.get("buy_quantity", 0)
-            sell_quantity = zerodha_data.get("sell_quantity", 0)
-            
+            buy_quantity = zerodha_data.get("total_buy_quantity", 0)
+            sell_quantity = zerodha_data.get("total_sell_quantity", 0)
             buySellAnalysis = namedtuple("buySellAnalysis", ["buy_quantity", "sell_quantity"])
 
             if buy_quantity > self.BUY_SELL_QUANTITY * sell_quantity:

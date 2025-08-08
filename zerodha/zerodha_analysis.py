@@ -173,19 +173,22 @@ class ZerodhaTickerManager:
         self.connected = True
         logger.info(f"Successfully connected. Response: {response}")
         instrument_tokens = list(shared.stock_token_obj_dict.keys())
+        self.start_tick_processor()
         ws.subscribe(instrument_tokens)
         ws.set_mode(ws.MODE_FULL, instrument_tokens)
 
     def on_close(self, ws, code, reason):
         self.connected = False
         logger.info(f"Connection closed. Code: {code}, Reason: {reason}")
+        self.stop_tick_processor() 
 
     def on_error(self, ws, code, reason):
         logger.error(f"Error in connection. Code: {code}, Reason: {reason}")
+        self.stop_tick_processor() 
 
     def on_ticks(self, ws, ticks):
         # Implement your tick handling logic here
-        logger.info(f"Received ticks: {ticks}")
+        logger.debug(f"Received ticks: {ticks}")
         for tick in ticks:
             self.tick_queue.put(tick)
 
