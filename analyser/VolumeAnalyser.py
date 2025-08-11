@@ -1,10 +1,10 @@
 import traceback
 from analyser.Analyser import BaseAnalyzer
 from common.Stock import Stock
-import common.constants as constant
 from common.logging_util import logger
 from common.helperFunctions import percentageChange
 from collections import namedtuple
+import common.shared as shared
 
 
 class VolumeAnalyser(BaseAnalyzer):
@@ -17,7 +17,7 @@ class VolumeAnalyser(BaseAnalyzer):
     
     def reset_constants(self):
 
-        if constant.mode.name == constant.Mode.INTRADAY.name:
+        if shared.app_ctx.mode.name == shared.Mode.INTRADAY.name:
             VolumeAnalyser.VOLUME_PRICE_THRESHOLD = 0.5   
             VolumeAnalyser.TIMES_VOLUME = 10
             VolumeAnalyser.VOLUME_MA_PERIOD = 20
@@ -25,7 +25,7 @@ class VolumeAnalyser(BaseAnalyzer):
             VolumeAnalyser.VOLUME_PRICE_THRESHOLD = 5  
             VolumeAnalyser.TIMES_VOLUME = 3
             VolumeAnalyser.VOLUME_MA_PERIOD = 50
-        logger.debug(f"VolumeAnalyser constants reset for mode {constant.mode.name}")
+        logger.debug(f"VolumeAnalyser constants reset for mode {shared.app_ctx.mode.name}")
         logger.debug(f"TIMES_VOLUME = {VolumeAnalyser.TIMES_VOLUME} ,VOLUME_PRICE_THRESHOLD = {VolumeAnalyser.VOLUME_PRICE_THRESHOLD}")
 
     @BaseAnalyzer.both
@@ -37,7 +37,7 @@ class VolumeAnalyser(BaseAnalyzer):
 
             curr_vol = curr_data['Volume'] 
             prev_vol = prev_data["Volume"]
-            if constant.mode.name == constant.Mode.INTRADAY.name:
+            if shared.app_ctx.mode.name == shared.Mode.INTRADAY.name:
                 curr_vol_sma = stock.priceData['Volume'].iloc[-VolumeAnalyser.VOLUME_MA_PERIOD:].ewm(span=VolumeAnalyser.VOLUME_MA_PERIOD, adjust=False).mean().iloc[-1]
             else:
                 curr_vol_sma = stock.priceData['Volume'].iloc[-VolumeAnalyser.VOLUME_MA_PERIOD:].mean()
