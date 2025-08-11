@@ -1,10 +1,9 @@
 import traceback
 from analyser.Analyser import BaseAnalyzer
 from common.Stock import Stock
-import common.constants as constant
 from common.logging_util import logger
 from common.helperFunctions import percentageChange
-from collections import namedtuple
+import common.shared as shared
 
 class CandleStickAnalyser(BaseAnalyzer):
     THREE_CONT_INC_OR_DEC_THRESHOLD = 0
@@ -17,7 +16,7 @@ class CandleStickAnalyser(BaseAnalyzer):
         self.analyserName = "Candle Stick Pattern Analyser"
 
     def reset_constants(self, is_index = False):
-        if constant.mode.name == constant.Mode.INTRADAY.name:
+        if shared.app_ctx.mode.name == shared.Mode.INTRADAY.name:
             if is_index:
                 CandleStickAnalyser.THREE_CONT_INC_OR_DEC_THRESHOLD = 1  
                 CandleStickAnalyser.TWO_CONT_INC_OR_DEC_THRESHOLD = 0.75    
@@ -36,7 +35,7 @@ class CandleStickAnalyser(BaseAnalyzer):
                 CandleStickAnalyser.TWO_CONT_INC_OR_DEC_THRESHOLD = 4   
                 CandleStickAnalyser.MARUBASU_THRESHOLD = 3 
              #add something later on this
-        logger.debug(f"CandleStickAnalyser constants reset for mode {constant.mode.name}")
+        logger.debug(f"CandleStickAnalyser constants reset for mode {shared.app_ctx.mode.name}")
         logger.debug(f"THREE_CONT_INC_OR_DEC_THRESHOLD = {CandleStickAnalyser.THREE_CONT_INC_OR_DEC_THRESHOLD} , TWO_CONT_INC_OR_DEC_THRESHOLD = {CandleStickAnalyser.TWO_CONT_INC_OR_DEC_THRESHOLD} " )
         logger.debug(f"MARUBASU_THRESHOLD = {CandleStickAnalyser.MARUBASU_THRESHOLD} , WICK_PERCENTAGE = {CandleStickAnalyser.WICK_PERCENTAGE}")
     

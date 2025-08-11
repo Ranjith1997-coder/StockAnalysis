@@ -1,10 +1,10 @@
 import traceback
 from analyser.Analyser import BaseAnalyzer
 from common.Stock import Stock
-import common.constants as constant
 from common.helperFunctions import percentageChange
 from common.logging_util import logger
 from collections import namedtuple
+import common.shared as shared
 
 class FuturesAnalyser(BaseAnalyzer):
     FUTURE_OI_INCREASE_PERCENTAGE = 0
@@ -15,13 +15,13 @@ class FuturesAnalyser(BaseAnalyzer):
         super().__init__()
     
     def reset_constants(self):
-        if constant.mode.name == constant.Mode.INTRADAY.name:
+        if shared.app_ctx.mode.name == shared.Mode.INTRADAY.name:
             FuturesAnalyser.FUTURE_OI_INCREASE_PERCENTAGE = 7
             FuturesAnalyser.FUTURE_PRICE_CHANGE_PERCENTAGE = 0.5
         else :
             FuturesAnalyser.FUTURE_OI_INCREASE_PERCENTAGE = 30
             FuturesAnalyser.FUTURE_PRICE_CHANGE_PERCENTAGE = 4
-        logger.debug(f"FuturesAnalyser constants reset for mode {constant.mode.name}")
+        logger.debug(f"FuturesAnalyser constants reset for mode {shared.app_ctx.mode.name}")
         logger.debug(f'FUTURE_OI_INCREASE_PERCENTAGE: {FuturesAnalyser.FUTURE_OI_INCREASE_PERCENTAGE}, FUTURE_PRICE_CHANGE_PERCENTAGE: {FuturesAnalyser.FUTURE_PRICE_CHANGE_PERCENTAGE}')
 
     @BaseAnalyzer.intraday
