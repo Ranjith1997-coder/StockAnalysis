@@ -1,13 +1,13 @@
 import traceback
 from analyser.Analyser import BaseAnalyzer
 from common.Stock import Stock
-import common.constants as constant
 from common.logging_util import logger
 from collections import namedtuple
 import pandas as pd
 from datetime import datetime
 from common.helperFunctions import percentageChange
 import numpy as np
+import common.shared as shared
 
 class TechnicalAnalyser(BaseAnalyzer):
 
@@ -37,11 +37,9 @@ class TechnicalAnalyser(BaseAnalyzer):
         #     #add something later on this
         # else:
         #      #add something later on this
-        logger.debug(f"Technical Analyser constants reset for mode {constant.mode.name}")
+        logger.debug(f"Technical Analyser constants reset for mode {shared.app_ctx.mode.name}")
         logger.debug(f"RSI_UPPER_THRESHOLD = {TechnicalAnalyser.RSI_UPPER_THRESHOLD} , RSI_LOWER_THRESHOLD = {TechnicalAnalyser.RSI_LOWER_THRESHOLD}, ATR_THRESHOLD = {TechnicalAnalyser.ATR_THRESHOLD}")
 
-
-    
     
     @BaseAnalyzer.both
     @BaseAnalyzer.index_both

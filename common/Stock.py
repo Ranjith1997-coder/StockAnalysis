@@ -14,8 +14,8 @@ from common.logging_util import logger
 pd.options.mode.chained_assignment = None
 
 def get_futures_and_options_data_from_nse_intraday(stock):
-        currexpiry = shared.stockExpires[0]
-        nextexpiry = shared.stockExpires[1]
+        currexpiry = shared.app_ctx.stockExpires[0]
+        nextexpiry = shared.app_ctx.stockExpires[1]
         try :
             data = NSE_DATA_CLASS.get_live_futures_and_options_data_intraday(stock.stock_symbol, currexpiry, nextexpiry)
         except Exception:
@@ -39,8 +39,8 @@ def get_futures_and_options_data_from_nse_intraday(stock):
         return stock.derivativesData
 
 def get_futures_and_options_data_from_nse_positional(self):
-    currexpiry = shared.stockExpires[0]
-    nextexpiry = shared.stockExpires[1]
+    currexpiry = shared.app_ctx.stockExpires[0]
+    nextexpiry = shared.app_ctx.stockExpires[1]
     try :
         data = NSE_DATA_CLASS.get_future_price_volume_data_positional(self.stock_symbol,"FUTSTK", None, None, '1W', currexpiry, nextexpiry)
     except Exception:
@@ -175,7 +175,7 @@ class Stock:
             return 0
     @property
     def current_equity_data(self):
-        if constant.mode.name == constant.Mode.INTRADAY.name:
+        if shared.app_ctx.mode.name == shared.Mode.INTRADAY.name:
             curr_data = self.priceData.iloc[-2]
         else:
             curr_data = self.priceData.iloc[-1]
@@ -183,7 +183,7 @@ class Stock:
     
     @property
     def previous_equity_data(self):
-        if constant.mode.name == constant.Mode.INTRADAY.name:
+        if shared.app_ctx.mode.name == shared.Mode.INTRADAY.name:
             prev_data = self.priceData.iloc[-3]
         else:
             prev_data = self.priceData.iloc[-2]
@@ -191,7 +191,7 @@ class Stock:
     
     @property
     def previous_previous_equity_data(self):
-        if constant.mode.name == constant.Mode.INTRADAY.name:
+        if shared.app_ctx.mode.name == shared.Mode.INTRADAY.name:
             prev_data = self.priceData.iloc[-4]
         else:
             prev_data = self.priceData.iloc[-3]

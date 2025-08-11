@@ -21,6 +21,8 @@ from enum import Enum
 import yfinance as yf
 from zerodha.zerodha_analysis import ZerodhaTickerManager
 from dotenv import load_dotenv
+from notification.bot_listener import init_telegram_bot
+import threading
 
 class Trend (Enum):
     BULLISH = "BULLISH"
@@ -30,11 +32,11 @@ class Trend (Enum):
 
 thread_pool = None
 orchestrator : AnalyserOrchestrator =  None
-zd_ticker_manager : ZerodhaTickerManager = None
 PRODUCTION = False
 SHUTDOWN_SYSTEM = False
 ENABLE_DERIVATIVES = False
 ENABLE_ZERODHA_API = False
+ENABLE_TELEGRAM_BOT = False
 
 class MonitorResult(Enum):
     SUCCESS = 0
@@ -61,19 +63,19 @@ def monitor(stock: Stock) -> Tuple[MonitorResult, bool, Optional[str]]:
         stock.reset_analysis()
         stock.update_latest_data()
 
-        analysis_type = "Positional" if constant.mode == constant.Mode.POSITIONAL else "Intraday"
+        analysis_type = "Positional" if shared.app_ctx.mode == shared.Mode.POSITIONAL else "Intraday"
         logger.debug(f"{analysis_type} analysis for {stock.stockName} started.")
         
         if stock.is_index:
             trend_found = (
                 orchestrator.run_all_positional(stock, index=True)
-                if constant.mode == constant.Mode.POSITIONAL
+                if shared.app_ctx.mode == shared.Mode.POSITIONAL
                 else orchestrator.run_all_intraday(stock, index=True)
             )
         else: 
             trend_found = (
                 orchestrator.run_all_positional(stock)
-                if constant.mode == constant.Mode.POSITIONAL
+                if shared.app_ctx.mode == shared.Mode.POSITIONAL
                 else orchestrator.run_all_intraday(stock)
             )
         
@@ -118,15 +120,15 @@ def create_stock_and_index_objects(stockName = None, indexName = None ):
         yfinanceIndexSymbols.append(index["yfinancetradingsymbol"]) 
 
         ticker = Stock(index["name"], index["tradingsymbol"], yfinanceSymbol=index["yfinancetradingsymbol"], is_index=True)
-        shared.index_token_obj_dict[index["instrument_token"]] = ticker
-        shared.index_list.append(index["tradingsymbol"])
+        shared.app_ctx.index_token_obj_dict[index["instrument_token"]] = ticker
+        shared.app_ctx.index_list.append(index["tradingsymbol"])
         count += 1
 
     if yfinanceIndexSymbols:
         prevDayIndexData = yf.download(yfinanceIndexSymbols, period="2D", interval="1d", group_by='ticker')
         logger.debug(f"Price data fetched to update previous OHLCV for indices")
-        for index in  shared.index_token_obj_dict.values():
-            if constant.mode.name == constant.Mode.INTRADAY.name:
+        for index in  shared.app_ctx.index_token_obj_dict.values():
+            if shared.app_ctx.mode.name == shared.Mode.INTRADAY.name:
                 if is_before_market_open():
                     stock_prev_OHLCV_df = prevDayIndexData[index.stockSymbolYFinance].iloc[-1]
                     logger.debug(f"Using second-to-last day's data for {index.stock_symbol} (before market open)")
@@ -151,15 +153,15 @@ def create_stock_and_index_objects(stockName = None, indexName = None ):
             continue
         yfinanceSymbols.append(stock["tradingsymbol"]+".NS") 
         ticker = Stock(stock["name"], stock["tradingsymbol"])
-        shared.stock_token_obj_dict[stock["instrument_token"]] = ticker
-        shared.stocks_list.append(stock["tradingsymbol"])
+        shared.app_ctx.stock_token_obj_dict[stock["instrument_token"]] = ticker
+        shared.app_ctx.stocks_list.append(stock["tradingsymbol"])
         count += 1
     
     if yfinanceSymbols:
         prevDaydata = yf.download(yfinanceSymbols, period="2D", interval="1d", group_by='ticker')
         logger.debug(f"Price data fetched to update previous OHLCV for stocks")
-        for stock in shared.stock_token_obj_dict.values():
-            if constant.mode.name == constant.Mode.INTRADAY.name:
+        for stock in shared.app_ctx.stock_token_obj_dict.values():
+            if shared.app_ctx.mode.name == shared.Mode.INTRADAY.name:
                 if is_before_market_open():
                     stock_prev_OHLCV_df = prevDaydata[stock.stockSymbolYFinance].iloc[-1]
                     logger.debug(f"Using second-to-last day's data for {stock.stock_symbol} (before market open)")
@@ -179,7 +181,7 @@ def fetch_price_data(stock_objs, index_objs):
     
     def update_price_data(ticker : Stock, data):
         try:
-            if constant.mode.name == constant.Mode.POSITIONAL.name:
+            if shared.app_ctx.mode.name == shared.Mode.POSITIONAL.name:
                 data.index = data.index.tz_localize('UTC').tz_convert('Asia/Kolkata')
             else:
                 data.index = data.index.tz_convert('Asia/Kolkata')
@@ -193,8 +195,8 @@ def fetch_price_data(stock_objs, index_objs):
     stockSymbols = [stock.stockSymbolYFinance for stock in stock_objs]
     indexSymbols = [index.stockSymbolYFinance for index in index_objs]
 
-    period = "2y" if constant.mode.name == constant.Mode.POSITIONAL.name else "2D"
-    interval = "1d" if constant.mode.name == constant.Mode.POSITIONAL.name else "5m"
+    period = "2y" if shared.app_ctx.mode.name == shared.Mode.POSITIONAL.name else "2D"
+    interval = "1d" if shared.app_ctx.mode.name == shared.Mode.POSITIONAL.name else "5m"
 
     if stockSymbols:
         stockData = yf.download(stockSymbols, period=period, interval=interval, group_by='ticker')
@@ -210,7 +212,7 @@ def fetch_price_data(stock_objs, index_objs):
 
 def fetch_futures_data(stock):
     try:
-        if constant.mode.name == constant.Mode.POSITIONAL.name:
+        if shared.app_ctx.mode.name == shared.Mode.POSITIONAL.name:
             stock.get_futures_and_options_data_from_nse_positional()
         else:
             stock.get_futures_and_options_data_from_nse_intraday()
@@ -229,8 +231,8 @@ def process_stock(stock: Stock) -> Tuple[MonitorResult, bool, Optional[str]]:
 def fetch_and_analyze_stocks() -> List[Tuple[MonitorResult, bool, Optional[str]]]:
     logger.info("Fetching and analyzing data for all stocks")
     
-    stock_objs = list(shared.stock_token_obj_dict.values())
-    index_objs = list(shared.index_token_obj_dict.values())
+    stock_objs = list(shared.app_ctx.stock_token_obj_dict.values())
+    index_objs = list(shared.app_ctx.index_token_obj_dict.values())
     
     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
         # Fetch price data for all stocks at once
@@ -358,7 +360,7 @@ def generate_top_gainers_and_losers_report(gainers, losers):
     return report
 
 def report_top_gainers_and_losers():
-    top_gainers , top_losers = get_top_gainers_and_losers(shared.stock_token_obj_dict)
+    top_gainers , top_losers = get_top_gainers_and_losers(shared.app_ctx.stock_token_obj_dict)
     report = generate_top_gainers_and_losers_report(top_gainers, top_losers)
     TELEGRAM_NOTIFICATIONS.send_notification(report)
     logger.info(f"EOD Report\n {report}")
@@ -366,7 +368,7 @@ def report_top_gainers_and_losers():
 def report_index_data():
     logger.info("Reporting index data")
     report = "*********** Index Report ***********\n"
-    index_objs = list(shared.index_token_obj_dict.values())
+    index_objs = list(shared.app_ctx.index_token_obj_dict.values())
     for index in index_objs:
         try:
             report += f"  {index.stock_symbol}: {index.ltp:.2f} {index.ltp_change_perc:.2f}%\n"
@@ -376,7 +378,7 @@ def report_index_data():
     logger.info(f"Index Report\n {report}")
 
 def intraday_analysis():
-    constant.mode = constant.Mode.INTRADAY
+    shared.app_ctx.mode = shared.Mode.INTRADAY
 
     logger.info("Market time open. Starting Intraday analysis")
 
@@ -384,24 +386,9 @@ def intraday_analysis():
 
     orchestrator.reset_all_constants()
     is_in_time_period = isNowInTimePeriod(time(9,15), time(15,30), datetime.now().time())
-
-    if ENABLE_ZERODHA_API and not zd_ticker_manager.connected:
-        logger.info("Connecting to Zerodha Ticker")
-        if not zd_ticker_manager.connect():
-            logger.error("Failed to connect to Zerodha Ticker")
-        else:
-            logger.info("Connected to Zerodha Ticker")
-
+    
     while(is_in_time_period or not PRODUCTION):
         logger.info("current iteration time : {}".format(datetime.now()))
-
-        if ENABLE_ZERODHA_API:
-            if not zd_ticker_manager.connected and zd_ticker_manager.is_enctoken_updated:
-                logger.info("Reconnecting to Zerodha Ticker")
-                if not zd_ticker_manager.connect():
-                    logger.error("Failed to reconnect to Zerodha Ticker")
-                else:
-                    logger.info("Reconnected to Zerodha Ticker")
 
         try:
             results = fetch_and_analyze_stocks()
@@ -412,8 +399,8 @@ def intraday_analysis():
         report_top_gainers_and_losers()
         report_index_data()
 
-        for stock in shared.stock_token_obj_dict:
-            shared.stock_token_obj_dict[stock].reset_price_data()
+        for stock in shared.app_ctx.stock_token_obj_dict:
+            shared.app_ctx.stock_token_obj_dict[stock].reset_price_data()
 
         if PRODUCTION:
             sleeptime = (constant.INTRADAY_SLEEP_TIME) - (datetime.now().second + ((datetime.now().minute % 5) * 60))
@@ -429,7 +416,7 @@ def intraday_analysis():
 
 
 def positional_analysis():
-    constant.mode = constant.Mode.POSITIONAL
+    shared.app_ctx.mode = shared.Mode.POSITIONAL
     if PRODUCTION:
         if datetime.now().time() > time(16,0):
             logger.info("Market time closed")
@@ -453,8 +440,8 @@ def positional_analysis():
     report_top_gainers_and_losers()
     report_index_data()
 
-    for stock in shared.stock_token_obj_dict:
-        shared.stock_token_obj_dict[stock].reset_price_data()
+    for stock in shared.app_ctx.stock_token_obj_dict:
+        shared.app_ctx.stock_token_obj_dict[stock].reset_price_data()
 
     logger.info("EOD analysis completed.")
 
@@ -462,11 +449,11 @@ def init():
     load_dotenv()
     global thread_pool
     global orchestrator
-    global zd_ticker_manager
     global PRODUCTION
     global SHUTDOWN_SYSTEM
     global ENABLE_DERIVATIVES
     global ENABLE_ZERODHA_API
+    global ENABLE_TELEGRAM_BOT
     
 
     if os.getenv(constant.ENV_PRODUCTION, "0") == "1":
@@ -498,19 +485,27 @@ def init():
         logger.info(" Zerodha analysis disabled")
         ENABLE_ZERODHA_API = False
     
+    if os.getenv(constant.ENV_ENABLE_TELEGRAM_BOT, "0") == "1":
+        logger.info(" Telegram Bot enabled")
+        ENABLE_TELEGRAM_BOT = True
+    else:
+        logger.info(" Telegram Bot disabled")
+        ENABLE_TELEGRAM_BOT = False
+    
     if PRODUCTION:
         if datetime.now().time() < time(9,15) or isNowInTimePeriod(time(9,15), time(15,30), datetime.now().time()):
-            constant.mode = constant.Mode.INTRADAY
+            shared.app_ctx.mode = shared.Mode.INTRADAY
         else:
-            constant.mode = constant.Mode.POSITIONAL
+            shared.app_ctx.mode = shared.Mode.POSITIONAL
     else:
         if os.getenv(constant.ENV_DEV_POSITIONAL, "0") == "1":
             logger.info("Positional analysis enabled")
-            constant.mode = constant.Mode.POSITIONAL
+            shared.app_ctx.mode = shared.Mode.POSITIONAL
         
         if os.getenv(constant.ENV_DEV_INTRADAY, "0") == "1":
             logger.info("Intraday analysis enabled")
-            constant.mode = constant.Mode.INTRADAY
+            shared.app_ctx.mode = shared.Mode.INTRADAY
+    
 
     args = parse_arguments()
     
@@ -520,7 +515,7 @@ def init():
     orchestrator.register(TechnicalAnalyser())
     orchestrator.register(CandleStickAnalyser())
     if ENABLE_DERIVATIVES:
-        shared.stockExpires = NSE_DATA_CLASS.expiry_dates_future()
+        shared.app_ctx.stockExpires = NSE_DATA_CLASS.expiry_dates_future()
         orchestrator.register(FuturesAnalyser())
     
     if ENABLE_ZERODHA_API:
@@ -528,7 +523,7 @@ def init():
         userName = os.getenv(constant.ENV_ZERODHA_USERNAME)
         password = os.getenv(constant.ENV_ZERODHA_PASSWORD)
         encToken = os.getenv(constant.ENV_ZERODHA_ENC_TOKEN)
-        zd_ticker_manager = ZerodhaTickerManager(userName, password, encToken)
+        shared.app_ctx.zd_ticker_manager = ZerodhaTickerManager(userName, password, encToken)
 
 
 def parse_arguments():
@@ -537,9 +532,7 @@ def parse_arguments():
     parser.add_argument("--index", type=str, help="Name of the index to analyze (optional)")
     return parser.parse_args()
 
-if __name__ =="__main__":
-
-    init()
+def start_stock_analysis():
 
     if PRODUCTION:
         if datetime.now().time() < time(9,15):
@@ -564,10 +557,20 @@ if __name__ =="__main__":
     else:
         logger.info("Running in development mode. No shutdown operation.")
         
-        if constant.mode.name == constant.Mode.INTRADAY.name:
+        if shared.app_ctx.mode.name == shared.Mode.INTRADAY.name:
             intraday_analysis()
-        if constant.mode.name == constant.Mode.POSITIONAL.name:
+        if shared.app_ctx.mode.name == shared.Mode.POSITIONAL.name:
             positional_analysis()
+
+if __name__ =="__main__":
+
+    init()
+    if ENABLE_TELEGRAM_BOT:
+        thread = threading.Thread(target=start_stock_analysis)
+        thread.start()
+        init_telegram_bot()
+    else:
+        start_stock_analysis()
 
     
 

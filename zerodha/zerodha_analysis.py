@@ -26,44 +26,45 @@ class ZerodhaTickerManager:
         self.notification_cooldown = 300  # 5 minutes cooldown
         self.last_notification_time = defaultdict(float)
         self.is_enctoken_updated = False
+        self.reconnect_attempts = 0
 
     def initialize_kite_ticker(self):
-        self._kt = KiteTicker(self.apiKey, self.username, self.encToken, root=self.root)
+        self._kt = KiteTicker(self.apiKey, self.username, self.encToken, root=self.root, reconnect=True, reconnect_max_tries=self.max_retries)
         self._kt.on_connect = self.on_connect
         self._kt.on_close = self.on_close
         self._kt.on_error = self.on_error
         self._kt.on_ticks = self.on_ticks
+        self._kt.on_reconnect = self.on_reconnect
 
     def connect(self):
-        for attempt in range(self.max_retries):
-            try:
-                logger.info(f"Attempting to connect (Attempt {attempt + 1}/{self.max_retries})")
-                self.initialize_kite_ticker()
-                self._kt.connect(threaded=True)
-                 # Add a delay to allow the connection to establish
-                connection_timeout = 10  # 10 seconds timeout
-                start_time = time.time()
-                
-                while time.time() - start_time < connection_timeout:
-                    if self._kt.is_connected():
-                        logger.info("Successfully connected to Zerodha WebSocket")
-                        return True
-                    time.sleep(0.5)  # Check every 0.5 seconds
-            except Exception as e:
-                logger.error(f"Connection attempt {attempt + 1} failed: {str(e)}")
-                if attempt < self.max_retries - 1:
-                    logger.info(f"Retrying in {self.retry_delay} seconds...")
-                    time.sleep(self.retry_delay)
-                else:
-                    logger.error("Max retries reached. Unable to connect.")
-                    self.is_enctoken_updated = False
-                    return False
+        try:
+            logger.info(f"Attempting to connect to Zerodha WebSocket with user: {self.username}")
+            self.initialize_kite_ticker()
+            self._kt.connect(threaded=True)
+                # Add a delay to allow the connection to establish
+            connection_timeout = 30  # 10 seconds timeout
+            start_time = time.time()
+            
+            while time.time() - start_time < connection_timeout and self.reconnect_attempts < self.max_retries:
+                if self._kt.is_connected():
+                    logger.info("Successfully connected to Zerodha WebSocket")
+                    return True
+                time.sleep(0.5)  # Check every 0.5 seconds
+        except Exception as e:
+            logger.error(f"Error while connecting to Zerodha WebSocket: {str(e)}")
+            self.connected = False
+            self.is_enctoken_updated = False
+            return False
+        finally:
+            if not self.connected:
+                logger.error("Failed to connect to Zerodha WebSocket after multiple attempts")
+                self.close_connection()
 
     def close_connection(self):
         """
         Close the WebSocket connection.
         """
-        if self._kt and self._kt.is_connected():
+        if self._kt:
             try:
                 self._kt.close()
                 logger.info("WebSocket connection closed successfully")
@@ -74,6 +75,14 @@ class ZerodhaTickerManager:
         else:
             logger.info("WebSocket connection is already closed or not initialized")
 
+    def update_enctoken(self, new_enctoken):
+        """
+        Update the enctoken and reinitialize the KiteTicker.
+        """
+        self.encToken = new_enctoken
+        self.initialize_kite_ticker()
+        logger.info("Enctoken updated successfully")
+        self.is_enctoken_updated = True
 
     def refresh_enctoken(self, twofa):
         # Implement the logic to get a new enctoken here
@@ -127,8 +136,8 @@ class ZerodhaTickerManager:
     
     def analyze_tick(self, tick):
         stock_token = tick.get("instrument_token")
-        if stock_token in shared.stock_token_obj_dict:
-            stock = shared.stock_token_obj_dict[stock_token]
+        if stock_token in shared.app_ctx.stock_token_obj_dict:
+            stock = shared.app_ctx.stock_token_obj_dict[stock_token]
             stock.update_zerodha_data(tick)
             # buy_quantity = tick.get("total_buy_quantity", 0)
             # sell_quantity = tick.get("total_sell_quantity", 0)
@@ -171,8 +180,9 @@ class ZerodhaTickerManager:
     
     def on_connect(self, ws, response):
         self.connected = True
+        self.reconnect_attempts = 0
         logger.info(f"Successfully connected. Response: {response}")
-        instrument_tokens = list(shared.stock_token_obj_dict.keys())
+        instrument_tokens = list(shared.app_ctx.stock_token_obj_dict.keys())
         self.start_tick_processor()
         ws.subscribe(instrument_tokens)
         ws.set_mode(ws.MODE_FULL, instrument_tokens)
@@ -180,6 +190,7 @@ class ZerodhaTickerManager:
     def on_close(self, ws, code, reason):
         self.connected = False
         logger.info(f"Connection closed. Code: {code}, Reason: {reason}")
+
         self.stop_tick_processor() 
 
     def on_error(self, ws, code, reason):
@@ -191,6 +202,11 @@ class ZerodhaTickerManager:
         logger.debug(f"Received ticks: {ticks}")
         for tick in ticks:
             self.tick_queue.put(tick)
+    
+    def on_reconnect(self, ws, attempts_count):
+        self.reconnect_attempts = attempts_count
+        logger.info(f"Reconnected to Zerodha WebSocket. Attempt: {self.reconnect_attempts}")
+
 
 def zerodha_init():
     manager = ZerodhaTickerManager(ZERODHA_USERNAME, ZERODHA_ENC_TOKEN)
@@ -219,7 +235,7 @@ if __name__ == "__main__":
             },]
     
     for t in ticker:
-        shared.stock_token_obj_dict[t["instrument_token"]] = Stock(t["name"], t["tradingsymbol"])
+        shared.app_ctx.stock_token_obj_dict[t["instrument_token"]] = Stock(t["name"], t["tradingsymbol"])
     zerodha_init()
     
     
