@@ -321,7 +321,7 @@ def get_top_gainers_and_losers(stock_objs):
 
                 # Check if change_percent is a valid number
                 if not isinstance(change_percent, float) or change_percent != change_percent:  # NaN check
-                    logger.warning(f"Invalid percentage change for {stock.stock_symbol}: {change_percent}")
+                    logger.warning(f"Invalid percentage change for {stock.stock_symbol}: {change_percent} current close {current_close}, previous close {previous_close}")
                     continue
                 
                 if change_percent > 0:
