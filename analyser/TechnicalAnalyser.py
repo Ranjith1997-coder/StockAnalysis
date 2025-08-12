@@ -385,6 +385,7 @@ class TechnicalAnalyser(BaseAnalyzer):
             buy_quantity = zerodha_data.get("total_buy_quantity", 0)
             sell_quantity = zerodha_data.get("total_sell_quantity", 0)
             buySellAnalysis = namedtuple("buySellAnalysis", ["buy_quantity", "sell_quantity"])
+            logger.debug(f"stock : {stock.stock_symbol}, buy_quantity: {buy_quantity}, sell_quantity: {sell_quantity}")
 
             if buy_quantity > self.BUY_SELL_QUANTITY * sell_quantity:
                 stock.set_analysis("BULLISH", "BUY_SELL", buySellAnalysis(buy_quantity=buy_quantity, sell_quantity=sell_quantity))
