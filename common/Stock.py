@@ -10,6 +10,12 @@ import threading
 from nse.nse_derivative_data import NSE_DATA_CLASS
 import  common.shared as shared
 from common.logging_util import logger
+import numpy as np
+from scipy.stats import norm
+from scipy.optimize import brentq
+import datetime 
+import time
+
 
 pd.options.mode.chained_assignment = None
 
@@ -85,7 +91,11 @@ class Stock:
         }
         self.zerodha_ctx = {
             "last_notification_time": None,
+            "option_chain": {"current": None, "next": None},
+            "atm_data": {"current": {}, "next": {}},
+            "option_chain_data" : {"current":pd.DataFrame(), "next":pd.DataFrame()},
         }
+
         self._zerodha_lock = threading.Lock()
         self.analysis = {"Timestamp" : None,
                         "BULLISH":{},
@@ -104,6 +114,429 @@ class Stock:
         change_percent = percentageChange(current_close, previous_close)
         self.ltp = current_close
         self.ltp_change_perc = change_percent
+
+
+    @staticmethod
+    def black_scholes_price(S, K, T, r, sigma, option_type):
+        """Calculate Black-Scholes price for a European option."""
+        d1 = (np.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
+        d2 = d1 - sigma * np.sqrt(T)
+        if option_type == "CE":  # Call
+            price = S * norm.cdf(d1) - K * np.exp(-r * T) * norm.cdf(d2)
+        else:  # Put
+            price = K * np.exp(-r * T) * norm.cdf(-d2) - S * norm.cdf(-d1)
+        return price
+
+    @staticmethod
+    def implied_volatility(option_price, S, K, T, r, option_type):
+        """Numerically solve for implied volatility."""
+        try:
+            return brentq(
+                lambda sigma: Stock.black_scholes_price(S, K, T, r, sigma, option_type) - option_price,
+                1e-6, 5.0, maxiter=500
+            )
+        except Exception:
+            return np.nan
+        
+    @staticmethod
+    def compute_iv_for_option_chain(option_price, option_strike, option_expiry, instrument_type, underlying_price, date, risk_free_rate=0.065):
+        """
+        Adds an 'iv' column to the option_chain_df DataFrame.
+        Assumes 'close', 'strike', 'expiry', 'instrument_type' columns exist.
+        """
+        today_date = date
+        option_price = option_price
+        K = option_strike
+        expiry = option_expiry
+        option_type = instrument_type  # 'CE' or 'PE'
+        S = underlying_price
+        r = risk_free_rate
+        # Calculate time to expiry in years
+        if isinstance(expiry, str):
+            expiry_date = pd.to_datetime(expiry)
+        elif isinstance(expiry, datetime.date) and not isinstance(expiry, datetime.datetime):
+            expiry_date = datetime.datetime.combine(expiry, datetime.datetime.min.time())
+        else:
+            expiry_date = expiry
+        # Ensure today_date matches expiry_date's timezone
+        if expiry_date.tzinfo is not None and expiry_date.tzinfo.utcoffset(expiry_date) is not None:
+            if today_date.tzinfo is None or today_date.tzinfo.utcoffset(today_date) is None:
+                today_date = today_date.replace(tzinfo=expiry_date.tzinfo)
+        else:
+            today_date = today_date.replace(tzinfo=None)
+        T = max((expiry_date - today_date).days / 365.0, 1/365)  # Avoid zero division
+        iv = Stock.implied_volatility(option_price, S, K, T, r, option_type)
+        return iv
+
+    def set_atm_data_for_stock(self, mode="positional"):
+        """
+        Finds the ATM option for the given stock.
+        """
+        # Find ATM strike for current expiry
+        zerodha_ctx = self.zerodha_ctx
+        if not zerodha_ctx:
+            logger.warning(f"Zerodha context not found for {self.stock_symbol}")
+            return None, None
+        current_option_chain = zerodha_ctx['option_chain_data']["current"]
+        next_options_chain = zerodha_ctx["option_chain_data"]["next"]
+
+        unique_dates = current_option_chain.index.unique().tolist()
+
+        for date in unique_dates:
+            if date in zerodha_ctx["atm_data"]["current"].keys():
+                continue
+            option_chain_curr = current_option_chain.loc[date]
+            dt = pd.Timestamp(date).tz_convert('Asia/Kolkata')
+            if mode == "positional":
+                dt = dt.replace(hour=5, minute=30, second=0)
+            underlying_price = self.priceData.loc[dt, "Close"]
+            if not option_chain_curr.empty :
+                # Find the strike closest to the current price
+                atm_row = option_chain_curr.iloc[(option_chain_curr['strike'] - underlying_price).abs().argmin()]
+                zerodha_ctx["atm_data"]["current"][date] = atm_row
+                logger.info(f"Current ATM strike for {self.stock_symbol} on {date}: {atm_row['strike']}")
+            else:
+                zerodha_ctx["atm_data"]["current"][date] = None
+                logger.info(f"Current ATM strike not found for {self.stock_symbol} on {date}")
+        
+        unique_dates = next_options_chain.index.unique().tolist()
+        for date in unique_dates:
+            if date in zerodha_ctx["atm_data"]["next"].keys():
+                continue
+            option_chain_next = next_options_chain.loc[date]
+            dt = pd.Timestamp(date).tz_convert('Asia/Kolkata')
+            if mode == "positional":
+                dt = dt.replace(hour=5, minute=30, second=0)
+            underlying_price = self.priceData.loc[dt, "Close"]
+            if not option_chain_next.empty :
+                # Find the strike closest to the current price
+                atm_row = option_chain_next.iloc[(option_chain_next['strike'] - underlying_price).abs().argmin()]
+                zerodha_ctx["atm_data"]["next"][date] = atm_row
+                logger.info(f"Next ATM strike for {self.stock_symbol} on {date}: {atm_row['strike']}")
+            else:
+                zerodha_ctx["atm_data"]["next"][date] = None
+                logger.info(f"Next ATM strike not found for {self.stock_symbol} on {date}")
+        
+        return zerodha_ctx["atm_data"]
+
+    def get_complete_option_chain(self, mode="positional"):
+        """
+        Fetch option chain data for positional (daily) or intraday (5min) mode.
+        On first run, adds all data for the period.
+        On subsequent runs (intraday), appends/updates only the latest data.
+        """
+        def helper(option_df, price_df, old_option_chain, interval, start_date, end_date):
+            option_chain_data = []
+            kite_connect = shared.app_ctx.zd_kc
+
+            for _, row in option_df.iterrows():
+                token = row['instrument_token']
+                try:
+                    for attempt in range(3):  # Retry up to 3 times
+                        try:
+                            hist_data = kite_connect.historical_data(
+                                instrument_token=token,
+                                from_date=start_date.strftime("%Y-%m-%d"),
+                                to_date=end_date.strftime("%Y-%m-%d"),
+                                interval=interval,
+                                oi=True
+                            )
+                            break  # Success, exit retry loop
+                        except Exception as e:
+                            if "Too many requests" in str(e):
+                                logger.warning("Rate limit hit, sleeping for 2 seconds...")
+                                time.sleep(2)
+                            else:
+                                raise
+                    
+                    for candle in hist_data:
+                        dt = pd.Timestamp(candle['date']).tz_convert('Asia/Kolkata')
+                        if interval == "day":
+                            dt = dt.replace(hour=5, minute=30, second=0)
+                        # For intraday, only add if not already present in old_option_chain
+                        if interval == "5minute" and old_option_chain is not None and dt in old_option_chain.index:
+                            continue
+                        underlying_price = price_df.loc[dt, "Close"] if dt in price_df.index else np.nan
+                        iv = Stock.compute_iv_for_option_chain(
+                            candle['close'],
+                            row['strike'],
+                            row['expiry'],
+                            row['instrument_type'],
+                            underlying_price,
+                            dt,
+                            risk_free_rate=0.06
+                        )
+                        option_chain_data.append({
+                            "instrument_token": token,
+                            "tradingsymbol": row['tradingsymbol'],
+                            "expiry": row['expiry'],
+                            "strike": row['strike'],
+                            "instrument_type": row['instrument_type'],
+                            "date": dt,
+                            "open": candle['open'],
+                            "high": candle['high'],
+                            "low": candle['low'],
+                            "close": candle['close'],
+                            "volume": candle['volume'],
+                            "oi": candle.get('oi', None), 
+                            "underlying_price": underlying_price,
+                            "iv": iv,
+                        })
+                except Exception as e:
+                    logger.error(f"Error fetching data for {row['tradingsymbol']}: {e}")
+                    raise Exception(f"Error fetching data for {row['tradingsymbol']}: {e}")
+            df = pd.DataFrame(option_chain_data)
+            if not df.empty:
+                df.set_index("date", inplace=True)
+                # For intraday, append new data to old_option_chain
+                if interval == "5minute" and old_option_chain is not None and not old_option_chain.empty:
+                    df = pd.concat([old_option_chain, df])
+                    df = df[~df.index.duplicated(keep='last')]
+                    df = df.sort_index()
+            elif old_option_chain is not None:
+                df = old_option_chain
+            return df
+
+        current_option_df = self.zerodha_ctx['option_chain']["current"]
+        next_option_df = self.zerodha_ctx['option_chain']["next"]
+        try:
+            if mode == "positional":
+                interval = "day"
+                end_date = datetime.datetime.now()
+                business_days = pd.bdate_range(end=end_date, periods=5).to_pydatetime()
+                start_date = business_days[0]
+                old_current = None
+                old_next = None
+            elif mode == "intraday":
+                interval = "5minute"
+                today = datetime.datetime.now()
+                start_date = today
+                end_date = today
+                old_current = self.zerodha_ctx['option_chain_data']["current"]
+                old_next = self.zerodha_ctx['option_chain_data']["next"]
+            else:
+                raise ValueError("mode must be 'positional' or 'intraday'")
+
+            if current_option_df is not None:
+                option_df = helper(current_option_df, self.priceData, old_current, interval, start_date, end_date)
+                self.zerodha_ctx['option_chain_data']["current"] = option_df
+
+            if next_option_df is not None:
+                option_df = helper(next_option_df, self.priceData, old_next, interval, start_date, end_date)
+                self.zerodha_ctx['option_chain_data']["next"] = option_df
+
+            self.set_atm_data_for_stock(mode=mode)
+            return self.zerodha_ctx['option_chain_data']
+        except Exception as e:
+            logger.error(f"get_option_chain ({mode}) failed: {e}")
+            raise Exception(f"get_option_chain ({mode}) failed: {e}")
+
+    def get_atm_data_for_stock(self, mode):
+        """
+        Retrieves the ATM data for the stock based on the specified mode.
+        """
+        zerodha_ctx = self.zerodha_ctx
+        kite_connect = shared.app_ctx.zd_kc
+        current_option_df = zerodha_ctx['option_chain']["current"]
+        next_option_df = zerodha_ctx['option_chain']["next"]
+        atm_data_current = {}
+        atm_data_next = {}
+        if mode == "positional":
+            business_days = pd.bdate_range(end=datetime.datetime.now(), periods=5).to_pydatetime()
+            for date in business_days:
+                dt = pd.Timestamp(date).tz_localize('Asia/Kolkata').replace(hour=5, minute=30, second=0)
+                if dt not in self.priceData.index:
+                    logger.info(f"No price data for {self.stock_symbol} on {dt}")
+                    # atm_data_current[dt] = None
+                    # atm_data_next[dt] = None
+                    continue
+                underlying_price = self.priceData.loc[dt, "Close"]
+
+                # Current expiry ATM
+                if current_option_df is not None and not current_option_df.empty:
+                    atm_row = current_option_df.iloc[(current_option_df['strike'] - underlying_price).abs().argmin()]
+                    try:
+                        hist_data = kite_connect.historical_data(
+                            instrument_token=atm_row['instrument_token'],
+                            from_date=dt.strftime("%Y-%m-%d"),
+                            to_date=dt.strftime("%Y-%m-%d"),
+                            interval="day",
+                            oi=True
+                        )
+                        if hist_data:
+                            candle = hist_data[0]
+                            atm_row = atm_row.copy()
+                            atm_row['open'] = candle['open']
+                            atm_row['high'] = candle['high']
+                            atm_row['low'] = candle['low']
+                            atm_row['close'] = candle['close']
+                            atm_row['volume'] = candle['volume']
+                            atm_row['oi'] = candle.get('oi', None)
+                            atm_row['iv'] = Stock.compute_iv_for_option_chain(
+                                candle['close'],
+                                atm_row['strike'],
+                                atm_row['expiry'],
+                                atm_row['instrument_type'],
+                                underlying_price,
+                                dt,
+                                risk_free_rate=0.06
+                            )
+                            atm_row['underlying_price'] = underlying_price
+                            atm_data_current[dt] = atm_row
+                            logger.info(f"ATM data for {self.stock_symbol} (current expiry) on {dt}: {atm_row['strike']}, IV: {atm_row['iv']}")
+                        else:
+                            # atm_data_current[dt] = None
+                            logger.info(f"No historical data for ATM {self.stock_symbol} (current expiry) on {dt}")
+                    except Exception as e:
+                        logger.error(f"Error fetching historical data for {self.stock_symbol} ATM (current expiry) on {dt}: {e}")
+                        # atm_data_current[dt] = None
+                else:
+                    # atm_data_current[dt] = None
+                    logger.info(f"No current option chain data for {self.stock_symbol} on {dt}")
+
+                # Next expiry ATM
+                if next_option_df is not None and not next_option_df.empty:
+                    atm_row_next = next_option_df.iloc[(next_option_df['strike'] - underlying_price).abs().argmin()]
+                    try:
+                        hist_data_next = kite_connect.historical_data(
+                            instrument_token=atm_row_next['instrument_token'],
+                            from_date=dt.strftime("%Y-%m-%d"),
+                            to_date=dt.strftime("%Y-%m-%d"),
+                            interval="day",
+                            oi=True
+                        )
+                        if hist_data_next:
+                            candle_next = hist_data_next[0]
+                            atm_row_next = atm_row_next.copy()
+                            atm_row_next['open'] = candle_next['open']
+                            atm_row_next['high'] = candle_next['high']
+                            atm_row_next['low'] = candle_next['low']
+                            atm_row_next['close'] = candle_next['close']
+                            atm_row_next['volume'] = candle_next['volume']
+                            atm_row_next['oi'] = candle_next.get('oi', None)
+                            atm_row_next['iv'] = Stock.compute_iv_for_option_chain(
+                                candle_next['close'],
+                                atm_row_next['strike'],
+                                atm_row_next['expiry'],
+                                atm_row_next['instrument_type'],
+                                underlying_price,
+                                dt,
+                                risk_free_rate=0.06
+                            )
+                            atm_row_next['underlying_price'] = underlying_price
+                            atm_data_next[dt] = atm_row_next
+                            logger.info(f"ATM data for {self.stock_symbol} (next expiry) on {dt}: {atm_row_next['strike']}, IV: {atm_row_next['iv']}")
+                        else:
+                            # atm_data_next[dt] = None
+                            logger.info(f"No historical data for ATM {self.stock_symbol} (next expiry) on {dt}")
+                    except Exception as e:
+                        logger.error(f"Error fetching historical data for {self.stock_symbol} ATM (next expiry) on {dt}: {e}")
+                        # atm_data_next[dt] = None
+                else:
+                    # atm_data_next[dt] = None
+                    logger.info(f"No next option chain data for {self.stock_symbol} on {dt}")
+
+            zerodha_ctx["atm_data"]["current"] = atm_data_current
+            zerodha_ctx["atm_data"]["next"] = atm_data_next
+            return atm_data_current, atm_data_next
+
+        elif mode == "intraday":
+            atm_data_current = zerodha_ctx["atm_data"]["current"]
+            atm_data_next = zerodha_ctx["atm_data"]["next"]
+
+            today_str = datetime.datetime.now().strftime("%Y-%m-%d")
+            # Get all 5min intervals for today from priceData index
+            intraday_dates = [dt for dt in self.priceData.index if dt.strftime("%Y-%m-%d") == today_str]
+
+            for dt in intraday_dates[:-1]:
+                if dt in atm_data_current:
+                    continue  # Skip if already present
+
+                underlying_price = self.priceData.loc[dt, "Close"]
+
+                # Current expiry ATM
+                if current_option_df is not None and not current_option_df.empty:
+                    atm_row = current_option_df.iloc[(current_option_df['strike'] - underlying_price).abs().argmin()]
+                    try:
+                        hist_data = kite_connect.historical_data(
+                            instrument_token=atm_row['instrument_token'],
+                            from_date=dt.strftime("%Y-%m-%d %H:%M:%S"),
+                            to_date=dt.strftime("%Y-%m-%d %H:%M:%S"),
+                            interval="5minute",
+                            oi=True
+                        )
+                        if hist_data:
+                            candle = next((c for c in hist_data if pd.Timestamp(c['date']).tz_convert('Asia/Kolkata') == dt), None)
+                            if candle:
+                                atm_row = atm_row.copy()
+                                atm_row['open'] = candle['open']
+                                atm_row['high'] = candle['high']
+                                atm_row['low'] = candle['low']
+                                atm_row['close'] = candle['close']
+                                atm_row['volume'] = candle['volume']
+                                atm_row['oi'] = candle.get('oi', None)
+                                atm_row['iv'] = Stock.compute_iv_for_option_chain(
+                                    candle['close'],
+                                    atm_row['strike'],
+                                    atm_row['expiry'],
+                                    atm_row['instrument_type'],
+                                    underlying_price,
+                                    dt,
+                                    risk_free_rate=0.06
+                                )
+                                atm_row['underlying_price'] = underlying_price
+                                atm_data_current[dt] = atm_row
+                                logger.info(f"ATM data for {self.stock_symbol} (current expiry) at {dt}: {atm_row['strike']}, IV: {atm_row['iv']}")
+                    except Exception as e:
+                        logger.error(f"Error fetching intraday data for {self.stock_symbol} ATM (current expiry) at {dt}: {e}")
+
+                # Next expiry ATM
+                if next_option_df is not None and not next_option_df.empty:
+                    if dt in atm_data_next:
+                        continue  # Skip if already present
+                    atm_row_next = next_option_df.iloc[(next_option_df['strike'] - underlying_price).abs().argmin()]
+                    try:
+                        hist_data_next = kite_connect.historical_data(
+                            instrument_token=atm_row_next['instrument_token'],
+                            from_date=dt.strftime("%Y-%m-%d %H:%M:%S"),
+                            to_date=dt.strftime("%Y-%m-%d %H:%M:%S"),
+                            interval="5minute",
+                            oi=True
+                        )
+                        if hist_data_next:
+                            candle_next = next((c for c in hist_data_next if pd.Timestamp(c['date']).tz_convert('Asia/Kolkata') == dt), None)
+                            if candle_next:
+                                atm_row_next = atm_row_next.copy()
+                                atm_row_next['open'] = candle_next['open']
+                                atm_row_next['high'] = candle_next['high']
+                                atm_row_next['low'] = candle_next['low']
+                                atm_row_next['close'] = candle_next['close']
+                                atm_row_next['volume'] = candle_next['volume']
+                                atm_row_next['oi'] = candle_next.get('oi', None)
+                                atm_row_next['iv'] = Stock.compute_iv_for_option_chain(
+                                    candle_next['close'],
+                                    atm_row_next['strike'],
+                                    atm_row_next['expiry'],
+                                    atm_row_next['instrument_type'],
+                                    underlying_price,
+                                    dt,
+                                    risk_free_rate=0.06
+                                )
+                                atm_row_next['underlying_price'] = underlying_price
+                                atm_data_next[dt] = atm_row_next
+                                logger.info(f"ATM data for {self.stock_symbol} (next expiry) at {dt}: {atm_row_next['strike']}, IV: {atm_row_next['iv']}")
+                    except Exception as e:
+                        logger.error(f"Error fetching intraday data for {self.stock_symbol} ATM (next expiry) at {dt}: {e}")
+
+            zerodha_ctx["atm_data"]["current"] = atm_data_current
+            zerodha_ctx["atm_data"]["next"] = atm_data_next
+            return atm_data_current, atm_data_next
+        else:
+            raise ValueError("mode must be 'positional' or 'intraday'")
+        
+
+
+
 
     @property
     def zerodha_data(self):
@@ -145,7 +578,13 @@ class Stock:
 
     def set_analysis(self, trend : str, analysis_type: str, data):
         if trend in ['BULLISH', 'BEARISH', 'NEUTRAL']:
-            self.analysis[trend][analysis_type] = data
+            existing = self.analysis[trend].get(analysis_type)
+            if existing is None:
+                self.analysis[trend][analysis_type] = data
+            else:
+                if not isinstance(existing, list):
+                    self.analysis[trend][analysis_type] = [existing]
+                self.analysis[trend][analysis_type].append(data)
             self.analysis['NoOfTrends'] += 1
     
     def reset_analysis(self):
