@@ -15,6 +15,7 @@ from analyser.Futures_Analyser import FuturesAnalyser
 from analyser.VolumeAnalyser import VolumeAnalyser
 from analyser.TechnicalAnalyser import TechnicalAnalyser
 from analyser.candleStickPatternAnalyser import CandleStickAnalyser
+from analyser.IVAnalyser import IVAnalyser
 from common.logging_util import logger
 from typing import List, Tuple, Optional
 from enum import Enum
@@ -23,6 +24,7 @@ from zerodha.zerodha_analysis import ZerodhaTickerManager
 from dotenv import load_dotenv
 from notification.bot_listener import init_telegram_bot
 import threading
+from zerodha.zerodha_connect import KiteConnect
 
 class Trend (Enum):
     BULLISH = "BULLISH"
@@ -34,7 +36,8 @@ thread_pool = None
 orchestrator : AnalyserOrchestrator =  None
 PRODUCTION = False
 SHUTDOWN_SYSTEM = False
-ENABLE_DERIVATIVES = False
+ENABLE_NSE_DERIVATIVES = False
+ENABLE_ZERODHA_DERIVATIVES = False
 ENABLE_ZERODHA_API = False
 ENABLE_TELEGRAM_BOT = False
 
@@ -101,6 +104,32 @@ def process_monitor_results(results):
             logger.error(f"Error during monitoring: {message}")
         elif trend_found:
             logger.info(f"Trend found: \n{message}")
+
+def update_zerodha_option_chain(stockName = None, indexName = None):
+    
+    kc = KiteConnect(constant.DUMMY_API_KEY_ZERODHA)
+    stock_options_df = pd.DataFrame(kc.instruments())
+    stock_options_df= stock_options_df[(stock_options_df['segment'] == 'NFO-OPT')]
+    count = 0
+    for stock in shared.app_ctx.stock_token_obj_dict.values():
+        if not PRODUCTION and constant.NO_OF_STOCKS != -1 and count >= constant.NO_OF_STOCKS:
+            break
+        if stockName and stock.stock_symbol != stockName:
+            continue
+        zerodha_ctx = stock.zerodha_ctx
+        stock_options = stock_options_df[stock_options_df['name'] == stock.stock_symbol]
+        stock_options = stock_options[['instrument_token', 'tradingsymbol', 'expiry', 'strike', 'instrument_type']]
+
+        expiry_dates = sorted(stock_options['expiry'].unique())
+        zerodha_ctx["option_chain"]["current"] = stock_options[stock_options['expiry'] == expiry_dates[0]]
+        if len(expiry_dates) > 1:
+            zerodha_ctx["option_chain"]["next"] = stock_options[stock_options['expiry'] == expiry_dates[1]] 
+        else:
+            logger.info(f"stock {stock.stock_symbol} next expiry not available")
+            zerodha_ctx["option_chain"]["next"] = pd.DataFrame()
+        
+        logger.info(f"stock {stock.stock_symbol} zerodha_ctx updated")
+    count += 1
 
 def create_stock_and_index_objects(stockName = None, indexName = None ):
     def is_before_market_open():
@@ -220,6 +249,17 @@ def fetch_futures_data(stock):
     except Exception as e:
         logger.error(f"Error fetching futures data for {stock.stockName}: {e}")
 
+def fetch_zerodha_derivatives_data(stock):
+    try:
+        if shared.app_ctx.mode.name == shared.Mode.POSITIONAL.name:
+            stock.get_atm_data_for_stock(mode="positional")
+        else:
+            pass
+            # stock.get_atm_data_for_stock(mode="intraday")
+        logger.debug(f"Futures data fetched successfully for {stock.stockName}")
+    except Exception as e:
+        logger.error(f"Error fetching zerodha derivatives data for {stock.stockName}: {e}")
+
 
 def process_stock(stock: Stock) -> Tuple[MonitorResult, bool, Optional[str]]:
     try:
@@ -238,7 +278,7 @@ def fetch_and_analyze_stocks() -> List[Tuple[MonitorResult, bool, Optional[str]]
         # Fetch price data for all stocks at once
         price_future = executor.submit(fetch_price_data, stock_objs, index_objs)
 
-        if ENABLE_DERIVATIVES:
+        if ENABLE_NSE_DERIVATIVES:
             # Fetch futures data for each stock in parallel
             futures_futures = {executor.submit(fetch_futures_data, stock): stock for stock in stock_objs}
             
@@ -254,6 +294,27 @@ def fetch_and_analyze_stocks() -> List[Tuple[MonitorResult, bool, Optional[str]]
             # Check for any errors in futures data fetching
             for future in concurrent.futures.as_completed(futures_futures):
                 stock = futures_futures[future]
+                try:
+                    future.result()
+                except Exception as exc:
+                    logger.error(f"Error fetching futures data for {stock.stockName}: {exc}")
+
+        elif ENABLE_ZERODHA_DERIVATIVES:
+              # Check for any errors in price data fetching
+            try:
+                price_future.result()
+            except Exception as exc:
+                logger.error(f"Error fetching price data for stocks: {exc}")
+            
+            # Fetch futures data for each stock in parallel
+            zerodha_derivative_futures = {executor.submit(fetch_zerodha_derivatives_data, stock): stock for stock in stock_objs}
+            
+            # Wait for all data fetching to complete
+            concurrent.futures.wait([price_future] + list(zerodha_derivative_futures.keys()))
+            
+            # Check for any errors in futures data fetching
+            for future in concurrent.futures.as_completed(zerodha_derivative_futures):
+                stock = zerodha_derivative_futures[future]
                 try:
                     future.result()
                 except Exception as exc:
@@ -451,7 +512,8 @@ def init():
     global orchestrator
     global PRODUCTION
     global SHUTDOWN_SYSTEM
-    global ENABLE_DERIVATIVES
+    global ENABLE_NSE_DERIVATIVES
+    global ENABLE_ZERODHA_DERIVATIVES
     global ENABLE_ZERODHA_API
     global ENABLE_TELEGRAM_BOT
     
@@ -471,12 +533,19 @@ def init():
         logger.info("Shutdown mode disabled")
         SHUTDOWN_SYSTEM = False
     
-    if os.getenv(constant.ENV_ENABLE_DERIVATIVES, "0") == "1":
+    if os.getenv(constant.ENV_ENABLE_NSE_DERIVATIVES, "0") == "1":
         logger.info(" Derivative analysis enabled")
-        ENABLE_DERIVATIVES = True
+        ENABLE_NSE_DERIVATIVES = True
     else:
         logger.info(" Derivative analysis disabled")
-        ENABLE_DERIVATIVES = False
+        ENABLE_NSE_DERIVATIVES = False
+    
+    if os.getenv(constant.ENV_ENABLE_ZERODHA_DERIVATIVES, "0") == "1":
+        logger.info("Zerodha Derivative analysis enabled")
+        ENABLE_ZERODHA_DERIVATIVES = True
+    else:
+        logger.info("Zerodha Derivative analysis disabled")
+        ENABLE_ZERODHA_DERIVATIVES = False
     
     if os.getenv(constant.ENV_ENABLE_ZERODHA_API, "0") == "1":
         logger.info(" Zerodha analysis enabled")
@@ -510,11 +579,14 @@ def init():
     args = parse_arguments()
     
     create_stock_and_index_objects(args.stock, args.index)
+    if ENABLE_ZERODHA_DERIVATIVES:
+        update_zerodha_option_chain(args.stock, args.index)
     orchestrator = AnalyserOrchestrator()
     orchestrator.register(VolumeAnalyser())
     orchestrator.register(TechnicalAnalyser())
     orchestrator.register(CandleStickAnalyser())
-    if ENABLE_DERIVATIVES:
+    orchestrator.register(IVAnalyser())
+    if ENABLE_NSE_DERIVATIVES:
         shared.app_ctx.stockExpires = NSE_DATA_CLASS.expiry_dates_future()
         orchestrator.register(FuturesAnalyser())
     
@@ -524,6 +596,7 @@ def init():
         password = os.getenv(constant.ENV_ZERODHA_PASSWORD)
         encToken = os.getenv(constant.ENV_ZERODHA_ENC_TOKEN)
         shared.app_ctx.zd_ticker_manager = ZerodhaTickerManager(userName, password, encToken)
+        shared.app_ctx.zd_kc = KiteConnect(constant.DUMMY_API_KEY_ZERODHA, root="https://kite.zerodha.com/", enctoken=encToken)
 
 
 def parse_arguments():
