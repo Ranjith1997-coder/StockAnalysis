@@ -74,19 +74,9 @@
                 "instrument_token": 3861249
             },
             {
-                "name": "Adani Total Gas Limited",
-                "tradingsymbol": "ATGL",
-                "instrument_token": 1552897
-            },
-            {
                 "name": "Aditya Birla Capital Limited",
                 "tradingsymbol": "ABCAPITAL",
                 "instrument_token": 5533185
-            },
-            {
-                "name": "Aditya Birla Fashion and Retail Limited",
-                "tradingsymbol": "ABFRL",
-                "instrument_token": 7707649
             },
             {
                 "name": "Alkem Laboratories Limited",
@@ -227,11 +217,6 @@
                 "name": "Britannia Industries Limited",
                 "tradingsymbol": "BRITANNIA",
                 "instrument_token": 140033
-            },
-            {
-                "name": "CESC Limited",
-                "tradingsymbol": "CESC",
-                "instrument_token": 160769
             },
             {
                 "name": "CG Power and Industrial Solutions Limited",
@@ -384,11 +369,6 @@
                 "instrument_token": 4576001
             },
             {
-                "name": "Granules India Limited",
-                "tradingsymbol": "GRANULES",
-                "instrument_token": 3039233
-            },
-            {
                 "name": "Grasim Industries Limited",
                 "tradingsymbol": "GRASIM",
                 "instrument_token": 315393
@@ -484,11 +464,6 @@
                 "instrument_token": 3023105
             },
             {
-                "name": "IRB Infrastructure Developers Limited",
-                "tradingsymbol": "IRB",
-                "instrument_token": 3920129
-            },
-            {
                 "name": "ITC Limited",
                 "tradingsymbol": "ITC",
                 "instrument_token": 424961
@@ -567,11 +542,6 @@
                 "name": "JSW Steel Limited",
                 "tradingsymbol": "JSWSTEEL",
                 "instrument_token": 3001089
-            },
-            {
-                "name": "Jindal Stainless Limited",
-                "tradingsymbol": "JSL",
-                "instrument_token": 2876417
             },
             {
                 "name": "Jindal Steel & Power Limited",
@@ -834,11 +804,6 @@
                 "instrument_token": 2455041
             },
             {
-                "name": "Poonawalla Fincorp Limited",
-                "tradingsymbol": "POONAWALLA",
-                "instrument_token": 2919169
-            },
-            {
                 "name": "Power Finance Corporation Limited",
                 "tradingsymbol": "PFC",
                 "instrument_token": 3660545
@@ -894,14 +859,14 @@
                 "instrument_token": 794369
             },
             {
-                "name": "SJVN Limited",
-                "tradingsymbol": "SJVN",
-                "instrument_token": 4834049
-            },
-            {
                 "name": "SRF Limited",
                 "tradingsymbol": "SRF",
                 "instrument_token": 837889
+            },
+            {
+                "name": "Sammaan Capital Limited",
+                "tradingsymbol": "SAMMAANCAP",
+                "instrument_token": 7712001
             },
             {
                 "name": "Samvardhana Motherson International Limited",
