@@ -174,6 +174,12 @@ class AnalyserOrchestrator:
                             message_parts.append(f" IV_SPIKE : {iv_spike.expiry} {iv_spike.iv_change:.2f}% ")
                     else:
                         message_parts.append(f" IV_SPIKE : {data.expiry} {data.iv_change:.2f}% ")
+                elif analysis_type == 'IV_TREND':
+                    if isinstance(data, list):
+                        for iv_trend in data:
+                            message_parts.append(f" IV_TREND : {iv_trend.expiry} {iv_trend.trend} ")
+                    else:
+                        message_parts.append(f" IV_TREND : {data.expiry} {data.trend} ")
 
         return "\n".join(message_parts)
 

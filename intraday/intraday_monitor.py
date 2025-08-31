@@ -69,6 +69,17 @@ def monitor(stock: Stock) -> Tuple[MonitorResult, bool, Optional[str]]:
         analysis_type = "Positional" if shared.app_ctx.mode == shared.Mode.POSITIONAL else "Intraday"
         logger.debug(f"{analysis_type} analysis for {stock.stockName} started.")
         
+        if ENABLE_ZERODHA_DERIVATIVES:
+            try:
+                # Fetch zerodha derivatives data
+                stock.get_atm_data_for_stock(mode=analysis_type)
+                logger.debug(f"Futures data fetched successfully for {stock.stockName}")
+
+            except Exception as e:
+                logger.error(f"Error fetching zerodha derivatives data for {stock.stockName}: {e}")
+        else:
+            logger.debug("Zerodha derivatives data not enabled for {stock.stockName}")
+
         if stock.is_index:
             trend_found = (
                 orchestrator.run_all_positional(stock, index=True)
@@ -108,8 +119,8 @@ def process_monitor_results(results):
 def update_zerodha_option_chain(stockName = None, indexName = None):
     
     kc = KiteConnect(constant.DUMMY_API_KEY_ZERODHA)
-    stock_options_df = pd.DataFrame(kc.instruments())
-    stock_options_df= stock_options_df[(stock_options_df['segment'] == 'NFO-OPT')]
+    all_options_df = pd.DataFrame(kc.instruments())
+    all_options_df= all_options_df[(all_options_df['segment'] == 'NFO-OPT')]
     count = 0
     for stock in shared.app_ctx.stock_token_obj_dict.values():
         if not PRODUCTION and constant.NO_OF_STOCKS != -1 and count >= constant.NO_OF_STOCKS:
@@ -117,7 +128,7 @@ def update_zerodha_option_chain(stockName = None, indexName = None):
         if stockName and stock.stock_symbol != stockName:
             continue
         zerodha_ctx = stock.zerodha_ctx
-        stock_options = stock_options_df[stock_options_df['name'] == stock.stock_symbol]
+        stock_options = all_options_df[all_options_df['name'] == stock.stock_symbol]
         stock_options = stock_options[['instrument_token', 'tradingsymbol', 'expiry', 'strike', 'instrument_type']]
 
         expiry_dates = sorted(stock_options['expiry'].unique())
@@ -129,7 +140,40 @@ def update_zerodha_option_chain(stockName = None, indexName = None):
             zerodha_ctx["option_chain"]["next"] = pd.DataFrame()
         
         logger.info(f"stock {stock.stock_symbol} zerodha_ctx updated")
-    count += 1
+        count += 1
+    
+    count = 0
+    for index in  shared.app_ctx.index_token_obj_dict.values():
+        if not PRODUCTION and constant.NO_OF_INDEX != -1 and count >= constant.NO_OF_INDEX:
+            break
+        if (index.stock_symbol == "INDIA_VIX") or  (indexName and index.stock_symbol != indexName) :
+            continue
+        
+        zerodha_ctx = index.zerodha_ctx
+        index_options = all_options_df[all_options_df['name'] == index.stock_symbol]
+        index_options = index_options[['instrument_token', 'tradingsymbol', 'expiry', 'strike', 'instrument_type']]
+        
+        expiry_dates = sorted(index_options['expiry'].unique())
+
+        if "NIFTY" ==  index.stock_symbol:
+            expiry_df = pd.DataFrame({'expiry': expiry_dates})
+            expiry_df['year'] = expiry_df['expiry'].apply(lambda x: x.year)
+            expiry_df['month'] = expiry_df['expiry'].apply(lambda x: x.month)
+
+            # Only keep the last expiry for each month (monthly expiry)
+            monthly_expiry_dates = expiry_df.groupby(['year', 'month'])['expiry'].max().sort_values().tolist()
+
+            expiry_dates = monthly_expiry_dates
+        
+        zerodha_ctx["option_chain"]["current"] = index_options[index_options['expiry'] == expiry_dates[0]]
+        if len(expiry_dates) > 1:
+            zerodha_ctx["option_chain"]["next"] = index_options[index_options['expiry'] == expiry_dates[1]] 
+        else:
+            logger.info(f"Index {index.stock_symbol} next expiry not available")
+            zerodha_ctx["option_chain"]["next"] = pd.DataFrame()
+        
+        logger.info(f"Index {index.stock_symbol} zerodha_ctx updated")
+
 
 def create_stock_and_index_objects(stockName = None, indexName = None ):
     def is_before_market_open():
@@ -249,17 +293,6 @@ def fetch_futures_data(stock):
     except Exception as e:
         logger.error(f"Error fetching futures data for {stock.stockName}: {e}")
 
-def fetch_zerodha_derivatives_data(stock):
-    try:
-        if shared.app_ctx.mode.name == shared.Mode.POSITIONAL.name:
-            stock.get_atm_data_for_stock(mode="positional")
-        else:
-            pass
-            # stock.get_atm_data_for_stock(mode="intraday")
-        logger.debug(f"Futures data fetched successfully for {stock.stockName}")
-    except Exception as e:
-        logger.error(f"Error fetching zerodha derivatives data for {stock.stockName}: {e}")
-
 
 def process_stock(stock: Stock) -> Tuple[MonitorResult, bool, Optional[str]]:
     try:
@@ -299,26 +332,6 @@ def fetch_and_analyze_stocks() -> List[Tuple[MonitorResult, bool, Optional[str]]
                 except Exception as exc:
                     logger.error(f"Error fetching futures data for {stock.stockName}: {exc}")
 
-        elif ENABLE_ZERODHA_DERIVATIVES:
-              # Check for any errors in price data fetching
-            try:
-                price_future.result()
-            except Exception as exc:
-                logger.error(f"Error fetching price data for stocks: {exc}")
-            
-            # Fetch futures data for each stock in parallel
-            zerodha_derivative_futures = {executor.submit(fetch_zerodha_derivatives_data, stock): stock for stock in stock_objs}
-            
-            # Wait for all data fetching to complete
-            concurrent.futures.wait([price_future] + list(zerodha_derivative_futures.keys()))
-            
-            # Check for any errors in futures data fetching
-            for future in concurrent.futures.as_completed(zerodha_derivative_futures):
-                stock = zerodha_derivative_futures[future]
-                try:
-                    future.result()
-                except Exception as exc:
-                    logger.error(f"Error fetching futures data for {stock.stockName}: {exc}")
         else:
             # Wait for price data fetching to complete
             try:
