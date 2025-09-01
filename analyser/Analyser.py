@@ -177,9 +177,9 @@ class AnalyserOrchestrator:
                 elif analysis_type == 'IV_TREND':
                     if isinstance(data, list):
                         for iv_trend in data:
-                            message_parts.append(f" IV_TREND : {iv_trend.expiry} {iv_trend.trend} ")
+                            message_parts.append(f" IV_TREND : {iv_trend.expiry} {iv_trend.trend} {iv_trend.iv_change_pct:.2f}%")
                     else:
-                        message_parts.append(f" IV_TREND : {data.expiry} {data.trend} ")
+                        message_parts.append(f" IV_TREND : {data.expiry} {data.trend} {data.iv_change_pct:.2f}%")
 
         return "\n".join(message_parts)
 

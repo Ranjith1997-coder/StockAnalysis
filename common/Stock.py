@@ -331,7 +331,7 @@ class Stock:
             logger.error(f"get_option_chain ({mode}) failed: {e}")
             raise Exception(f"get_option_chain ({mode}) failed: {e}")
 
-    def get_atm_data_for_stock(self, mode):
+    def get_atm_data_for_stock(self, mode, is_next_expiry_required=False):
         """
         Retrieves the ATM data for the stock based on the specified mode.
         Raises exception on error and retries historical data fetch up to 3 times if 'Too many requests' error occurs.
@@ -401,51 +401,52 @@ class Stock:
                             logger.info(f"No historical data for ATM {self.stock_symbol} {atm_row['strike']} (current expiry) on {dt}")
 
                     # Next expiry ATM
-                    if next_option_df is not None and not next_option_df.empty:
-                        atm_row_next = next_option_df.iloc[(next_option_df['strike'] - underlying_price).abs().argmin()]
-                        for attempt in range(3):
-                            try:
-                                hist_data_next = kite_connect.historical_data(
-                                    instrument_token=atm_row_next['instrument_token'],
-                                    from_date=dt.strftime("%Y-%m-%d"),
-                                    to_date=dt.strftime("%Y-%m-%d"),
-                                    interval="day",
-                                    oi=True
+                    if is_next_expiry_required:
+                        if next_option_df is not None and not next_option_df.empty:
+                            atm_row_next = next_option_df.iloc[(next_option_df['strike'] - underlying_price).abs().argmin()]
+                            for attempt in range(3):
+                                try:
+                                    hist_data_next = kite_connect.historical_data(
+                                        instrument_token=atm_row_next['instrument_token'],
+                                        from_date=dt.strftime("%Y-%m-%d"),
+                                        to_date=dt.strftime("%Y-%m-%d"),
+                                        interval="day",
+                                        oi=True
+                                    )
+                                    break
+                                except Exception as e:
+                                    if "Too many requests" in str(e):
+                                        logger.warning(f"Rate limit hit {self.stock_symbol}, sleeping for 1 seconds...")
+                                        time.sleep(1)
+                                    else:
+                                        logger.error(f"Error fetching historical data for {self.stock_symbol} ATM (next expiry) on {dt}: {e}")
+                                        raise
+                            else:
+                                logger.error(f"Failed to fetch historical data for {self.stock_symbol} ATM (next expiry) on {dt} after 3 attempts")
+                                raise Exception(f"Too many requests for {self.stock_symbol} ATM (next expiry) on {dt}")
+                            if hist_data_next:
+                                candle_next = hist_data_next[0]
+                                atm_row_next = atm_row_next.copy()
+                                atm_row_next['open'] = candle_next['open']
+                                atm_row_next['high'] = candle_next['high']
+                                atm_row_next['low'] = candle_next['low']
+                                atm_row_next['close'] = candle_next['close']
+                                atm_row_next['volume'] = candle_next['volume']
+                                atm_row_next['oi'] = candle_next.get('oi', None)
+                                atm_row_next['iv'] = Stock.compute_iv_for_option_chain(
+                                    candle_next['close'],
+                                    atm_row_next['strike'],
+                                    atm_row_next['expiry'],
+                                    atm_row_next['instrument_type'],
+                                    underlying_price,
+                                    dt,
+                                    risk_free_rate=0.06
                                 )
-                                break
-                            except Exception as e:
-                                if "Too many requests" in str(e):
-                                    logger.warning("Rate limit hit, sleeping for 2 seconds...")
-                                    time.sleep(2)
-                                else:
-                                    logger.error(f"Error fetching historical data for {self.stock_symbol} ATM (next expiry) on {dt}: {e}")
-                                    raise
-                        else:
-                            logger.error(f"Failed to fetch historical data for {self.stock_symbol} ATM (next expiry) on {dt} after 3 attempts")
-                            raise Exception(f"Too many requests for {self.stock_symbol} ATM (next expiry) on {dt}")
-                        if hist_data_next:
-                            candle_next = hist_data_next[0]
-                            atm_row_next = atm_row_next.copy()
-                            atm_row_next['open'] = candle_next['open']
-                            atm_row_next['high'] = candle_next['high']
-                            atm_row_next['low'] = candle_next['low']
-                            atm_row_next['close'] = candle_next['close']
-                            atm_row_next['volume'] = candle_next['volume']
-                            atm_row_next['oi'] = candle_next.get('oi', None)
-                            atm_row_next['iv'] = Stock.compute_iv_for_option_chain(
-                                candle_next['close'],
-                                atm_row_next['strike'],
-                                atm_row_next['expiry'],
-                                atm_row_next['instrument_type'],
-                                underlying_price,
-                                dt,
-                                risk_free_rate=0.06
-                            )
-                            atm_row_next['underlying_price'] = underlying_price
-                            atm_data_next[dt] = atm_row_next
-                            logger.info(f"ATM data for {self.stock_symbol} (next expiry) on {dt}: {atm_row_next['strike']}, IV: {atm_row_next['iv']}")
-                        else:
-                            logger.info(f"No historical data for ATM {self.stock_symbol} {atm_row_next['strike']} (next expiry) on {dt}")
+                                atm_row_next['underlying_price'] = underlying_price
+                                atm_data_next[dt] = atm_row_next
+                                logger.info(f"ATM data for {self.stock_symbol} (next expiry) on {dt}: {atm_row_next['strike']}, IV: {atm_row_next['iv']}")
+                            else:
+                                logger.info(f"No historical data for ATM {self.stock_symbol} {atm_row_next['strike']} (next expiry) on {dt}")
 
                 zerodha_ctx["atm_data"]["current"] = atm_data_current
                 zerodha_ctx["atm_data"]["next"] = atm_data_next
@@ -479,8 +480,8 @@ class Stock:
                             break
                         except Exception as e:
                             if "Too many requests" in str(e):
-                                logger.warning("Rate limit hit, sleeping for 2 seconds...")
-                                time.sleep(2)
+                                logger.warning(f"Rate limit hit for {self.stock_symbol} sleeping for 1 seconds...")
+                                time.sleep(1)
                             else:
                                 logger.error(f"Error fetching intraday data for {self.stock_symbol} ATM (current expiry) at {dt}: {e}")
                                 raise
@@ -513,52 +514,53 @@ class Stock:
                         logger.info(f"No intraday data for ATM {self.stock_symbol} (current expiry) at {dt}")
 
                 # Next expiry ATM
-                if next_option_df is not None and not next_option_df.empty:
-                    atm_row_next = next_option_df.iloc[(next_option_df['strike'] - underlying_price).abs().argmin()]
-                    for attempt in range(3):
-                        try:
-                            hist_data_next = kite_connect.historical_data(
-                                instrument_token=atm_row_next['instrument_token'],
-                                from_date=dt.strftime("%Y-%m-%d"),
-                                to_date=dt.strftime("%Y-%m-%d"),
-                                interval="5minute",
-                                oi=True
-                            )
-                            break
-                        except Exception as e:
-                            if "Too many requests" in str(e):
-                                logger.warning("Rate limit hit, sleeping for 2 seconds...")
-                                time.sleep(2)
-                            else:
-                                logger.error(f"Error fetching intraday data for {self.stock_symbol} ATM (next expiry) at {dt}: {e}")
-                                raise
-                    else:
-                        logger.error(f"Failed to fetch intraday data for {self.stock_symbol} ATM (next expiry) at {dt} after 3 attempts")
-                        raise Exception(f"Too many requests for {self.stock_symbol} ATM (next expiry) at {dt}")
-                    if hist_data_next:
-                        candle_next = next((c for c in hist_data_next if pd.Timestamp(c['date']).tz_convert('Asia/Kolkata') == dt), None)
-                        if candle_next:
-                            atm_row_next = atm_row_next.copy()
-                            atm_row_next['open'] = candle_next['open']
-                            atm_row_next['high'] = candle_next['high']
-                            atm_row_next['low'] = candle_next['low']
-                            atm_row_next['close'] = candle_next['close']
-                            atm_row_next['volume'] = candle_next['volume']
-                            atm_row_next['oi'] = candle_next.get('oi', None)
-                            atm_row_next['iv'] = Stock.compute_iv_for_option_chain(
-                                candle_next['close'],
-                                atm_row_next['strike'],
-                                atm_row_next['expiry'],
-                                atm_row_next['instrument_type'],
-                                underlying_price,
-                                dt,
-                                risk_free_rate=0.06
-                            )
-                            atm_row_next['underlying_price'] = underlying_price
-                            atm_data_next[dt] = atm_row_next
-                            logger.info(f"ATM data for {self.stock_symbol} (next expiry) at {dt}: {atm_row_next['strike']}, IV: {atm_row_next['iv']}")
-                    else:
-                        logger.info(f"No intraday data for ATM {self.stock_symbol} (next expiry) at {dt}")
+                if is_next_expiry_required:
+                    if next_option_df is not None and not next_option_df.empty:
+                        atm_row_next = next_option_df.iloc[(next_option_df['strike'] - underlying_price).abs().argmin()]
+                        for attempt in range(3):
+                            try:
+                                hist_data_next = kite_connect.historical_data(
+                                    instrument_token=atm_row_next['instrument_token'],
+                                    from_date=dt.strftime("%Y-%m-%d"),
+                                    to_date=dt.strftime("%Y-%m-%d"),
+                                    interval="5minute",
+                                    oi=True
+                                )
+                                break
+                            except Exception as e:
+                                if "Too many requests" in str(e):
+                                    logger.warning(f"Rate limit hit for {self.stock_symbol}, sleeping for 1 seconds...")
+                                    time.sleep(1)
+                                else:
+                                    logger.error(f"Error fetching intraday data for {self.stock_symbol} ATM (next expiry) at {dt}: {e}")
+                                    raise
+                        else:
+                            logger.error(f"Failed to fetch intraday data for {self.stock_symbol} ATM (next expiry) at {dt} after 3 attempts")
+                            raise Exception(f"Too many requests for {self.stock_symbol} ATM (next expiry) at {dt}")
+                        if hist_data_next:
+                            candle_next = next((c for c in hist_data_next if pd.Timestamp(c['date']).tz_convert('Asia/Kolkata') == dt), None)
+                            if candle_next:
+                                atm_row_next = atm_row_next.copy()
+                                atm_row_next['open'] = candle_next['open']
+                                atm_row_next['high'] = candle_next['high']
+                                atm_row_next['low'] = candle_next['low']
+                                atm_row_next['close'] = candle_next['close']
+                                atm_row_next['volume'] = candle_next['volume']
+                                atm_row_next['oi'] = candle_next.get('oi', None)
+                                atm_row_next['iv'] = Stock.compute_iv_for_option_chain(
+                                    candle_next['close'],
+                                    atm_row_next['strike'],
+                                    atm_row_next['expiry'],
+                                    atm_row_next['instrument_type'],
+                                    underlying_price,
+                                    dt,
+                                    risk_free_rate=0.06
+                                )
+                                atm_row_next['underlying_price'] = underlying_price
+                                atm_data_next[dt] = atm_row_next
+                                logger.info(f"ATM data for {self.stock_symbol} (next expiry) at {dt}: {atm_row_next['strike']}, IV: {atm_row_next['iv']}")
+                        else:
+                            logger.info(f"No intraday data for ATM {self.stock_symbol} (next expiry) at {dt}")
 
                 zerodha_ctx["atm_data"]["current"] = atm_data_current
                 zerodha_ctx["atm_data"]["next"] = atm_data_next
