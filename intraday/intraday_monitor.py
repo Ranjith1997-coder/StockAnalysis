@@ -534,7 +534,7 @@ def init():
     if os.getenv(constant.ENV_PRODUCTION, "0") == "1":
         logger.info("Running in production mode")
         PRODUCTION = True
-        TELEGRAM_NOTIFICATIONS.is_production = True
+        TELEGRAM_NOTIFICATIONS.is_production = False
     else:
         logger.info("Running in development mode")
         PRODUCTION = False
@@ -595,9 +595,9 @@ def init():
     if ENABLE_ZERODHA_DERIVATIVES:
         update_zerodha_option_chain(args.stock, args.index)
     orchestrator = AnalyserOrchestrator()
-    orchestrator.register(VolumeAnalyser())
-    orchestrator.register(TechnicalAnalyser())
-    orchestrator.register(CandleStickAnalyser())
+    # orchestrator.register(VolumeAnalyser())
+    # orchestrator.register(TechnicalAnalyser())
+    # orchestrator.register(CandleStickAnalyser())
     orchestrator.register(IVAnalyser())
     if ENABLE_NSE_DERIVATIVES:
         shared.app_ctx.stockExpires = NSE_DATA_CLASS.expiry_dates_future()

@@ -15,9 +15,11 @@ class IVAnalyser(BaseAnalyzer):
     def reset_constants(self):
         IVAnalyser.IV_TREND_CONTINUATION_DAYS = 3
         if shared.app_ctx.mode.name == shared.Mode.INTRADAY.name:
-            IVAnalyser.IV_PERCENTAGE_CHANGE = 10  
+            IVAnalyser.IV_PERCENTAGE_CHANGE = 5
+            IVAnalyser.IV_TREND_PERCENTAGE_CHANGE = 3  
         else:
             IVAnalyser.IV_PERCENTAGE_CHANGE = 20
+            IVAnalyser.IV_TREND_PERCENTAGE_CHANGE = 10 
 
         logger.debug(f"IVAnalyser constants reset for mode {shared.app_ctx.mode.name}")
         logger.debug(f"IV_PERCENTAGE_CHANGE = {IVAnalyser.IV_PERCENTAGE_CHANGE}")
@@ -31,6 +33,7 @@ class IVAnalyser(BaseAnalyzer):
                 # Sort the dates
                 sorted_dates = sorted(atm_chain.keys())
                 if len(sorted_dates) < 2:
+                    logger.info(f"Insufficient data to check IV trend for {stock.stock_symbol}")
                     return False  # Not enough data to compare
 
                 # Get previous and current
@@ -80,6 +83,7 @@ class IVAnalyser(BaseAnalyzer):
                 sorted_dates = sorted(atm_chain.keys())
                 n = IVAnalyser.IV_TREND_CONTINUATION_DAYS
                 if len(sorted_dates) < n:
+                    logger.info(f"Insufficient data to check IV trend for {stock.stock_symbol}")
                     return None  # Not enough data to check trend
 
                 ivs = []
@@ -90,12 +94,13 @@ class IVAnalyser(BaseAnalyzer):
                     else:
                         return None  # Missing IV data
 
+                iv_change_pct = ((ivs[-1] - ivs[0]) / ivs[0]) * 100 if ivs[0] != 0 else None
                 # Check for upward trend
-                if all(ivs[i] < ivs[i+1] for i in range(n-1)):
-                    return "UPWARD"
+                if all(ivs[i] < ivs[i+1] for i in range(n-1)) and iv_change_pct is not None and abs(iv_change_pct) >= IVAnalyser.IV_TREND_PERCENTAGE_CHANGE:
+                    return "UPWARD", iv_change_pct
                 # Check for downward trend
-                elif all(ivs[i] > ivs[i+1] for i in range(n-1)):
-                    return "DOWNWARD"
+                elif all(ivs[i] > ivs[i+1] for i in range(n-1)) and iv_change_pct is not None and abs(iv_change_pct) >= IVAnalyser.IV_TREND_PERCENTAGE_CHANGE:
+                    return "DOWNWARD", iv_change_pct
                 else:
                     return None
 
@@ -103,19 +108,21 @@ class IVAnalyser(BaseAnalyzer):
             atm_chain_current = stock.zerodha_ctx["atm_data"]["current"]
             atm_chain_next = stock.zerodha_ctx["atm_data"]["next"]
 
-            IV_TREND = namedtuple("IV_TREND", ["expiry", "trend"])
+            IV_TREND = namedtuple("IV_TREND", ["expiry", "trend", "iv_change_pct"])
             res = False
 
             trend_current = get_iv_trend(atm_chain_current, "current")
             if trend_current:
-                stock.set_analysis("NEUTRAL", "IV_TREND", IV_TREND(expiry="current", trend=trend_current))
-                logger.info(f"IV {trend_current.lower()} trend detected for {stock.stock_symbol} (current expiry) for last 3 days")
+                direction, iv_change_pct = trend_current
+                stock.set_analysis("NEUTRAL", "IV_TREND", IV_TREND(expiry="current", trend=direction, iv_change_pct=iv_change_pct))
+                logger.info(f"IV {direction.lower()} trend detected for {stock.stock_symbol} (current expiry) for last {IVAnalyser.IV_TREND_CONTINUATION_DAYS} days: IV change = {iv_change_pct:.2f}%")
                 res = True
 
             trend_next = get_iv_trend(atm_chain_next, "next")
             if trend_next:
-                stock.set_analysis("NEUTRAL", "IV_TREND", IV_TREND(expiry="next", trend=trend_next))
-                logger.info(f"IV {trend_next.lower()} trend detected for {stock.stock_symbol} (next expiry) for last 3 days")
+                direction, iv_change_pct = trend_next
+                stock.set_analysis("NEUTRAL", "IV_TREND", IV_TREND(expiry="next", trend=direction, iv_change_pct=iv_change_pct))
+                logger.info(f"IV {direction.lower()} trend detected for {stock.stock_symbol} (next expiry) for last {IVAnalyser.IV_TREND_CONTINUATION_DAYS} days: IV change = {iv_change_pct:.2f}%")
                 res = True
 
             return res
