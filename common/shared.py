@@ -6,13 +6,13 @@ class Mode (Enum):
 class AppContext:
     def __init__(self):
         self.stock_token_obj_dict = {}
-        self.stock_name_obj_dict = {}
         self.index_token_obj_dict = {}
-        self.index_name_obj_dict = {}
+        self.ticker_token_obj_dict_zerodha = {}
         self.stocks_list = []
         self.index_list = []
         self.stockExpires = []
         self.mode = None
         self.zd_ticker_manager = None
+        self.zd_kc = None
 
 app_ctx = AppContext()

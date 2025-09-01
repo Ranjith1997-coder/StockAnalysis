@@ -167,7 +167,19 @@ class AnalyserOrchestrator:
                 elif analysis_type == '52-week-low':
                     message_parts.append("  Price at 52 WEEK LOW")
                 elif analysis_type == 'ATR':
-                        message_parts.append(f" ATR : {data.atr_value:.2f} {data.atr_percentage:.2f}% ")
+                    message_parts.append(f" ATR : {data.atr_value:.2f} {data.atr_percentage:.2f}% ")
+                elif analysis_type == 'IV_SPIKE':
+                    if isinstance(data, list):
+                        for iv_spike in data:
+                            message_parts.append(f" IV_SPIKE : {iv_spike.expiry} {iv_spike.iv_change:.2f}% ")
+                    else:
+                        message_parts.append(f" IV_SPIKE : {data.expiry} {data.iv_change:.2f}% ")
+                elif analysis_type == 'IV_TREND':
+                    if isinstance(data, list):
+                        for iv_trend in data:
+                            message_parts.append(f" IV_TREND : {iv_trend.expiry} {iv_trend.trend} {iv_trend.iv_change_pct:.2f}%")
+                    else:
+                        message_parts.append(f" IV_TREND : {data.expiry} {data.trend} {data.iv_change_pct:.2f}%")
 
         return "\n".join(message_parts)
 

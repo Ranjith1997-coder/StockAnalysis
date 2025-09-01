@@ -145,7 +145,7 @@ class KiteConnect(object):
         "market.instruments.all": "/instruments",
         "market.instruments": "/instruments/{exchange}",
         "market.margins": "/margins/{segment}",
-        "market.historical": "/instruments/historical/{instrument_token}/{interval}",
+        "market.historical": "oms/instruments/historical/{instrument_token}/{interval}",
         "market.trigger_range": "/instruments/trigger_range/{transaction_type}",
 
         "market.quote": "/quote",
@@ -173,7 +173,8 @@ class KiteConnect(object):
                  timeout=None,
                  proxies=None,
                  pool=None,
-                 disable_ssl=False):
+                 disable_ssl=False,
+                 enctoken=None):
         """
         Initialise a new Kite Connect client instance.
 
@@ -201,6 +202,7 @@ class KiteConnect(object):
         self.session_expiry_hook = None
         self.disable_ssl = disable_ssl
         self.access_token = access_token
+        self.enc_token = enctoken
         self.proxies = proxies if proxies else {}
 
         self.root = root or self._default_root_uri
@@ -215,6 +217,12 @@ class KiteConnect(object):
 
         # disable requests SSL warning
         requests.packages.urllib3.disable_warnings()
+    
+    def update_enctoken(self, new_enctoken):
+        """
+        Update the enctoken for the current session.
+        """
+        self.enc_token = new_enctoken
 
     def set_session_expiry_hook(self, method):
         """
@@ -892,7 +900,8 @@ class KiteConnect(object):
             # set authorization header
             auth_header = self.api_key + ":" + self.access_token
             headers["Authorization"] = "token {}".format(auth_header)
-        import pdb; pdb.set_trace()
+        if self.enc_token:
+            headers["Authorization"] = "enctoken {}".format(self.enc_token)
         if self.debug:
             log.debug("Request: {method} {url} {params} {headers}".format(method=method, url=url, params=params, headers=headers))
 
