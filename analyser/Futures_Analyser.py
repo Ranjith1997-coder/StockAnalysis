@@ -16,101 +16,82 @@ class FuturesAnalyser(BaseAnalyzer):
     
     def reset_constants(self):
         if shared.app_ctx.mode.name == shared.Mode.INTRADAY.name:
-            FuturesAnalyser.FUTURE_OI_INCREASE_PERCENTAGE = 7
+            FuturesAnalyser.FUTURE_OI_INCREASE_PERCENTAGE = 1.5
             FuturesAnalyser.FUTURE_PRICE_CHANGE_PERCENTAGE = 0.5
         else :
-            FuturesAnalyser.FUTURE_OI_INCREASE_PERCENTAGE = 30
-            FuturesAnalyser.FUTURE_PRICE_CHANGE_PERCENTAGE = 4
+            FuturesAnalyser.FUTURE_OI_INCREASE_PERCENTAGE = 10
+            FuturesAnalyser.FUTURE_PRICE_CHANGE_PERCENTAGE = 2
         logger.debug(f"FuturesAnalyser constants reset for mode {shared.app_ctx.mode.name}")
         logger.debug(f'FUTURE_OI_INCREASE_PERCENTAGE: {FuturesAnalyser.FUTURE_OI_INCREASE_PERCENTAGE}, FUTURE_PRICE_CHANGE_PERCENTAGE: {FuturesAnalyser.FUTURE_PRICE_CHANGE_PERCENTAGE}')
 
-    @BaseAnalyzer.intraday
+    @BaseAnalyzer.both
+    @BaseAnalyzer.index_both
     def analyse_intraday_check_future_action(self, stock: Stock):
         try:
             logger.debug("Inside analyse_intraday_check_future_action method for stock {}".format(stock.stock_symbol))
 
-            futures_data_curr_expiry = stock.derivativesData["futuresData"]["currExpiry"]
-            futures_data_next_expiry = stock.derivativesData["futuresData"]["nextExpiry"]
+            def get_future_action(futures_data, price_col="close", oi_col="oi", expiry='current'):
+                
+                """
+                Determines futures action based on price and OI percentage change.
+                Expects futures_data as a DataFrame with columns: price_col, oi_col.
+                Returns a namedtuple with action, price_percentage, oi_percentage.
+                """
+                FutureActionAnalysis = namedtuple('FutureActionAnalysis', ['expiry', 'action', 'price_percentage', 'oi_percentage'])
 
-            if futures_data_curr_expiry is None or futures_data_next_expiry is None:
-                logger.warning(f"No futures data found for stock {stock.stock_symbol}")
+                if len(futures_data) < 2:
+                    logger.warning(f"Insufficient data for futures analysis for stock: {stock.stock_symbol} and expiry: {expiry}. Skipping action determination.")
+                    return False
+
+                prev_oi = futures_data.iloc[-2][oi_col]
+                curr_oi = futures_data.iloc[-1][oi_col]
+                prev_price = futures_data.iloc[-2][price_col]
+                curr_price = futures_data.iloc[-1][price_col]
+
+                price_percentage = percentageChange(curr_price, prev_price)
+                oi_percentage = percentageChange(curr_oi, prev_oi)
+
+                if price_percentage > FuturesAnalyser.FUTURE_PRICE_CHANGE_PERCENTAGE and \
+                oi_percentage > FuturesAnalyser.FUTURE_OI_INCREASE_PERCENTAGE:
+                    stock.set_analysis("BULLISH", "FUTURE_ACTION", FutureActionAnalysis(expiry,"long_buildup", price_percentage, oi_percentage))
+                    return True
+                elif price_percentage < (-1 * FuturesAnalyser.FUTURE_PRICE_CHANGE_PERCENTAGE) and \
+                    oi_percentage > FuturesAnalyser.FUTURE_OI_INCREASE_PERCENTAGE:
+                    stock.set_analysis("BEARISH", "FUTURE_ACTION", FutureActionAnalysis(expiry,"short_buildup", price_percentage, oi_percentage))
+                    return True
+                elif price_percentage > FuturesAnalyser.FUTURE_PRICE_CHANGE_PERCENTAGE and \
+                    oi_percentage < (-1 * FuturesAnalyser.FUTURE_OI_INCREASE_PERCENTAGE):
+                    stock.set_analysis("BULLISH", "FUTURE_ACTION",  FutureActionAnalysis(expiry, "short_covering", price_percentage, oi_percentage))
+                    return True
+                elif price_percentage < (-1 * FuturesAnalyser.FUTURE_PRICE_CHANGE_PERCENTAGE) and \
+                    oi_percentage < (-1 * FuturesAnalyser.FUTURE_OI_INCREASE_PERCENTAGE):
+                    stock.set_analysis("BEARISH", "FUTURE_ACTION",  FutureActionAnalysis(expiry,"long_unwinding", price_percentage, oi_percentage))
+                    return True
                 return False
 
-            if len(futures_data_curr_expiry) <= 1 or len(futures_data_next_expiry) <= 1 :
-                return False
+            zerodha_ctx = stock.zerodha_ctx
+
+            futures_data_curr = zerodha_ctx["futures_data"]["current"]
+            futures_data_next = zerodha_ctx["futures_data"]["next"]
+            res = False
+            if get_future_action(futures_data_curr, expiry='current'):
+                logger.info(f"Futures action detected for {stock.stock_symbol} for current expiry")
+                res = True
             
+            # if get_future_action(futures_data_next, expiry='next'):
+            #     logger.info(f"Futures action detected for {stock.stock_symbol} for next expiry")
+            #     res = True
 
-            prev_oi = futures_data_curr_expiry.iloc[-2]['OPEN_INT'] if futures_data_next_expiry is None else futures_data_curr_expiry.iloc[-2]['OPEN_INT'] + futures_data_next_expiry.iloc[-2]['OPEN_INT']
-            curr_oi = futures_data_curr_expiry.iloc[-1]['OPEN_INT'] if futures_data_next_expiry is None else futures_data_curr_expiry.iloc[-1]['OPEN_INT'] + futures_data_next_expiry.iloc[-1]['OPEN_INT']
-            prev_price = futures_data_curr_expiry.iloc[-2]['LAST_TRADED_PRICE'] if futures_data_next_expiry is None else (futures_data_curr_expiry.iloc[-2]['LAST_TRADED_PRICE'] + futures_data_next_expiry.iloc[-2]['LAST_TRADED_PRICE']) / 2
-            curr_price = futures_data_curr_expiry.iloc[-1]['LAST_TRADED_PRICE'] if futures_data_next_expiry is None else (futures_data_curr_expiry.iloc[-1]['LAST_TRADED_PRICE'] + futures_data_next_expiry.iloc[-1]['LAST_TRADED_PRICE']) / 2
-            price_percentage = percentageChange(curr_price, prev_price) 
-            oi_percentage = percentageChange(curr_oi, prev_oi)
-
-            FutureActionAnalysis = namedtuple('FutureActionAnalysis', ['action', 'price_percentage', 'oi_percentage' ])
-
-            if  price_percentage > FuturesAnalyser.FUTURE_PRICE_CHANGE_PERCENTAGE and \
-                oi_percentage > FuturesAnalyser.FUTURE_OI_INCREASE_PERCENTAGE:
-                stock.set_analysis("BULLISH", "future_action", FutureActionAnalysis("long_buildup", price_percentage, oi_percentage))
-                return True
-            elif price_percentage < (-1 * FuturesAnalyser.FUTURE_PRICE_CHANGE_PERCENTAGE) and \
-                oi_percentage > FuturesAnalyser.FUTURE_OI_INCREASE_PERCENTAGE:
-                stock.set_analysis("BEARISH", "future_action", FutureActionAnalysis("short_buildup", price_percentage, oi_percentage))
-                return True
-            elif price_percentage >  FuturesAnalyser.FUTURE_PRICE_CHANGE_PERCENTAGE and \
-                oi_percentage < (-1 * FuturesAnalyser.FUTURE_OI_INCREASE_PERCENTAGE):
-                stock.set_analysis("BULLISH", "future_action", FutureActionAnalysis("short_covering", price_percentage, oi_percentage))
-                return True
-            elif price_percentage <  (-1 * FuturesAnalyser.FUTURE_PRICE_CHANGE_PERCENTAGE) and \
-                oi_percentage < (-1 * FuturesAnalyser.FUTURE_OI_INCREASE_PERCENTAGE):
-                stock.set_analysis("BEARISH", "future_action", FutureActionAnalysis("long_unwinding", price_percentage, oi_percentage))
-                return True
-            return False
+            if res:
+                logger.debug(f"Futures action detected for {stock.stock_symbol}")
+            
+            return res
+            
         except Exception as e:
             logger.error(f"Error in analyse_intraday_check_future_action for stock {stock.stock_symbol}: {str(e)}")
             logger.error(f"Traceback: {traceback.format_exc()}")
             return False    
-    @BaseAnalyzer.positional
-    def analyse_positional_check_future_action(self, stock: Stock):
-        try:
-            logger.debug("Inside analyse_positional_check_future_action method for stock {}".format(stock.stock_symbol))
 
-            futures_data_curr_expiry = stock.derivativesData["futuresData"]["currExpiry"]
-            futures_data_next_expiry = stock.derivativesData["futuresData"]["nextExpiry"]
-
-            if len(futures_data_next_expiry) <= 1 or len(futures_data_curr_expiry) <= 1 :
-                return False
-
-            curr_expiry_oi_change_pct = (futures_data_curr_expiry.iloc[0]["CHANGE_IN_OI"]/futures_data_curr_expiry.iloc[1]["OPEN_INT"]) * 100
-            next_expiry_oi_change_pct = (futures_data_next_expiry.iloc[0]["CHANGE_IN_OI"]/futures_data_next_expiry.iloc[1]["OPEN_INT"]) * 100
-            avg_oi_change_pct = (curr_expiry_oi_change_pct + next_expiry_oi_change_pct) / 2
-
-            curr_price = (futures_data_curr_expiry.iloc[0]['SETTLE_PRICE'] + futures_data_next_expiry.iloc[0]['SETTLE_PRICE']) / 2
-            prev_price = (futures_data_curr_expiry.iloc[1]['SETTLE_PRICE'] + futures_data_next_expiry.iloc[1]['SETTLE_PRICE']) / 2
-            price_percentage = percentageChange(curr_price, prev_price) 
-
-            FutureActionAnalysis = namedtuple('FutureActionAnalysis', ['action', 'price_percentage', 'oi_percentage' ])
-
-            if  price_percentage > FuturesAnalyser.FUTURE_PRICE_CHANGE_PERCENTAGE and \
-                avg_oi_change_pct > FuturesAnalyser.FUTURE_OI_INCREASE_PERCENTAGE:
-                stock.set_analysis("BULLISH", "future_action", FutureActionAnalysis("long_buildup", price_percentage, avg_oi_change_pct))
-                return True
-            elif price_percentage < (-1 * FuturesAnalyser.FUTURE_PRICE_CHANGE_PERCENTAGE) and \
-                avg_oi_change_pct > FuturesAnalyser.FUTURE_OI_INCREASE_PERCENTAGE:
-                stock.set_analysis("BEARISH", "future_action", FutureActionAnalysis("short_buildup", price_percentage, avg_oi_change_pct))
-                return True
-            elif price_percentage >  FuturesAnalyser.FUTURE_PRICE_CHANGE_PERCENTAGE and \
-                avg_oi_change_pct < (-1 * FuturesAnalyser.FUTURE_OI_INCREASE_PERCENTAGE):
-                stock.set_analysis("BULLISH", "future_action", FutureActionAnalysis("short_covering", price_percentage, avg_oi_change_pct))
-                return True
-            elif price_percentage <  (-1 * FuturesAnalyser.FUTURE_PRICE_CHANGE_PERCENTAGE) and \
-                avg_oi_change_pct < (-1 * FuturesAnalyser.FUTURE_OI_INCREASE_PERCENTAGE):
-                stock.set_analysis("BEARISH", "future_action", FutureActionAnalysis("long_unwinding", price_percentage, avg_oi_change_pct))
-                return True
-            return False
-        except Exception as e:
-            logger.error(f"Error in analyse_positional_check_future_action for stock {stock.stock_symbol}: {str(e)}")
-            logger.error(f"Traceback: {traceback.format_exc()}")
 
         
     

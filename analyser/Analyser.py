@@ -148,7 +148,7 @@ class AnalyserOrchestrator:
                         message_parts.append(f" Double Candle stick Pattern: {data}")  
                     elif analysis_type == "Triple_candle_stick_pattern":
                         message_parts.append(f" Triple Candle stick Pattern: {data}")
-                    elif analysis_type == 'future_action':
+                    elif analysis_type == 'FUTURE_ACTION':
                         message_parts.append(f" Futures action: {data.action}, p% = {data.price_percentage:.2f}, oi% = {data.oi_percentage:.2f}")
                     elif analysis_type == 'vwap_deviation':
                         message_parts.append(f" VWAP: Close({data.close:.2f}) {'<' if trend == 'BULLISH' else '>'} VWAP({data.vwap:.2f}) DEVIATION: {data.deviation:.2f}%")
