@@ -33,7 +33,7 @@ class IVAnalyser(BaseAnalyzer):
                 # Sort the dates
                 sorted_dates = sorted(atm_chain.keys())
                 if len(sorted_dates) < 2:
-                    logger.info(f"Insufficient data to check IV trend for {stock.stock_symbol}")
+                    logger.info(f"Insufficient data to check IV spike for {stock.stock_symbol} for expiry {expiry}")
                     return False  # Not enough data to compare
 
                 # Get previous and current
@@ -83,7 +83,7 @@ class IVAnalyser(BaseAnalyzer):
                 sorted_dates = sorted(atm_chain.keys())
                 n = IVAnalyser.IV_TREND_CONTINUATION_DAYS
                 if len(sorted_dates) < n:
-                    logger.info(f"Insufficient data to check IV trend for {stock.stock_symbol}")
+                    logger.info(f"Insufficient data to check IV trend for {stock.stock_symbol} expiry {expiry}")
                     return None  # Not enough data to check trend
 
                 ivs = []

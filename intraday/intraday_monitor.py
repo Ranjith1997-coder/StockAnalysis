@@ -66,15 +66,15 @@ def monitor(stock: Stock) -> Tuple[MonitorResult, bool, Optional[str]]:
         stock.reset_analysis()
         stock.update_latest_data()
 
-        analysis_type = "Positional" if shared.app_ctx.mode == shared.Mode.POSITIONAL else "Intraday"
+        analysis_type = "positional" if shared.app_ctx.mode == shared.Mode.POSITIONAL else "intraday"
         logger.debug(f"{analysis_type} analysis for {stock.stockName} started.")
         
         if ENABLE_ZERODHA_DERIVATIVES:
             try:
                 # Fetch zerodha derivatives data
                 stock.get_atm_data_for_stock(mode=analysis_type)
-                logger.debug(f"Futures data fetched successfully for {stock.stockName}")
-
+                stock.get_futures_data_for_stock(mode=analysis_type)
+                logger.debug(f"Zerodha derivatives data fetched successfully for {stock.stockName}")
             except Exception as e:
                 logger.error(f"Error fetching zerodha derivatives data for {stock.stockName}: {e}")
         else:
@@ -119,8 +119,9 @@ def process_monitor_results(results):
 def update_zerodha_option_chain(stockName = None, indexName = None):
     
     kc = KiteConnect(constant.DUMMY_API_KEY_ZERODHA)
-    all_options_df = pd.DataFrame(kc.instruments())
-    all_options_df= all_options_df[(all_options_df['segment'] == 'NFO-OPT')]
+    all_instruments_df = pd.DataFrame(kc.instruments())
+    all_options_df= all_instruments_df[(all_instruments_df['segment'] == 'NFO-OPT')]
+    all_futures_df= all_instruments_df[(all_instruments_df['segment'] == 'NFO-FUT')]
     count = 0
     for stock in shared.app_ctx.stock_token_obj_dict.values():
         if not PRODUCTION and constant.NO_OF_STOCKS != -1 and count >= constant.NO_OF_STOCKS:
@@ -128,13 +129,19 @@ def update_zerodha_option_chain(stockName = None, indexName = None):
         if stockName and stock.stock_symbol != stockName:
             continue
         zerodha_ctx = stock.zerodha_ctx
+        # Fetch options data for the stock
         stock_options = all_options_df[all_options_df['name'] == stock.stock_symbol]
         stock_options = stock_options[['instrument_token', 'tradingsymbol', 'expiry', 'strike', 'instrument_type']]
+        # Fetch futures data for the stock
+        stock_futures = all_futures_df[all_futures_df['name'] == stock.stock_symbol]
+        stock_futures = stock_futures[['instrument_token', 'tradingsymbol', 'expiry', 'instrument_type']]
 
         expiry_dates = sorted(stock_options['expiry'].unique())
         zerodha_ctx["option_chain"]["current"] = stock_options[stock_options['expiry'] == expiry_dates[0]]
+        zerodha_ctx["futures_mdata"]["current"] = stock_futures[stock_futures['expiry'] == expiry_dates[0]]
         if len(expiry_dates) > 1:
             zerodha_ctx["option_chain"]["next"] = stock_options[stock_options['expiry'] == expiry_dates[1]] 
+            zerodha_ctx["futures_mdata"]["next"] = stock_futures[stock_futures['expiry'] == expiry_dates[1]]
         else:
             logger.info(f"stock {stock.stock_symbol} next expiry not available")
             zerodha_ctx["option_chain"]["next"] = pd.DataFrame()
@@ -150,9 +157,13 @@ def update_zerodha_option_chain(stockName = None, indexName = None):
             continue
         
         zerodha_ctx = index.zerodha_ctx
+        # Fetch options data for the index
         index_options = all_options_df[all_options_df['name'] == index.stock_symbol]
         index_options = index_options[['instrument_token', 'tradingsymbol', 'expiry', 'strike', 'instrument_type']]
-        
+        # Fetch futures data for the index
+        index_futures = all_futures_df[all_futures_df['name'] == index.stock_symbol]
+        index_futures = index_futures[['instrument_token', 'tradingsymbol', 'expiry', 'instrument_type']]
+
         expiry_dates = sorted(index_options['expiry'].unique())
 
         if "NIFTY" ==  index.stock_symbol:
@@ -166,8 +177,10 @@ def update_zerodha_option_chain(stockName = None, indexName = None):
             expiry_dates = monthly_expiry_dates
         
         zerodha_ctx["option_chain"]["current"] = index_options[index_options['expiry'] == expiry_dates[0]]
+        zerodha_ctx["futures_mdata"]["current"] = index_futures[index_futures['expiry'] == expiry_dates[0]]
         if len(expiry_dates) > 1:
-            zerodha_ctx["option_chain"]["next"] = index_options[index_options['expiry'] == expiry_dates[1]] 
+            zerodha_ctx["option_chain"]["next"] = index_options[index_options['expiry'] == expiry_dates[1]]
+            zerodha_ctx["futures_mdata"]["next"] = index_futures[index_futures['expiry'] == expiry_dates[1]]
         else:
             logger.info(f"Index {index.stock_symbol} next expiry not available")
             zerodha_ctx["option_chain"]["next"] = pd.DataFrame()
@@ -451,7 +464,7 @@ def report_index_data():
     TELEGRAM_NOTIFICATIONS.send_notification(report)
     logger.info(f"Index Report\n {report}")
 
-def intraday_analysis():
+def intraday_analysis(loop = True, loop_wait_time = 30):
     shared.app_ctx.mode = shared.Mode.INTRADAY
 
     logger.info("Market time open. Starting Intraday analysis")
@@ -483,8 +496,11 @@ def intraday_analysis():
 
             is_in_time_period = isNowInTimePeriod(time(9,15), time(15,30), datetime.now().time())
         else:
-            is_in_time_period = False
-            break
+            if not loop:
+                break
+            logger.info("Sleeping for {} sec in dev mode".format(loop_wait_time))
+            sleep(loop_wait_time)
+            is_in_time_period = True  # In dev mode, keep looping
 
     logger.info("Market time closed")
 
@@ -599,9 +615,9 @@ def init():
     orchestrator.register(TechnicalAnalyser())
     orchestrator.register(CandleStickAnalyser())
     orchestrator.register(IVAnalyser())
+    orchestrator.register(FuturesAnalyser())
     if ENABLE_NSE_DERIVATIVES:
-        shared.app_ctx.stockExpires = NSE_DATA_CLASS.expiry_dates_future()
-        orchestrator.register(FuturesAnalyser())
+        shared.app_ctx.stockExpires = NSE_DATA_CLASS.expiry_dates_future()        
     
     if ENABLE_ZERODHA_API:
         logger.info("Zerodha API enabled")
