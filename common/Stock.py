@@ -91,9 +91,13 @@ class Stock:
         }
         self.zerodha_ctx = {
             "last_notification_time": None,
+
             "option_chain": {"current": None, "next": None},
-            "atm_data": {"current": {}, "next": {}},
             "option_chain_data" : {"current":pd.DataFrame(), "next":pd.DataFrame()},
+            "atm_data": {"current": {}, "next": {}},
+
+            "futures_mdata": {"current": None, "next": None}, # contains the instrument token and expiry for futures
+            "futures_data" : {"current":pd.DataFrame(), "next":pd.DataFrame()} # contains the futures OHLC and OI data for futures
         }
 
         self._zerodha_lock = threading.Lock()
@@ -344,7 +348,7 @@ class Stock:
         atm_data_next = {}
 
         try:
-            if mode == "Positional":
+            if mode == "positional":
                 business_days = pd.bdate_range(end=datetime.datetime.now(), periods=5).to_pydatetime()
                 for date in business_days:
                     dt = pd.Timestamp(date).tz_localize('Asia/Kolkata').replace(hour=5, minute=30, second=0)
@@ -368,8 +372,8 @@ class Stock:
                                 break
                             except Exception as e:
                                 if "Too many requests" in str(e):
-                                    logger.warning("Rate limit hit, sleeping for 2 seconds...")
-                                    time.sleep(2)
+                                    logger.warning("Rate limit hit, sleeping for 1 seconds...")
+                                    time.sleep(1)
                                 else:
                                     logger.error(f"Error fetching historical data for {self.stock_symbol} ATM (current expiry) on {dt}: {e}")
                                     raise
@@ -452,7 +456,7 @@ class Stock:
                 zerodha_ctx["atm_data"]["next"] = atm_data_next
                 return atm_data_current, atm_data_next
 
-            elif mode == "Intraday":
+            elif mode == "intraday":
                 atm_data_current = zerodha_ctx["atm_data"]["current"]
                 atm_data_next = zerodha_ctx["atm_data"]["next"]
 
@@ -572,7 +576,214 @@ class Stock:
         except Exception as e:
             logger.error(f"get_atm_data_for_stock failed for {self.stock_symbol}: {e}")
             raise
-        
+    
+    def get_futures_data_for_stock(self, mode="positional", is_next_expiry_required=False):
+        """
+        Fetch futures OHLC and OI data for current and next expiry.
+        For positional: gets daily data for the last 5 business days.
+        For intraday: appends new 5min data for today.
+        Updates zerodha_ctx["futures_data"]["current"] and zerodha_ctx["futures_data"]["next"].
+        """
+        zerodha_ctx = self.zerodha_ctx
+        kite_connect = shared.app_ctx.zd_kc
+        futures_mdata_current = zerodha_ctx["futures_mdata"]["current"]
+        futures_mdata_next = zerodha_ctx["futures_mdata"]["next"]
+
+        try:
+            if mode == "positional":
+                interval = "day"
+                end_date = datetime.datetime.now()
+                business_days = pd.bdate_range(end=end_date, periods=5).to_pydatetime()
+                start_date = business_days[0]
+                # Fetch all data in one call
+                def fetch_futures(token, start_date, end_date, interval):
+                    for attempt in range(3):
+                        try:
+                            hist_data = kite_connect.historical_data(
+                                instrument_token=token,
+                                from_date=start_date.strftime("%Y-%m-%d"),
+                                to_date=end_date.strftime("%Y-%m-%d"),
+                                interval=interval,
+                                oi=True
+                            )
+                            return hist_data
+                        except Exception as e:
+                            if "Too many requests" in str(e):
+                                logger.warning(f"Rate limit hit for {self.stock_symbol} sleeping for 1 seconds...")
+                                time.sleep(1)
+                            else:
+                                logger.error(f"Error fetching futures data for token {token}: {e}")
+                                raise
+                    logger.error(f"Failed to fetch futures data for token {token} after 3 attempts")
+                    raise Exception(f"Too many requests for futures token {token}")
+
+                # Current expiry
+                futures_data_current = pd.DataFrame()
+                if futures_mdata_current is not None:
+                    token = futures_mdata_current['instrument_token'].values[0]
+                    hist_data = fetch_futures(token, start_date, end_date, interval)
+                    if hist_data:
+                        rows = []
+                        for candle in hist_data:
+                            dt = pd.Timestamp(candle['date']).tz_convert('Asia/Kolkata').replace(hour=5, minute=30, second=0)
+                            row = {
+                                "date": dt,
+                                "open": candle['open'],
+                                "high": candle['high'],
+                                "low": candle['low'],
+                                "close": candle['close'],
+                                "volume": candle['volume'],
+                                "oi": candle.get('oi', None),
+                                "underlying_price": candle['close']
+                            }
+                            rows.append(row)
+                        futures_data_current = pd.DataFrame(rows).set_index("date")
+                        logger.info(f"Futures data for {self.stock_symbol} (current expiry) fetched for {len(futures_data_current)} rows.")
+
+                # Next expiry
+                futures_data_next = pd.DataFrame()
+                if is_next_expiry_required and futures_mdata_next is not None:
+                    token_next = futures_mdata_next['instrument_token'].values[0]
+                    hist_data_next = fetch_futures(token_next, start_date, end_date, interval)
+                    if hist_data_next:
+                        rows_next = []
+                        for candle in hist_data_next:
+                            dt = pd.Timestamp(candle['date']).tz_convert('Asia/Kolkata').replace(hour=5, minute=30, second=0)
+                            row_next = {
+                                "date": dt,
+                                "open": candle['open'],
+                                "high": candle['high'],
+                                "low": candle['low'],
+                                "close": candle['close'],
+                                "volume": candle['volume'],
+                                "oi": candle.get('oi', None),
+                                "underlying_price": candle['close']
+                            }
+                            rows_next.append(row_next)
+                        futures_data_next = pd.DataFrame(rows_next).set_index("date")
+                        logger.info(f"Futures data for {self.stock_symbol} (next expiry) fetched for {len(futures_data_next)} rows.")
+
+                zerodha_ctx["futures_data"]["current"] = futures_data_current
+                zerodha_ctx["futures_data"]["next"] = futures_data_next
+                return futures_data_current, futures_data_next
+
+            elif mode == "intraday":
+                interval = "5minute"
+                today = datetime.datetime.now()
+                start_date = today
+                end_date = today
+                today_str = datetime.datetime.now().strftime("%Y-%m-%d")
+                intraday_dates = [dt for dt in self.priceData.index if dt.strftime("%Y-%m-%d") == today_str]
+                if len(intraday_dates) < 2:
+                    logger.info(f"Not enough intraday data for {self.stock_symbol}")
+                    raise Exception(f"Not enough intraday data for {self.stock_symbol}")
+
+                dt = intraday_dates[-2]
+                underlying_price = self.priceData.loc[dt, "Close"]
+                # Current expiry
+                futures_data_current = zerodha_ctx["futures_data"]["current"]
+                if futures_mdata_current is not None and not futures_mdata_current.empty:
+                    token = futures_mdata_current['instrument_token'].values[0]
+                    for attempt in range(3):
+                        try:
+                            hist_data = kite_connect.historical_data(
+                                instrument_token=token,
+                                from_date=dt.strftime("%Y-%m-%d"),
+                                to_date=dt.strftime("%Y-%m-%d"),
+                                interval=interval,
+                                oi=True
+                            )
+                            break
+                        except Exception as e:
+                            if "Too many requests" in str(e):
+                                logger.warning(f"Rate limit hit for {self.stock_symbol}, sleeping for 1 seconds...")
+                                time.sleep(1)
+                            else:
+                                logger.error(f"Error fetching intraday futures data for token {token} at {dt}: {e}")
+                                raise
+                    else:
+                        logger.error(f"Failed to fetch intraday futures data for token {token} at {dt} after 3 attempts")
+                        raise Exception(f"Too many requests for futures token {token} at {dt}")
+                    if hist_data:
+                        candle = next((c for c in hist_data if pd.Timestamp(c['date']).tz_convert('Asia/Kolkata') == dt), None)
+                        if candle:
+                            row = {
+                                "date": dt,
+                                "open": candle['open'],
+                                "high": candle['high'],
+                                "low": candle['low'],
+                                "close": candle['close'],
+                                "volume": candle['volume'],
+                                "oi": candle.get('oi', None),
+                                "underlying_price": underlying_price
+                            }
+                            # Append new row
+                            if not futures_data_current.empty:
+                                futures_data_current = pd.concat([futures_data_current, pd.DataFrame([row])], ignore_index=True)
+                            else:
+                                futures_data_current = pd.DataFrame([row])
+                            futures_data_current.set_index("date", inplace=True)
+                            logger.info(f"Futures data for {self.stock_symbol} (current expiry) at {dt}: {row}")
+
+                # Next expiry
+                futures_data_next = zerodha_ctx["futures_data"]["next"]
+                if is_next_expiry_required and futures_mdata_next is not None:
+                    token_next = futures_mdata_next['instrument_token'].values[0]
+                    for dt in intraday_dates:
+                        if dt in futures_data_next.index if not futures_data_next.empty else []:
+                            continue  # Skip if already present
+                        for attempt in range(3):
+                            try:
+                                hist_data_next = kite_connect.historical_data(
+                                    instrument_token=token_next,
+                                    from_date=dt.strftime("%Y-%m-%d %H:%M:%S"),
+                                    to_date=dt.strftime("%Y-%m-%d %H:%M:%S"),
+                                    interval=interval,
+                                    oi=True
+                                )
+                                break
+                            except Exception as e:
+                                if "Too many requests" in str(e):
+                                    logger.warning(f"Rate limit hit {self.stock_symbol} , sleeping for 1 seconds...")
+                                    time.sleep(1)
+                                else:
+                                    logger.error(f"Error fetching intraday futures data for token {token_next} at {dt}: {e}")
+                                    raise
+                        else:
+                            logger.error(f"Failed to fetch intraday futures data for token {token_next} at {dt} after 3 attempts")
+                            raise Exception(f"Too many requests for futures token {token_next} at {dt}")
+                        if hist_data_next:
+                            candle_next = next((c for c in hist_data_next if pd.Timestamp(c['date']).tz_convert('Asia/Kolkata') == dt), None)
+                            if candle_next:
+                                row_next = {
+                                    "date": dt,
+                                    "open": candle_next['open'],
+                                    "high": candle_next['high'],
+                                    "low": candle_next['low'],
+                                    "close": candle_next['close'],
+                                    "volume": candle_next['volume'],
+                                    "oi": candle_next.get('oi', None),
+                                    "underlying_price": candle_next['close']
+                                }
+                                # Append new row
+                                if not futures_data_next.empty:
+                                    futures_data_next = pd.concat([futures_data_next, pd.DataFrame([row_next])], ignore_index=True)
+                                else:
+                                    futures_data_next = pd.DataFrame([row_next])
+                                futures_data_next.set_index("date", inplace=True)
+                                logger.info(f"Futures data for {self.stock_symbol} (next expiry) at {dt}: {row_next}")
+
+                zerodha_ctx["futures_data"]["current"] = futures_data_current
+                zerodha_ctx["futures_data"]["next"] = futures_data_next
+                
+                return futures_data_current, futures_data_next
+
+            else:
+                raise ValueError("mode must be 'positional' or 'intraday'")
+
+        except Exception as e:
+            logger.error(f"get_complete_futures_data failed for {self.stock_symbol}: {e}")
+            raise
 
     @property
     def zerodha_data(self):
