@@ -833,6 +833,10 @@ class Stock:
                 if not isinstance(existing, list):
                     self.analysis[trend][analysis_type] = [existing]
                 self.analysis[trend][analysis_type].append(data)
+            if analysis_type == "52-week-high":
+                shared.ticker_52_week_high_list.append(self)
+            elif analysis_type == "52-week-low":
+                shared.ticker_52_week_low_list.append(self)
             
     
     def reset_analysis(self):
