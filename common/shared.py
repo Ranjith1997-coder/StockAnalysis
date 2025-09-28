@@ -16,3 +16,5 @@ class AppContext:
         self.zd_kc = None
 
 app_ctx = AppContext()
+ticker_52_week_high_list = []
+ticker_52_week_low_list = []

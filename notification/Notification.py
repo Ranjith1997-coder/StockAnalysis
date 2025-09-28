@@ -33,9 +33,19 @@ class TELEGRAM_NOTIFICATIONS:
             return
         msg = {"chat_id": TELEGRAM_CHAT_ID, "text": message}
         # Sent a posts request
-        resp = requests.post(TELEGRAM_URL + TELEGRAM_TOKEN+ "/sendMessage",
-                            data=json.dumps(msg),
-                            headers={'Content-Type': 'application/json'})
+        # resp = requests.post(TELEGRAM_URL + TELEGRAM_TOKEN+ "/sendMessage",
+        #                     data=json.dumps(msg),
+        #                     headers={'Content-Type': 'application/json'})
+        try:
+            resp = requests.post(
+                TELEGRAM_URL + TELEGRAM_TOKEN + "/sendMessage",
+                json=msg,
+                timeout=5
+            )
+        except requests.Timeout:
+            logger.error("Telegram send timeout")
+        except Exception as e:
+            logger.error(f"Telegram send failed: {e}")
         logger.debug(f" Message: {message}")
         if resp.status_code != 200:  # Check if fort message send with the help of status code
             raise Exception('Error: unable to send message', resp.status_code)
