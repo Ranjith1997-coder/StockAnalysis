@@ -149,7 +149,7 @@ class AnalyserOrchestrator:
                     elif analysis_type == "Triple_candle_stick_pattern":
                         message_parts.append(f" Triple Candle stick Pattern: {data}")
                     elif analysis_type == 'FUTURE_ACTION':
-                        message_parts.append(f" Futures action: {data.action}, p% = {data.price_percentage:.2f}, oi% = {data.oi_percentage:.2f}")
+                        message_parts.append(f" Futures action: {data.action}, p%:{data.price_percentage:.2f}, oi%:{data.oi_percentage:.2f}")
                     elif analysis_type == 'vwap_deviation':
                         message_parts.append(f" VWAP: Close({data.close:.2f}) {'<' if trend == 'BULLISH' else '>'} VWAP({data.vwap:.2f}) DEVIATION: {data.deviation:.2f}%")
                         message_parts.append(f"   Intervals {'below' if trend == 'BULLISH' else 'above'} VWAP: {data.vwap_days}")
@@ -157,7 +157,10 @@ class AnalyserOrchestrator:
                         message_parts.append(f" MACD : {data}")
                     elif analysis_type == 'BUY_SELL':
                         message_parts.append(f" BUY_SELL : buy_quantity: {data.buy_quantity:.2f} {'>' if trend == 'BULLISH' else '<'} sell_quantity: {data.sell_quantity:.2f} ")
-
+                    elif analysis_type == 'FUTURE_BREAKOUT_PATTERN':
+                        message_parts.append(f" FUTURE_BREAKOUT_PATTERN : {data.pattern}")
+                    elif analysis_type == 'EMA_CROSSOVER':
+                        message_parts.append(f" EMA_CROSSOVER :{data.direction}, fast_ema: {data.fast_ema:.2f} {'>' if trend == 'BULLISH' else '<'} slow_ema: {data.slow_ema:.2f} ")
 
         if stock.analysis['NEUTRAL']:
             message_parts.append("NEUTRAL:")
@@ -180,6 +183,12 @@ class AnalyserOrchestrator:
                             message_parts.append(f" IV_TREND : {iv_trend.expiry} {iv_trend.trend} {iv_trend.iv_change_pct:.2f}%")
                     else:
                         message_parts.append(f" IV_TREND : {data.expiry} {data.trend} {data.iv_change_pct:.2f}%")
+                elif analysis_type == 'FUTURE_PVO_PATTERN':
+                    if isinstance(data, list):
+                        for fut_data in data:
+                            message_parts.append(f" FuturesPVOPattern : {fut_data.pattern} p:{fut_data.price_pct:.2f}%, v:{fut_data.vol_pct:.2f}%, oi:{fut_data.oi_pct:.2f}%")
+                    else:
+                        message_parts.append(f" FuturesPVOPattern : {data.pattern} p:{data.price_pct:.2f}%, v:{data.vol_pct:.2f}%, oi:{data.oi_pct:.2f}%")
 
         return "\n".join(message_parts)
 

@@ -25,6 +25,7 @@ from dotenv import load_dotenv
 from notification.bot_listener import init_telegram_bot
 import threading
 from zerodha.zerodha_connect import KiteConnect
+from post_market_analysis.runner import run_and_summarize
 
 class Trend (Enum):
     BULLISH = "BULLISH"
@@ -40,6 +41,7 @@ ENABLE_NSE_DERIVATIVES = False
 ENABLE_ZERODHA_DERIVATIVES = False
 ENABLE_ZERODHA_API = False
 ENABLE_TELEGRAM_BOT = False
+ENABLE_POST_MARKET = False
 
 class MonitorResult(Enum):
     SUCCESS = 0
@@ -464,6 +466,106 @@ def report_index_data():
     TELEGRAM_NOTIFICATIONS.send_notification(report)
     logger.info(f"Index Report\n {report}")
 
+def report_52_week_high_low(max_items: int = 40, clear_after: bool = False):
+    """
+    Report 52-week High / Low stocks.
+    shared.ticker_52_week_high_list / low_list contain Stock objects.
+    Uses stock.ltp and stock.ltp_change_perc directly (fallbacks if missing).
+    """
+    high_objs = shared.ticker_52_week_high_list
+    low_objs  = shared.ticker_52_week_low_list
+
+    if not high_objs and not low_objs:
+        TELEGRAM_NOTIFICATIONS.send_notification("52W High/Low: None today.")
+        logger.info("52W High/Low: None today.")
+        return
+
+    def dedup(objs):
+        seen = set()
+        out = []
+        for o in objs:
+            if not o:
+                continue
+            sym = o.stock_symbol
+            if sym not in seen:
+                seen.add(sym)
+                out.append(o)
+        return out
+
+    high_objs = dedup(high_objs)
+    low_objs  = dedup(low_objs)
+
+    def price_and_change(stk: 'Stock'):
+        price = None
+        chg = None
+        try:
+            price = float(stk.ltp) if stk.ltp is not None else None
+        except Exception:
+            price = None
+        try:
+            chg = float(stk.ltp_change_perc) if stk.ltp_change_perc is not None else None
+        except Exception:
+            chg = None
+
+        # Fallbacks if missing
+        if price is None and not stk.is_price_data_empty():
+            try:
+                price = float(stk.priceData['Close'].iloc[-1])
+            except Exception:
+                pass
+        if chg is None and price is not None and stk.prevDayOHLCV and stk.prevDayOHLCV.get("CLOSE"):
+            try:
+                prev_close = float(stk.prevDayOHLCV["CLOSE"])
+                if prev_close:
+                    chg = percentageChange(price, prev_close)
+            except Exception:
+                pass
+        return price, chg
+
+    def build_section(title, stocks, sort_desc=True):
+        if not stocks:
+            return f"{title} (0): None"
+        rows = []
+        for s in stocks:
+            p, c = price_and_change(s)
+            rows.append({"symbol": s.stock_symbol, "price": p, "chg": c})
+        # Filter rows with price
+        rows = [r for r in rows if r["price"] is not None]
+        # Sort highs by % change desc, lows asc
+        rows.sort(key=lambda r: (r["chg"] if r["chg"] is not None else (-1e9 if sort_desc else 1e9)),
+                  reverse=sort_desc)
+
+        display = rows[:max_items]
+        extra = len(rows) - len(display)
+
+        sym_w = max(6, *(len(r["symbol"]) for r in display)) if display else 6
+        header = f"{title} ({len(rows)})"
+        lines = [
+            header,
+            f"{'Symbol'.ljust(sym_w)}  {'Price':>9}  {'%Chg':>7}",
+            f"{'-'*sym_w}  {'-'*9}  {'-'*7}"
+        ]
+        for r in display:
+            price_str = f"{r['price']:.2f}" if r['price'] is not None else "NA"
+            chg_str = f"{r['chg']:+.2f}%" if r['chg'] is not None else "NA"
+            lines.append(f"{r['symbol'].ljust(sym_w)}  {price_str:>9}  {chg_str:>7}")
+        if extra > 0:
+            lines.append(f"... (+{extra} more)")
+        return "\n".join(lines)
+
+    msg = (
+        "*********** 52-Week High / Low ***********\n"
+        + build_section("52W Highs", high_objs, sort_desc=True) + "\n\n"
+        + build_section("52W Lows", low_objs, sort_desc=False)
+    )
+
+    TELEGRAM_NOTIFICATIONS.send_notification(msg)
+    logger.info(msg)
+
+    if clear_after:
+        shared.ticker_52_week_high_list.clear()
+        shared.ticker_52_week_low_list.clear()
+
 def intraday_analysis(loop = True, loop_wait_time = 30):
     shared.app_ctx.mode = shared.Mode.INTRADAY
 
@@ -529,6 +631,16 @@ def positional_analysis():
 
     report_top_gainers_and_losers()
     report_index_data()
+    report_52_week_high_low()
+
+    # Post-market flows
+    if ENABLE_POST_MARKET:
+        try:
+            post_market_msg = run_and_summarize()
+            TELEGRAM_NOTIFICATIONS.send_notification(post_market_msg)
+            logger.info(post_market_msg)
+        except Exception as e:
+            logger.error(f"Post-market pipeline failed: {e}")
 
     for stock in shared.app_ctx.stock_token_obj_dict:
         shared.app_ctx.stock_token_obj_dict[stock].reset_price_data()
@@ -545,6 +657,7 @@ def init():
     global ENABLE_ZERODHA_DERIVATIVES
     global ENABLE_ZERODHA_API
     global ENABLE_TELEGRAM_BOT
+    global ENABLE_POST_MARKET
     
 
     if os.getenv(constant.ENV_PRODUCTION, "0") == "1":
@@ -589,6 +702,12 @@ def init():
     else:
         logger.info(" Telegram Bot disabled")
         ENABLE_TELEGRAM_BOT = False
+    
+    if os.getenv(constant.ENV_ENABLE_POST_MARKET, "0") == "1":
+        ENABLE_POST_MARKET = True
+    else:
+        logger.info(" Post market analysis disabled")
+        ENABLE_POST_MARKET = False
     
     if PRODUCTION:
         if datetime.now().time() < time(9,15) or isNowInTimePeriod(time(9,15), time(15,30), datetime.now().time()):
