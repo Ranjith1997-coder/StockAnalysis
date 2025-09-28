@@ -26,6 +26,9 @@ class TechnicalAnalyser(BaseAnalyzer):
     ATR_TREND_PERIODS = 3  # Number of periods to confirm trend
 
     BUY_SELL_QUANTITY = 2
+
+    EMA_DIFF_THRESHOLD = 0      # minimum % separation after crossover
+    EMA_MIN_SLOPE = 0    
     
     
     def __init__(self) -> None:
@@ -33,15 +36,17 @@ class TechnicalAnalyser(BaseAnalyzer):
         super().__init__()
     
     def reset_constants(self):
-        # if constant.mode.name == constant.Mode.INTRADAY.name:
-        #     #add something later on this
-        # else:
-        #      #add something later on this
+        if shared.app_ctx.mode.name == shared.Mode.INTRADAY.name:
+            TechnicalAnalyser.FAST_EMA_PERIOD = 9
+            TechnicalAnalyser.SLOW_EMA_PERIOD = 21
+        else:
+            TechnicalAnalyser.FAST_EMA_PERIOD = 50
+            TechnicalAnalyser.SLOW_EMA_PERIOD = 200
         logger.debug(f"Technical Analyser constants reset for mode {shared.app_ctx.mode.name}")
         logger.debug(f"RSI_UPPER_THRESHOLD = {TechnicalAnalyser.RSI_UPPER_THRESHOLD} , RSI_LOWER_THRESHOLD = {TechnicalAnalyser.RSI_LOWER_THRESHOLD}, ATR_THRESHOLD = {TechnicalAnalyser.ATR_THRESHOLD}")
 
     
-    @BaseAnalyzer.both
+    #@BaseAnalyzer.both
     @BaseAnalyzer.index_both
     def analyse_rsi(self, stock: Stock):
         try : 
@@ -113,7 +118,7 @@ class TechnicalAnalyser(BaseAnalyzer):
             logger.error(f"Traceback: {traceback.format_exc()}")
             return False
     
-    @BaseAnalyzer.both
+    #@BaseAnalyzer.both
     @BaseAnalyzer.index_both
     def analyse_Bolinger_band(self, stock: Stock):
         try : 
@@ -226,7 +231,7 @@ class TechnicalAnalyser(BaseAnalyzer):
             logger.error(f"Traceback: {traceback.format_exc()}")
             return False
     
-    @BaseAnalyzer.both
+    #@BaseAnalyzer.both
     @BaseAnalyzer.index_both
     def analyze_macd(self, stock: Stock):
         def calculate_latest_macd(data, fast_period=12, slow_period=26, signal_period=9):
@@ -308,7 +313,7 @@ class TechnicalAnalyser(BaseAnalyzer):
     
    
 
-    @BaseAnalyzer.both
+    #@BaseAnalyzer.both
     @BaseAnalyzer.index_both
     def analyse_atr(self, stock: Stock):
         try:
@@ -396,5 +401,99 @@ class TechnicalAnalyser(BaseAnalyzer):
             return False
         except Exception as e:
             logger.error(f"Error in analyze_buy_sell_quantity tick for stock {stock.stock_symbol}: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            return False
+    
+    @BaseAnalyzer.both
+    @BaseAnalyzer.index_both
+    def analyse_ema_crossover(self, stock: Stock):
+        """
+        EMA crossover (works in intraday & positional):
+          Bullish: FAST crosses above SLOW with positive slope + % diff threshold.
+          Bearish: FAST crosses below SLOW with negative slope + % diff threshold.
+        Stores result under key: EMA_CROSSOVER
+        """
+        try:
+            logger.debug(f'Inside analyse_ema_crossover for stock {stock.stock_symbol}')
+            close = stock.priceData['Close']
+            if len(close) < max(TechnicalAnalyser.FAST_EMA_PERIOD, TechnicalAnalyser.SLOW_EMA_PERIOD) + 3:
+                return False
+            import pdb;pdb.set_trace()
+
+            def tv_ema(series: pd.Series, length: int) -> pd.Series:
+                if len(series) < length:
+                    return series * float('nan')
+                sma = series.iloc[:length].mean()
+                alpha = 2 / (length + 1)
+                out = [None] * (length - 1)
+                prev = sma
+                out.append(sma)
+                for price in series.iloc[length:]:
+                    prev = (price - prev) * alpha + prev
+                    out.append(prev)
+                return pd.Series(out, index=series.index)
+
+            fast_ema = tv_ema(close, TechnicalAnalyser.FAST_EMA_PERIOD)
+            slow_ema = tv_ema(close, TechnicalAnalyser.SLOW_EMA_PERIOD)
+            # fast_ema = close.ewm(span=TechnicalAnalyser.FAST_EMA_PERIOD, adjust=False).mean()
+            # slow_ema = close.ewm(span=TechnicalAnalyser.SLOW_EMA_PERIOD, adjust=False).mean()
+
+            fast_now = fast_ema.iloc[-1]
+            slow_now = slow_ema.iloc[-1]
+            fast_prev = fast_ema.iloc[-2]
+            slow_prev = slow_ema.iloc[-2]
+            fast_prev2 = fast_ema.iloc[-3]
+            slow_prev2 = slow_ema.iloc[-3]
+
+            if any(pd.isna(x) for x in [fast_now, slow_now, fast_prev, slow_prev]):
+                return False
+
+            diff_pct = ((fast_now - slow_now) / slow_now) * 100 if slow_now else 0
+            fast_slope = fast_now - fast_prev
+            slow_slope = slow_now - slow_prev
+            fast_slope_prev = fast_prev - fast_prev2
+            slow_slope_prev = slow_prev - slow_prev2
+
+            EMACross = namedtuple("EMACross", [
+                "fast_ema", "slow_ema", "diff_pct",
+                "fast_slope", "slow_slope",
+                "fast_slope_prev", "slow_slope_prev",
+                "direction"
+            ])
+
+            signal = None
+            # Bullish
+            if (fast_prev <= slow_prev and fast_now > slow_now and
+                diff_pct > self.EMA_DIFF_THRESHOLD and
+                fast_slope > self.EMA_MIN_SLOPE and slow_slope >= 0):
+                signal = ("BULLISH", "bullish_crossover")
+            # Bearish
+            elif (fast_prev >= slow_prev and fast_now < slow_now and
+                  diff_pct < -self.EMA_DIFF_THRESHOLD and
+                  fast_slope < -self.EMA_MIN_SLOPE and slow_slope <= 0):
+                signal = ("BEARISH", "bearish_crossover")
+
+            if not signal:
+                return False
+
+            sentiment, direction = signal
+            stock.set_analysis(
+                sentiment,
+                "EMA_CROSSOVER",
+                EMACross(
+                    fast_ema=fast_now,
+                    slow_ema=slow_now,
+                    diff_pct=diff_pct,
+                    fast_slope=fast_slope,
+                    slow_slope=slow_slope,
+                    fast_slope_prev=fast_slope_prev,
+                    slow_slope_prev=slow_slope_prev,
+                    direction=direction
+                )
+            )
+            return True
+
+        except Exception as e:
+            logger.error(f"Error in analyse_ema_crossover for stock {stock.stock_symbol}: {e}")
             logger.error(f"Traceback: {traceback.format_exc()}")
             return False
