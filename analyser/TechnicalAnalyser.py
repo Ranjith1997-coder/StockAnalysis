@@ -46,7 +46,7 @@ class TechnicalAnalyser(BaseAnalyzer):
         logger.debug(f"RSI_UPPER_THRESHOLD = {TechnicalAnalyser.RSI_UPPER_THRESHOLD} , RSI_LOWER_THRESHOLD = {TechnicalAnalyser.RSI_LOWER_THRESHOLD}, ATR_THRESHOLD = {TechnicalAnalyser.ATR_THRESHOLD}")
 
     
-    #@BaseAnalyzer.both
+    @BaseAnalyzer.both
     @BaseAnalyzer.index_both
     def analyse_rsi(self, stock: Stock):
         try : 
@@ -118,7 +118,7 @@ class TechnicalAnalyser(BaseAnalyzer):
             logger.error(f"Traceback: {traceback.format_exc()}")
             return False
     
-    #@BaseAnalyzer.both
+    @BaseAnalyzer.both
     @BaseAnalyzer.index_both
     def analyse_Bolinger_band(self, stock: Stock):
         try : 
@@ -231,7 +231,7 @@ class TechnicalAnalyser(BaseAnalyzer):
             logger.error(f"Traceback: {traceback.format_exc()}")
             return False
     
-    #@BaseAnalyzer.both
+    @BaseAnalyzer.both
     @BaseAnalyzer.index_both
     def analyze_macd(self, stock: Stock):
         def calculate_latest_macd(data, fast_period=12, slow_period=26, signal_period=9):
@@ -313,7 +313,7 @@ class TechnicalAnalyser(BaseAnalyzer):
     
    
 
-    #@BaseAnalyzer.both
+    @BaseAnalyzer.both
     @BaseAnalyzer.index_both
     def analyse_atr(self, stock: Stock):
         try:
