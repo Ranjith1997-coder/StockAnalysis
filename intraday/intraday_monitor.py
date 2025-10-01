@@ -636,9 +636,11 @@ def positional_analysis():
     # Post-market flows
     if ENABLE_POST_MARKET:
         try:
-            post_market_msg = run_and_summarize()
-            TELEGRAM_NOTIFICATIONS.send_notification(post_market_msg)
-            logger.info(post_market_msg)
+            post_market_msg_list = run_and_summarize()
+            if post_market_msg_list:
+                for msg in post_market_msg_list:
+                    TELEGRAM_NOTIFICATIONS.send_notification(msg)
+                    logger.info(msg)
         except Exception as e:
             logger.error(f"Post-market pipeline failed: {e}")
 

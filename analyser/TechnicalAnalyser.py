@@ -418,7 +418,6 @@ class TechnicalAnalyser(BaseAnalyzer):
             close = stock.priceData['Close']
             if len(close) < max(TechnicalAnalyser.FAST_EMA_PERIOD, TechnicalAnalyser.SLOW_EMA_PERIOD) + 3:
                 return False
-            import pdb;pdb.set_trace()
 
             def tv_ema(series: pd.Series, length: int) -> pd.Series:
                 if len(series) < length:

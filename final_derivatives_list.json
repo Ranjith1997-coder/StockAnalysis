@@ -434,6 +434,11 @@
                 "instrument_token": 364545
             },
             {
+                "name": "Hitachi Energy India Limited",
+                "tradingsymbol": "POWERINDIA",
+                "instrument_token": 4724993
+            },
+            {
                 "name": "Housing & Urban Development Corporation Limited",
                 "tradingsymbol": "HUDCO",
                 "instrument_token": 5331201
@@ -534,6 +539,11 @@
                 "instrument_token": 2865921
             },
             {
+                "name": "JINDAL STEEL LIMITED",
+                "tradingsymbol": "JINDALSTEL",
+                "instrument_token": 1723649
+            },
+            {
                 "name": "JSW Energy Limited",
                 "tradingsymbol": "JSWENERGY",
                 "instrument_token": 4574465
@@ -542,11 +552,6 @@
                 "name": "JSW Steel Limited",
                 "tradingsymbol": "JSWSTEEL",
                 "instrument_token": 3001089
-            },
-            {
-                "name": "Jindal Steel & Power Limited",
-                "tradingsymbol": "JINDALSTEL",
-                "instrument_token": 1723649
             },
             {
                 "name": "Jio Financial Services Limited",
@@ -937,11 +942,6 @@
                 "name": "TVS Motor Company Limited",
                 "tradingsymbol": "TVSMOTOR",
                 "instrument_token": 2170625
-            },
-            {
-                "name": "Tata Chemicals Limited",
-                "tradingsymbol": "TATACHEM",
-                "instrument_token": 871681
             },
             {
                 "name": "Tata Consultancy Services Limited",

@@ -127,9 +127,8 @@ class PostMarketSummaryBuilder:
             SectorSummaryFormatter.source_name: SectorSummaryFormatter(),
         }
 
-    def build(self, outputs: list) -> str:
+    def build(self, outputs: list) -> list| None:
         parts = []
-        import pdb;pdb.set_trace()
         for o in outputs:
             src = o.get("source")
             analysis = o.get("analysis")
@@ -137,4 +136,4 @@ class PostMarketSummaryBuilder:
             if not formatter:
                 continue
             parts.append(formatter.format(analysis))
-        return "\n\n".join(parts) if parts else "No post market data"
+        return parts if parts else None
