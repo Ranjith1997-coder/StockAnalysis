@@ -124,8 +124,8 @@ class FuturesAnalyser(BaseAnalyzer):
 
             PRICE_THRESH = FuturesAnalyser.FUTURE_PRICE_CHANGE_PERCENTAGE 
             INCR_THRESH  = FuturesAnalyser.FUTURE_OI_INCREASE_PERCENTAGE 
-            FLAT_PRICE_THRESH = max(PRICE_THRESH * 0.4, 0.15)          # tighter band for “flat price”
-            FLAT_VOL_OI_THRESH = max(INCR_THRESH * 0.4, 0.2)          # flat def for vol & oi
+            FLAT_PRICE_THRESH = max(PRICE_THRESH * 0.3, 0.15)          # tighter band for “flat price”
+            FLAT_VOL_OI_THRESH = max(INCR_THRESH * 0.3, 0.2)          # flat def for vol & oi
 
             price_up   = price_pct > PRICE_THRESH
             price_down = price_pct < -PRICE_THRESH
