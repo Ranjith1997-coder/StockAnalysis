@@ -42,6 +42,7 @@ class FiiDiiSummaryFormatter(BaseSummaryFormatter):
         last5 = analysis.get("last5") or []
         if not last5:
             return header_latest
+        last5 = list(reversed(last5)) 
 
         # compute widths
         widths = {}
@@ -116,6 +117,34 @@ class SectorSummaryFormatter(BaseSummaryFormatter):
             block = block[:3900] + "\n(truncated)"
         return block
 
+class FoParticipantOISummaryFormatter(BaseSummaryFormatter):
+    source_name = "fo_participant_oi"
+
+    def format(self, analysis: dict) -> str:
+        if not analysis or not analysis.get("last5"):
+            return "No F&O Participant OI data"
+        rows = analysis["last5"]
+        participants = ["Client", "DII", "FII", "Pro"]
+        # Header
+        lines = ["Futures Participant OI Contracts (last 5 days)"]
+        header = "Date       " + "  ".join(f"{p:>8}" for p in participants)
+        lines.append(header)
+        lines.append("-" * len(header))
+        for day in rows:
+            date = day["date"]
+            nets = []
+            for p in participants:
+                v = day.get(p, {}).get("Net")
+                nets.append(f"{v:+,}" if v is not None else "NA")
+            lines.append(f"{date}  " + "  ".join(f"{n:>8}" for n in nets))
+        # Details for latest day
+        latest = rows[0]
+        lines.append("\nLatest breakdown:")
+        for p in participants:
+            d = latest.get(p, {})
+            lines.append(f"{p:>7}: Net {d.get('Net','NA'):>8} | Long {d.get('Long','NA'):>8} | Short {d.get('Short','NA'):>8}")
+        return "\n".join(lines)
+
 class PostMarketSummaryBuilder:
     """
     Collects per-source formatters and builds a combined summary.
@@ -125,6 +154,7 @@ class PostMarketSummaryBuilder:
         self.formatter_map = {
             FiiDiiSummaryFormatter.source_name: FiiDiiSummaryFormatter(),
             SectorSummaryFormatter.source_name: SectorSummaryFormatter(),
+            FoParticipantOISummaryFormatter.source_name:  FoParticipantOISummaryFormatter()
         }
 
     def build(self, outputs: list) -> list| None:
