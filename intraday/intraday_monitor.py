@@ -26,6 +26,7 @@ from notification.bot_listener import init_telegram_bot
 import threading
 from zerodha.zerodha_connect import KiteConnect
 from post_market_analysis.runner import run_and_summarize
+from urllib.parse import quote
 
 class Trend (Enum):
     BULLISH = "BULLISH"
@@ -744,9 +745,12 @@ def init():
         logger.info("Zerodha API enabled")
         userName = os.getenv(constant.ENV_ZERODHA_USERNAME)
         password = os.getenv(constant.ENV_ZERODHA_PASSWORD)
-        encToken = os.getenv(constant.ENV_ZERODHA_ENC_TOKEN)
-        shared.app_ctx.zd_ticker_manager = ZerodhaTickerManager(userName, password, encToken)
-        shared.app_ctx.zd_kc = KiteConnect(constant.DUMMY_API_KEY_ZERODHA, root="https://kite.zerodha.com/", enctoken=encToken)
+        encToken_raw = os.getenv(constant.ENV_ZERODHA_ENC_TOKEN)
+
+        # URL-encode the encToken for ZerodhaTickerManager
+        encToken_for_manager = quote(encToken_raw or "", safe="")
+        shared.app_ctx.zd_ticker_manager = ZerodhaTickerManager(userName, password, encToken_for_manager)
+        shared.app_ctx.zd_kc = KiteConnect(constant.DUMMY_API_KEY_ZERODHA, root="https://kite.zerodha.com/", enctoken=encToken_raw)
 
 
 def parse_arguments():

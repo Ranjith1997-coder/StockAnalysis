@@ -139,10 +139,35 @@ class PostMarketAnalyzer:
 
         logger.info("Sector performance summary: %s", result)
         return result
+    
+    def analyse_fo_participant_oi(self, df):
+        """
+        Expects DataFrame with columns: Date, FoParticipantTypeName, Net, Long, Short
+        Returns: dict with last 5 days, each day a dict of participant rows
+        """
+        if df is None or df.empty:
+            return {}
+
+        days = sorted(df["Date"].unique(), reverse=True)[:5]
+        out = []
+        for d in days:
+            day_df = df[df["Date"] == d]
+            day = {"date": str(d)}
+            for _, row in day_df.iterrows():
+                name = row["FoParticipantTypeName"]
+                day[name] = {
+                    "Net": int(row["Net"]),
+                    "Long": int(row["Long"]),
+                    "Short": int(row["Short"])
+                }
+            out.append(day)
+        return {"last5": out}
 
     def dispatch(self, source_name: str, df: pd.DataFrame):
         if source_name == "fii_dii_activity":
             return self.analyse_fii_dii_activity(df)
         if source_name == "sector_performance":
             return self.analyse_sector_performance(df)
+        if source_name == "fo_participant_oi":
+            return self.analyse_fo_participant_oi(df)
         return {}
