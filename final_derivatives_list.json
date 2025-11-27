@@ -32,7 +32,7 @@
                 "instrument_token": 6
             }
         ],
-        "UnderlyingList": [
+       "UnderlyingList": [
             {
                 "name": "360 ONE WAM LIMITED",
                 "tradingsymbol": "360ONE",
@@ -502,11 +502,6 @@
                 "name": "Indian Renewable Energy Development Agency Limited",
                 "tradingsymbol": "IREDA",
                 "instrument_token": 5186817
-            },
-            {
-                "name": "Indraprastha Gas Limited",
-                "tradingsymbol": "IGL",
-                "instrument_token": 2883073
             },
             {
                 "name": "Indus Towers Limited",
