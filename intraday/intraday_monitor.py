@@ -726,6 +726,10 @@ def init():
             logger.info("Intraday analysis enabled")
             shared.app_ctx.mode = shared.Mode.INTRADAY
     
+    if shared.app_ctx.mode == shared.Mode.INTRADAY:
+        TELEGRAM_NOTIFICATIONS.is_intraday = True
+    else:
+        TELEGRAM_NOTIFICATIONS.is_intraday = False
 
     args = parse_arguments()
     

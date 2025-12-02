@@ -3,13 +3,21 @@
 import requests
 import json
 import os
-from common.constants import TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, TELEGRAM_URL, ENV_PRODUCTION
+from common.constants import (
+    TELEGRAM_INTRADAY_CHAT_ID,
+    TELEGRAM_INTRADAY_TOKEN,
+    TELEGRAM_POSITIONAL_CHAT_ID,
+    TELEGRAM_POSITIONAL_TOKEN,
+    TELEGRAM_URL,
+    ENV_PRODUCTION,
+)
 from common.logging_util import logger
  
 # Function to send Push Notification
  
 class TELEGRAM_NOTIFICATIONS:
     is_production = 0
+    is_intraday = True
     @classmethod
     def pushbullet_notif(cls,title, body):
     
@@ -31,11 +39,16 @@ class TELEGRAM_NOTIFICATIONS:
         # Make a dictionary that includes, title and body
         if not cls.is_production:
             return
+        TELEGRAM_CHAT_ID = ""
+        TELEGRAM_TOKEN = ""
+        if TELEGRAM_NOTIFICATIONS.is_intraday:
+            TELEGRAM_CHAT_ID = TELEGRAM_INTRADAY_CHAT_ID
+            TELEGRAM_TOKEN = TELEGRAM_INTRADAY_TOKEN
+        else:
+            TELEGRAM_CHAT_ID = TELEGRAM_POSITIONAL_CHAT_ID
+            TELEGRAM_TOKEN = TELEGRAM_POSITIONAL_TOKEN
+            
         msg = {"chat_id": TELEGRAM_CHAT_ID, "text": message}
-        # Sent a posts request
-        # resp = requests.post(TELEGRAM_URL + TELEGRAM_TOKEN+ "/sendMessage",
-        #                     data=json.dumps(msg),
-        #                     headers={'Content-Type': 'application/json'})
         try:
             resp = requests.post(
                 TELEGRAM_URL + TELEGRAM_TOKEN + "/sendMessage",
