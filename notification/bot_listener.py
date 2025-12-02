@@ -1,6 +1,6 @@
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler
-from common.constants import TELEGRAM_TOKEN
+from common.constants import TELEGRAM_INTRADAY_TOKEN
 from  common.logging_util import logger
 import common.shared as shared
 import os
@@ -72,7 +72,7 @@ async def update_enctoken(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def init_telegram_bot():
     logger.info("Initializing Telegram Bot...")
-    application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+    application = ApplicationBuilder().token(TELEGRAM_INTRADAY_TOKEN).build()
     
     start_handler = CommandHandler('start', start)
     caps_handler = CommandHandler('enctoken', update_enctoken)
