@@ -154,6 +154,11 @@
                 "instrument_token": 4268801
             },
             {
+                "name": "Bajaj Holdings & Investment Limited",
+                "tradingsymbol": "BAJAJHLDNG",
+                "instrument_token": 78081
+            },
+            {
                 "name": "Bandhan Bank Limited",
                 "tradingsymbol": "BANDHANBNK",
                 "instrument_token": 579329
@@ -279,11 +284,6 @@
                 "instrument_token": 486657
             },
             {
-                "name": "Cyient Limited",
-                "tradingsymbol": "CYIENT",
-                "instrument_token": 1471489
-            },
-            {
                 "name": "DLF Limited",
                 "tradingsymbol": "DLF",
                 "instrument_token": 3771393
@@ -392,11 +392,6 @@
                 "name": "HDFC Life Insurance Company Limited",
                 "tradingsymbol": "HDFCLIFE",
                 "instrument_token": 119553
-            },
-            {
-                "name": "HFCL Limited",
-                "tradingsymbol": "HFCL",
-                "instrument_token": 5619457
             },
             {
                 "name": "Havells India Limited",
@@ -689,11 +684,6 @@
                 "instrument_token": 8042241
             },
             {
-                "name": "NCC Limited",
-                "tradingsymbol": "NCC",
-                "instrument_token": 593665
-            },
-            {
                 "name": "NHPC Limited",
                 "tradingsymbol": "NHPC",
                 "instrument_token": 4454401
@@ -814,6 +804,11 @@
                 "instrument_token": 3834113
             },
             {
+                "name": "Premier Energies Limited",
+                "tradingsymbol": "PREMIERENE",
+                "instrument_token": 6412545
+            },
+            {
                 "name": "Prestige Estates Projects Limited",
                 "tradingsymbol": "PRESTIGE",
                 "instrument_token": 5197313
@@ -919,6 +914,11 @@
                 "instrument_token": 3076609
             },
             {
+                "name": "Swiggy Limited",
+                "tradingsymbol": "SWIGGY",
+                "instrument_token": 6928897
+            },
+            {
                 "name": "Syngene International Limited",
                 "tradingsymbol": "SYNGENE",
                 "instrument_token": 2622209
@@ -927,11 +927,6 @@
                 "name": "TATA CONSUMER PRODUCTS LIMITED",
                 "tradingsymbol": "TATACONSUM",
                 "instrument_token": 878593
-            },
-            {
-                "name": "TITAGARH RAIL SYSTEMS LIMITED",
-                "tradingsymbol": "TITAGARH",
-                "instrument_token": 3945985
             },
             {
                 "name": "TVS Motor Company Limited",
@@ -1057,6 +1052,11 @@
                 "name": "Voltas Limited",
                 "tradingsymbol": "VOLTAS",
                 "instrument_token": 951809
+            },
+            {
+                "name": "Waaree Energies Limited",
+                "tradingsymbol": "WAAREEENER",
+                "instrument_token": 6632193
             },
             {
                 "name": "Wipro Limited",
