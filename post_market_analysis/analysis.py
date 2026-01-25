@@ -162,6 +162,54 @@ class PostMarketAnalyzer:
                 }
             out.append(day)
         return {"last5": out}
+    
+    def analyse_index_returns(self, df: pd.DataFrame):
+        """
+        Expects DataFrame with columns: SecurityName, ChangePercentage, Change, Close, etc.
+        Returns: dict with top 10 gainers and losers
+        """
+        if df is None or df.empty:
+            return {}
+        
+        work = df.copy()
+        
+        # Ensure numeric
+        work["ChangePercentage"] = pd.to_numeric(work["ChangePercentage"], errors="coerce")
+        work["Change"] = pd.to_numeric(work["Change"], errors="coerce")
+        work["Close"] = pd.to_numeric(work["Close"], errors="coerce")
+        work = work.dropna(subset=["ChangePercentage"])
+        
+        # Sort by percentage change
+        work = work.sort_values("ChangePercentage", ascending=False)
+        
+        # Get top 10 gainers and losers
+        top_gainers = work.head(10)
+        top_losers = work.tail(10).sort_values("ChangePercentage")
+        
+        def pack(rows):
+            out = []
+            for _, r in rows.iterrows():
+                out.append({
+                    "name": r["SecurityName"],
+                    "chg_pct": float(r["ChangePercentage"]),
+                    "chg_pts": float(r["Change"]) if pd.notna(r["Change"]) else None,
+                    "close": float(r["Close"]) if pd.notna(r["Close"]) else None
+                })
+            return out
+        
+        result = {
+            "as_of": str(date.today()),
+            "total_indices": int(len(work)),
+            "advancing": int((work["ChangePercentage"] > 0).sum()),
+            "declining": int((work["ChangePercentage"] < 0).sum()),
+            "unchanged": int((work["ChangePercentage"] == 0).sum()),
+            "top_gainers": pack(top_gainers),
+            "top_losers": pack(top_losers)
+        }
+        
+        logger.info("Index returns summary: %d indices, %d advancing, %d declining", 
+                    result["total_indices"], result["advancing"], result["declining"])
+        return result
 
     def dispatch(self, source_name: str, df: pd.DataFrame):
         if source_name == "fii_dii_activity":
@@ -170,4 +218,6 @@ class PostMarketAnalyzer:
             return self.analyse_sector_performance(df)
         if source_name == "fo_participant_oi":
             return self.analyse_fo_participant_oi(df)
+        if source_name == "index_returns":
+            return self.analyse_index_returns(df)
         return {}
