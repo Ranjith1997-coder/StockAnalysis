@@ -145,6 +145,57 @@ class FoParticipantOISummaryFormatter(BaseSummaryFormatter):
             lines.append(f"{p:>7}: Net {d.get('Net','NA'):>8} | Long {d.get('Long','NA'):>8} | Short {d.get('Short','NA'):>8}")
         return "\n".join(lines)
 
+class IndexReturnsSummaryFormatter(BaseSummaryFormatter):
+    source_name = "index_returns"
+
+    def format(self, analysis: dict) -> str:
+        if not analysis:
+            return "No index returns data"
+        
+        tg = analysis.get("top_gainers", [])
+        tl = analysis.get("top_losers", [])
+        
+        def build_table(title, rows):
+            if not rows:
+                return f"{title}: None"
+            
+            # Find max name width
+            name_w = max(10, *(len(r["name"]) for r in rows))
+            
+            lines = [
+                title,
+                f"{'Index'.ljust(name_w)}  {'Chg%':>7}  {'Pts':>8}  {'Close':>10}",
+                f"{'-'*name_w}  {'-'*7}  {'-'*8}  {'-'*10}"
+            ]
+            
+            for r in rows:
+                chg_pct = f"{r['chg_pct']:+.2f}%" if r['chg_pct'] is not None else "NA"
+                chg_pts = f"{r['chg_pts']:+.2f}" if r['chg_pts'] is not None else "NA"
+                close = f"{r['close']:.2f}" if r['close'] is not None else "NA"
+                lines.append(
+                    f"{r['name'].ljust(name_w)}  {chg_pct:>7}  {chg_pts:>8}  {close:>10}"
+                )
+            
+            return "\n".join(lines)
+        
+        header = (
+            f"NSE Indices ({analysis.get('as_of')}) "
+            f"Adv:{analysis.get('advancing')}/Dec:{analysis.get('declining')}/Unch:{analysis.get('unchanged')} "
+            f"Total:{analysis.get('total_indices')}"
+        )
+        
+        block = "\n".join([
+            header,
+            build_table("Top 10 Gaining Indices", tg),
+            "",
+            build_table("Top 10 Losing Indices", tl)
+        ])
+        
+        if len(block) > 3900:
+            block = block[:3900] + "\n(truncated)"
+        
+        return block
+
 class PostMarketSummaryBuilder:
     """
     Collects per-source formatters and builds a combined summary.
@@ -154,7 +205,8 @@ class PostMarketSummaryBuilder:
         self.formatter_map = {
             FiiDiiSummaryFormatter.source_name: FiiDiiSummaryFormatter(),
             SectorSummaryFormatter.source_name: SectorSummaryFormatter(),
-            FoParticipantOISummaryFormatter.source_name:  FoParticipantOISummaryFormatter()
+            FoParticipantOISummaryFormatter.source_name:  FoParticipantOISummaryFormatter(),
+            IndexReturnsSummaryFormatter.source_name: IndexReturnsSummaryFormatter()
         }
 
     def build(self, outputs: list) -> list| None:
