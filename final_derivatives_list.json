@@ -32,7 +32,7 @@
                 "instrument_token": 6
             }
         ],
-       "UnderlyingList": [
+        "UnderlyingList": [
             {
                 "name": "360 ONE WAM LIMITED",
                 "tradingsymbol": "360ONE",
@@ -457,11 +457,6 @@
                 "name": "IDFC First Bank Limited",
                 "tradingsymbol": "IDFCFIRSTB",
                 "instrument_token": 2863105
-            },
-            {
-                "name": "IIFL Finance Limited",
-                "tradingsymbol": "IIFL",
-                "instrument_token": 3023105
             },
             {
                 "name": "ITC Limited",
