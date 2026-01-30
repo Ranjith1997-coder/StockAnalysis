@@ -68,11 +68,15 @@ class PostMarketAnalyzer:
         # Log formatted lines
         logger.info("===== FII / DII Last 5 Days (Cash / Index Futures & Options) =====")
         for r in last5_rows:
+            # Helper function to format values, handling None
+            def fmt(val):
+                return f"{val:+.0f}" if val is not None else "N/A"
+            
             logger.info(
-                f"{r['date']} | FII Cash {r['fii_cash']:+.0f} | DII Cash {r['dii_cash']:+.0f} | "
-                f"Idx Fut {r['fii_index_fut']:+.0f} | Idx Opt {r['fii_index_opt']:+.0f} | "
-                f"NIFTY Fut {r['nifty_fut_exposure']:+.0f} | BANKNIFTY Fut {r['banknifty_fut_exposure']:+.0f} | "
-                f"NIFTY Opt {r['nifty_opt_exposure']:+.0f} | BANKNIFTY Opt {r['banknifty_opt_exposure']:+.0f}"
+                f"{r['date']} | FII Cash {fmt(r['fii_cash'])} | DII Cash {fmt(r['dii_cash'])} | "
+                f"Idx Fut {fmt(r['fii_index_fut'])} | Idx Opt {fmt(r['fii_index_opt'])} | "
+                f"NIFTY Fut {fmt(r['nifty_fut_exposure'])} | BANKNIFTY Fut {fmt(r['banknifty_fut_exposure'])} | "
+                f"NIFTY Opt {fmt(r['nifty_opt_exposure'])} | BANKNIFTY Opt {fmt(r['banknifty_opt_exposure'])}"
             )
 
         return {
