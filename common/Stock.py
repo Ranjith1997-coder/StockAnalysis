@@ -15,6 +15,7 @@ from scipy.stats import norm
 from scipy.optimize import brentq
 import datetime 
 import time
+import requests
 
 
 pd.options.mode.chained_assignment = None
@@ -98,6 +99,17 @@ class Stock:
 
             "futures_mdata": {"current": None, "next": None}, # contains the instrument token and expiry for futures
             "futures_data" : {"current":pd.DataFrame(), "next":pd.DataFrame()} # contains the futures OHLC and OI data for futures
+        }
+        
+        self.sensibull_ctx = {
+            "last_fetch_time": None,
+            "current": {  # Latest snapshot
+                "underlying_info": None,
+                "stats": None,
+                "per_expiry_map": None,
+                "nse_stats": None
+            },
+            "historical_data": pd.DataFrame()  # Time-series data
         }
 
         self._zerodha_lock = threading.Lock()
@@ -784,6 +796,115 @@ class Stock:
         except Exception as e:
             logger.error(f"get_complete_futures_data failed for {self.stock_symbol}: {e}")
             raise
+
+    def fetch_sensibull_data(self, mode="positional"):
+        """
+        Fetches stock insights data from Sensibull API and stores it in sensibull_ctx.
+        Stores periodic snapshots in a DataFrame for historical analysis.
+        
+        Args:
+            mode (str): "positional" for daily data or "intraday" for periodic updates
+        
+        Returns:
+            pd.DataFrame: The historical data DataFrame, or None if the request fails.
+        """
+        try:
+            url = f"https://oxide.sensibull.com/v1/compute/cache/insights/stock_info?tradingsymbol={self.stock_symbol}"
+            logger.info(f"Fetching Sensibull data for {self.stock_symbol} from {url}")
+            
+            response = requests.get(url, timeout=10)
+            response.raise_for_status()
+            
+            data = response.json()
+            
+            if data.get("success") and "payload" in data:
+                payload = data["payload"]
+                timestamp = datetime.datetime.now()
+                
+                # Store current snapshot
+                self.sensibull_ctx["last_fetch_time"] = timestamp
+                self.sensibull_ctx["current"]["underlying_info"] = payload.get("underlying_info")
+                self.sensibull_ctx["current"]["stats"] = payload.get("stats")
+                self.sensibull_ctx["current"]["per_expiry_map"] = payload.get("stats", {}).get("per_expiry_map")
+                self.sensibull_ctx["current"]["nse_stats"] = payload.get("nse_stats")
+                
+                # Extract key metrics for historical storage
+                stats = payload.get("stats", {})
+                base_stats = stats.get("underlying_base_stats", {})
+                per_expiry_map = stats.get("per_expiry_map", {})
+                
+                # Build historical row with flattened per-expiry data
+                historical_row = {
+                    "timestamp": timestamp,
+                    "volume_spike": base_stats.get("volume_spike"),
+                    "volume_spike_type": base_stats.get("volume_spike_type"),
+                    "future_oi_change": base_stats.get("future_oi_change"),
+                    "oi_change_type": base_stats.get("oi_change_type"),
+                    "total_pcr": base_stats.get("total_pcr"),
+                }
+                
+                # Add per-expiry metrics (flatten for DataFrame)
+                for expiry, expiry_data in per_expiry_map.items():
+                    # Use expiry as suffix for column names
+                    expiry_suffix = expiry.replace("-", "")
+                    historical_row[f"future_price_{expiry_suffix}"] = expiry_data.get("future_price")
+                    historical_row[f"future_change_pct_{expiry_suffix}"] = expiry_data.get("future_change_percent")
+                    historical_row[f"atm_strike_{expiry_suffix}"] = expiry_data.get("atm_strike")
+                    historical_row[f"atm_iv_{expiry_suffix}"] = expiry_data.get("atm_iv")
+                    historical_row[f"atm_iv_change_{expiry_suffix}"] = expiry_data.get("atm_iv_change")
+                    historical_row[f"atm_iv_percentile_{expiry_suffix}"] = expiry_data.get("atm_iv_percentile")
+                    historical_row[f"atm_ivp_type_{expiry_suffix}"] = expiry_data.get("atm_ivp_type")
+                    historical_row[f"max_pain_{expiry_suffix}"] = expiry_data.get("max_pain_strike")
+                    historical_row[f"max_pain_type_{expiry_suffix}"] = expiry_data.get("max_pain_type")
+                    historical_row[f"pcr_{expiry_suffix}"] = expiry_data.get("pcr")
+                    historical_row[f"pcr_type_{expiry_suffix}"] = expiry_data.get("pcr_type")
+                    historical_row[f"lot_size_{expiry_suffix}"] = expiry_data.get("lot_size")
+                
+                # Create new row DataFrame
+                new_row_df = pd.DataFrame([historical_row])
+                
+                # Handle historical data storage based on mode
+                existing_historical = self.sensibull_ctx["historical_data"]
+                
+                if mode == "positional":
+                    # For positional, keep last 30 days
+                    if not existing_historical.empty:
+                        # Append new row
+                        updated_df = pd.concat([existing_historical, new_row_df], ignore_index=True)
+                        # Keep only last 30 rows
+                        updated_df = updated_df.tail(30)
+                    else:
+                        updated_df = new_row_df
+                elif mode == "intraday":
+                    # For intraday, keep data for last 5 days
+                    if not existing_historical.empty:
+                        # Append new row
+                        updated_df = pd.concat([existing_historical, new_row_df], ignore_index=True)
+                        # Filter to keep only last 5 days
+                        five_days_ago = timestamp - datetime.timedelta(days=5)
+                        updated_df = updated_df[updated_df["timestamp"] >= five_days_ago]
+                    else:
+                        updated_df = new_row_df
+                else:
+                    raise ValueError("mode must be 'positional' or 'intraday'")
+                
+                self.sensibull_ctx["historical_data"] = updated_df
+                
+                logger.info(f"Sensibull data successfully fetched and stored for {self.stock_symbol}. Historical rows: {len(updated_df)}")
+                return updated_df
+            else:
+                logger.warning(f"Sensibull API returned unsuccessful response for {self.stock_symbol}")
+                return None
+                
+        except requests.exceptions.Timeout:
+            logger.error(f"Timeout while fetching Sensibull data for {self.stock_symbol}")
+            return None
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Request error fetching Sensibull data for {self.stock_symbol}: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Unexpected error fetching Sensibull data for {self.stock_symbol}: {e}")
+            return None
 
     @property
     def zerodha_data(self):
