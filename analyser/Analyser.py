@@ -161,6 +161,12 @@ class AnalyserOrchestrator:
                         message_parts.append(f" FUTURE_BREAKOUT_PATTERN : {data.pattern}")
                     elif analysis_type == 'EMA_CROSSOVER':
                         message_parts.append(f" EMA_CROSSOVER :{data.direction}, fast_ema: {data.fast_ema:.2f} {'>' if trend == 'BULLISH' else '<'} slow_ema: {data.slow_ema:.2f} ")
+                    elif analysis_type == 'PCR_EXTREME':
+                        message_parts.append(f" PCR_EXTREME : {data.zone} PCR={data.pcr_value:.3f} - {data.signal}")
+                    elif analysis_type == 'PCR_BIAS':
+                        message_parts.append(f" PCR_BIAS : {data.bias} PCR={data.total_pcr:.3f}")
+                    elif analysis_type == 'PCR_TREND':
+                        message_parts.append(f" PCR_TREND : {data.trend} PCR={data.pcr_current:.3f} Change={data.pcr_change_pct:.2f}%")
 
         if stock.analysis['NEUTRAL']:
             message_parts.append("NEUTRAL:")
@@ -189,6 +195,8 @@ class AnalyserOrchestrator:
                             message_parts.append(f" FuturesPVOPattern : {fut_data.pattern} p:{fut_data.price_pct:.2f}%, v:{fut_data.vol_pct:.2f}%, oi:{fut_data.oi_pct:.2f}%")
                     else:
                         message_parts.append(f" FuturesPVOPattern : {data.pattern} p:{data.price_pct:.2f}%, v:{data.vol_pct:.2f}%, oi:{data.oi_pct:.2f}%")
+                elif analysis_type == 'PCR_DIVERGENCE':
+                    message_parts.append(f" PCR_DIVERGENCE : Near={data.near_month_pcr:.3f} Far={data.far_month_pcr:.3f} Div={data.divergence:.3f} - {data.signal}")
 
         return "\n".join(message_parts)
 
