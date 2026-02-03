@@ -32,6 +32,32 @@
                 "instrument_token": 6
             }
         ],
+        "CommodityList": [
+            {
+                "name": "Gold",
+                "tradingsymbol": "GOLD",
+                "yfinancetradingsymbol": "GC=F",
+                "instrument_token": 7
+            },
+            {
+                "name": "Silver",
+                "tradingsymbol": "SILVER",
+                "yfinancetradingsymbol": "SI=F",
+                "instrument_token": 8
+            },
+            {
+                "name": "Copper",
+                "tradingsymbol": "COPPER",
+                "yfinancetradingsymbol": "HG=F",
+                "instrument_token": 9
+            },
+            {
+                "name": "Platinum",
+                "tradingsymbol": "PLATINUM",
+                "yfinancetradingsymbol": "PL=F",
+                "instrument_token": 10
+            }
+        ],
         "UnderlyingList": [
             {
                 "name": "360 ONE WAM LIMITED",
