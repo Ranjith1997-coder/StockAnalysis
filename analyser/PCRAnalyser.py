@@ -244,7 +244,7 @@ class PCRAnalyser(BaseAnalyzer):
             # Check for significant divergence
             pcr_diff = abs(near_month_pcr - far_month_pcr)
             
-            if pcr_diff > 0.5:  # Significant divergence
+            if pcr_diff > 0.9:  # Significant divergence
                 PCR_DIVERGENCE = namedtuple("PCR_DIVERGENCE", [
                     "near_month_pcr", "far_month_pcr", "divergence", "signal"
                 ])
