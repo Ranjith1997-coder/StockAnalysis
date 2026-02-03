@@ -200,12 +200,12 @@ def update_zerodha_option_chain(stockName = None, indexName = None):
         logger.info(f"Index {index.stock_symbol} zerodha_ctx updated")
 
 
-def create_stock_and_index_objects(stockName = None, indexName = None ):
+def create_stock_and_index_objects(stockName = None, indexName = None, commodityName = None):
     def is_before_market_open():
         now = datetime.now()
         return now.weekday() < 5 and now.time() < time(9, 15)
     
-    stock_list, index_list= get_stock_objects_from_json()
+    stock_list, index_list, commodity_list = get_stock_objects_from_json()
 
     count = 0
     yfinanceIndexSymbols = []
@@ -274,8 +274,40 @@ def create_stock_and_index_objects(stockName = None, indexName = None ):
                                         stock_prev_OHLCV_df["High"], stock_prev_OHLCV_df["Low"], 
                                         stock_prev_OHLCV_df["Volume"])
     
+    # Create commodity objects
+    count = 0
+    yfinanceCommoditySymbols = []
+    for commodity in commodity_list:
+        if commodityName and commodity["tradingsymbol"] != commodityName:
+            continue
+        
+        yfinanceCommoditySymbols.append(commodity["yfinancetradingsymbol"]) 
 
-def fetch_price_data(stock_objs, index_objs):
+        ticker = Stock(commodity["name"], commodity["tradingsymbol"], yfinanceSymbol=commodity["yfinancetradingsymbol"], is_index=True)
+        shared.app_ctx.commodity_token_obj_dict[commodity["instrument_token"]] = ticker
+        shared.app_ctx.commodity_list.append(commodity["tradingsymbol"])
+        count += 1
+
+    if yfinanceCommoditySymbols:
+        # Commodities trade 24/7, so we always use the most recent close
+        prevDayCommodityData = yf.download(yfinanceCommoditySymbols, period="5d", interval="1d", group_by='ticker')
+        logger.debug(f"Price data fetched to update previous OHLCV for commodities")
+        for commodity in shared.app_ctx.commodity_token_obj_dict.values():
+            try:
+                if len(yfinanceCommoditySymbols) == 1:
+                    commodity_prev_OHLCV_df = prevDayCommodityData.iloc[-2]
+                else:
+                    commodity_prev_OHLCV_df = prevDayCommodityData[commodity.stockSymbolYFinance].iloc[-2]
+                logger.debug(f"Using second-to-last day's data for {commodity.stock_symbol}")
+
+                commodity.set_prev_day_ohlcv(commodity_prev_OHLCV_df["Open"], commodity_prev_OHLCV_df["Close"], 
+                                            commodity_prev_OHLCV_df["High"], commodity_prev_OHLCV_df["Low"], 
+                                            commodity_prev_OHLCV_df["Volume"])
+            except Exception as e:
+                logger.error(f"Error setting prev day OHLCV for {commodity.stock_symbol}: {e}")
+
+
+def fetch_price_data(stock_objs, index_objs, commodity_objs=None):
     
     def update_price_data(ticker : Stock, data):
         try:
@@ -292,8 +324,9 @@ def fetch_price_data(stock_objs, index_objs):
     
     stockSymbols = [stock.stockSymbolYFinance for stock in stock_objs]
     indexSymbols = [index.stockSymbolYFinance for index in index_objs]
+    commoditySymbols = [commodity.stockSymbolYFinance for commodity in commodity_objs] if commodity_objs else []
 
-    period = "2y" if shared.app_ctx.mode.name == shared.Mode.POSITIONAL.name else "2D"
+    period = "2y" if shared.app_ctx.mode.name == shared.Mode.POSITIONAL.name else "5d"
     interval = "1d" if shared.app_ctx.mode.name == shared.Mode.POSITIONAL.name else "5m"
 
     if stockSymbols:
@@ -307,6 +340,15 @@ def fetch_price_data(stock_objs, index_objs):
         for index in index_objs:
             index_data = indexData[index.stockSymbolYFinance]
             update_price_data(index, index_data)
+    
+    if commoditySymbols:
+        commodityData = yf.download(commoditySymbols, period=period, interval=interval, group_by='ticker')
+        for commodity in commodity_objs:
+            if len(commoditySymbols) == 1:
+                commodity_data = commodityData
+            else:
+                commodity_data = commodityData[commodity.stockSymbolYFinance]
+            update_price_data(commodity, commodity_data)
 
 def fetch_futures_data(stock):
     try:
@@ -331,10 +373,11 @@ def fetch_and_analyze_stocks() -> List[Tuple[MonitorResult, bool, Optional[str]]
     
     stock_objs = list(shared.app_ctx.stock_token_obj_dict.values())
     index_objs = list(shared.app_ctx.index_token_obj_dict.values())
+    commodity_objs = list(shared.app_ctx.commodity_token_obj_dict.values())
     
     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
         # Fetch price data for all stocks at once
-        price_future = executor.submit(fetch_price_data, stock_objs, index_objs)
+        price_future = executor.submit(fetch_price_data, stock_objs, index_objs, commodity_objs)
 
         if ENABLE_NSE_DERIVATIVES:
             # Fetch futures data for each stock in parallel
@@ -476,6 +519,30 @@ def report_index_data():
     TELEGRAM_NOTIFICATIONS.send_notification(report)
     logger.info(f"Index Report\n {report}")
 
+def report_commodity_data():
+    logger.info("Reporting commodity data")
+    commodity_objs = list(shared.app_ctx.commodity_token_obj_dict.values())
+    
+    if not commodity_objs:
+        return
+    
+    report = "*********** Commodity Report ***********\n"
+    for commodity in commodity_objs:
+        try:
+            if not commodity.is_price_data_empty():
+                current_price = commodity.priceData['Close'].iloc[-1]
+                if commodity.prevDayOHLCV and commodity.prevDayOHLCV.get("CLOSE"):
+                    prev_close = commodity.prevDayOHLCV["CLOSE"]
+                    change_percent = percentageChange(current_price, prev_close)
+                    report += f"  {commodity.stock_symbol}: ${current_price:.2f} {change_percent:+.2f}%\n"
+                else:
+                    report += f"  {commodity.stock_symbol}: ${current_price:.2f}\n"
+        except Exception as e:
+            logger.error(f"Error while getting commodity data for {commodity.stock_symbol}: {e}")
+    
+    TELEGRAM_NOTIFICATIONS.send_notification(report)
+    logger.info(f"Commodity Report\n {report}")
+
 def report_52_week_high_low(max_items: int = 40, clear_after: bool = False):
     """
     Report 52-week High / Low stocks.
@@ -597,6 +664,7 @@ def intraday_analysis(loop = True, loop_wait_time = 30):
 
         report_top_gainers_and_losers()
         report_index_data()
+        report_commodity_data()
 
         for stock in shared.app_ctx.stock_token_obj_dict:
             shared.app_ctx.stock_token_obj_dict[stock].reset_price_data()
@@ -641,6 +709,7 @@ def positional_analysis():
 
     report_top_gainers_and_losers()
     report_index_data()
+    report_commodity_data()
     report_52_week_high_low()
 
     # Post-market flows
