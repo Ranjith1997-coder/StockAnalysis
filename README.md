@@ -21,11 +21,18 @@ StockAnalysis is a comprehensive automated stock market analysis tool designed f
 - **Technical Analysis**: Uses multiple technical indicators (RSI, MACD, moving averages, etc.)
 - **Candlestick Pattern Analysis**: Identifies key reversal and continuation patterns
 - **Implied Volatility (IV) Analysis**: Monitors option chain IV changes
+- **Put-Call Ratio (PCR) Analysis**: Monitors PCR changes for market sentiment
+- **Max Pain Analysis**: Calculates the max pain strike price where option writers have minimum losses
 - **Futures Analysis**: Analyzes futures rollover, OI changes, and premium/discount
 
 ### Automated Reports
 - **Top Gainers and Losers**: Top 5 stocks by percentage change
-- **Index Reports**: Real-time updates on major indices (Nifty 50, Bank Nifty, etc.)
+- **Index Reports**: Real-time updates on major Indian indices (Nifty 50, Bank Nifty, Fin Nifty, etc.)
+- **Global Indices Reports**: Monitors major international indices
+  - **USA**: S&P 500, Dow Jones, NASDAQ
+  - **Europe**: FTSE 100, DAX, CAC 40
+  - **Asia**: Nikkei 225, Hang Seng, Shanghai Composite, KOSPI
+- **Commodity Reports**: Tracks precious metals (Gold, Silver, Platinum, Copper), Crude Oil, and USD/INR
 - **52-Week High/Low**: Tracks stocks hitting new 52-week highs or lows
 - **Post-Market Analysis**: 
   - FII/DII cash and derivatives flows (last 5 days)
@@ -92,10 +99,19 @@ The script automatically determines the mode based on:
 - **Production mode**: Uses current time to decide (intraday if before 3:30 PM, positional after)
 - **Development mode**: Uses `ENV_DEV_INTRADAY` or `ENV_DEV_POSITIONAL` flags
 
-#### Analyze Specific Stock or Index
+#### Analyze Specific Stock, Index, or Commodity
 ```bash
 # Analyze a specific stock
 python intraday/intraday_monitor.py --stock RELIANCE
+
+# Analyze a specific index
+python intraday/intraday_monitor.py --index NIFTY
+
+# Analyze a specific commodity
+python intraday/intraday_monitor.py --commodity GOLD
+
+# Analyze a specific global index
+python intraday/intraday_monitor.py --global-index SPX
 Extending the Project
 
 ### Adding a New Analyzer
@@ -197,7 +213,7 @@ This runs the analysis in a separate thread while keeping the bot listener activ
 
 ```
 StockAnalysis/
-├── analyser/              # Analysis modules (Volume, Technical, IV, Futures, etc.)
+├── analyser/              # Analysis modules (Volume, Technical, IV, PCR, Max Pain, Futures, etc.)
 ├── backtest/              # Backtesting framework
 ├── common/                # Shared utilities, constants, logging
 ├── fno/                   # Futures & Options data collection
