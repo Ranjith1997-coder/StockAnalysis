@@ -39,6 +39,7 @@ class PCRAnalyser(BaseAnalyzer):
         logger.debug(f"PCRAnalyser constants reset for mode {shared.app_ctx.mode.name}")
 
     @BaseAnalyzer.both
+    @BaseAnalyzer.index_both
     def analyse_pcr_extreme_zones(self, stock: Stock):
         """
         Detect extreme PCR zones that signal potential reversals.
@@ -92,6 +93,7 @@ class PCRAnalyser(BaseAnalyzer):
             return False
 
     @BaseAnalyzer.both
+    @BaseAnalyzer.index_both
     def analyse_pcr_directional_bias(self, stock: Stock):
         """
         Analyze PCR for directional bias.
@@ -143,6 +145,7 @@ class PCRAnalyser(BaseAnalyzer):
             return False
 
     @BaseAnalyzer.both
+    @BaseAnalyzer.index_both
     def analyse_pcr_trend(self, stock: Stock):
         """
         Analyze PCR trend from historical data.
@@ -209,6 +212,7 @@ class PCRAnalyser(BaseAnalyzer):
             return False
 
     @BaseAnalyzer.both
+    @BaseAnalyzer.index_both
     def analyse_pcr_divergence(self, stock: Stock):
         """
         Detect PCR divergence across expiries.

@@ -167,6 +167,13 @@ class AnalyserOrchestrator:
                         message_parts.append(f" PCR_BIAS : {data.bias} PCR={data.total_pcr:.3f}")
                     elif analysis_type == 'PCR_TREND':
                         message_parts.append(f" PCR_TREND : {data.trend} PCR={data.pcr_current:.3f} Change={data.pcr_change_pct:.2f}%")
+                    elif analysis_type == 'MAX_PAIN':
+                        message_parts.append(f" MAX_PAIN : Price={data.current_price:.2f} MaxPain={data.max_pain_strike:.2f} Dev={data.deviation_pct:+.2f}% ({data.signal_strength})")
+                        if data.pcr:
+                            message_parts.append(f"   Expiry={data.expiry} PCR={data.pcr:.3f} Type={data.max_pain_type}")
+                    elif analysis_type == 'MAX_PAIN_ALIGNMENT':
+                        message_parts.append(f" MAX_PAIN_ALIGNMENT : {data.alignment} MaxPain={data.max_pain_type} PCR={data.pcr_type}")
+                        message_parts.append(f"   {data.signal}")
 
         if stock.analysis['NEUTRAL']:
             message_parts.append("NEUTRAL:")
@@ -197,6 +204,9 @@ class AnalyserOrchestrator:
                         message_parts.append(f" FuturesPVOPattern : {data.pattern} p:{data.price_pct:.2f}%, v:{data.vol_pct:.2f}%, oi:{data.oi_pct:.2f}%")
                 elif analysis_type == 'PCR_DIVERGENCE':
                     message_parts.append(f" PCR_DIVERGENCE : Near={data.near_month_pcr:.3f} Far={data.far_month_pcr:.3f} Div={data.divergence:.3f} - {data.signal}")
+                elif analysis_type == 'MAX_PAIN_TREND':
+                    message_parts.append(f" MAX_PAIN_TREND : {data.trend} Curr={data.curr_max_pain:.2f} Prev={data.prev_max_pain:.2f}")
+                    message_parts.append(f"   Expiry={data.expiry} CurrDev={data.curr_deviation:+.2f}% PrevDev={data.prev_deviation:+.2f}%")
 
         return "\n".join(message_parts)
 
