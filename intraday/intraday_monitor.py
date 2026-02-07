@@ -17,6 +17,7 @@ from analyser.TechnicalAnalyser import TechnicalAnalyser
 from analyser.candleStickPatternAnalyser import CandleStickAnalyser
 from analyser.IVAnalyser import IVAnalyser
 from analyser.PCRAnalyser import PCRAnalyser
+from analyser.MaxPainAnalyser import MaxPainAnalyser
 from common.logging_util import logger
 from typing import List, Tuple, Optional
 from enum import Enum
@@ -84,8 +85,8 @@ def monitor(stock: Stock) -> Tuple[MonitorResult, bool, Optional[str]]:
         else:
             logger.debug("Zerodha derivatives data not enabled for {stock.stockName}")
         
-        # Fetch Sensibull data (only for stocks, not indices)
-        if not stock.is_index:
+        # Fetch Sensibull data (for stocks and indices, except VIX)
+        if not stock.is_index or stock.stock_symbol != "INDIA_VIX":
             try:
                 stock.fetch_sensibull_data(mode=analysis_type)
                 logger.debug(f"Sensibull data fetched successfully for {stock.stockName}")
@@ -821,6 +822,7 @@ def init():
     orchestrator.register(IVAnalyser())
     orchestrator.register(FuturesAnalyser())
     orchestrator.register(PCRAnalyser())
+    orchestrator.register(MaxPainAnalyser())
     if ENABLE_NSE_DERIVATIVES:
         shared.app_ctx.stockExpires = NSE_DATA_CLASS.expiry_dates_future()        
     
