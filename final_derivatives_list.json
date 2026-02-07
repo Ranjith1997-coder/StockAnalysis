@@ -56,6 +56,80 @@
                 "tradingsymbol": "PLATINUM",
                 "yfinancetradingsymbol": "PL=F",
                 "instrument_token": 10
+            },
+            {
+                "name": "Crude Oil",
+                "tradingsymbol": "CRUDEOIL",
+                "yfinancetradingsymbol": "CL=F",
+                "instrument_token": 11
+            },
+            {
+                "name": "USD/INR",
+                "tradingsymbol": "USDINR",
+                "yfinancetradingsymbol": "USDINR=X",
+                "instrument_token": 12
+            }
+        ],
+        "GlobalIndicesList": [
+            {
+                "name": "S&P 500",
+                "tradingsymbol": "SPX",
+                "yfinancetradingsymbol": "^GSPC",
+                "instrument_token": 1001
+            },
+            {
+                "name": "Dow Jones",
+                "tradingsymbol": "DJI",
+                "yfinancetradingsymbol": "^DJI",
+                "instrument_token": 1002
+            },
+            {
+                "name": "NASDAQ",
+                "tradingsymbol": "NASDAQ",
+                "yfinancetradingsymbol": "^IXIC",
+                "instrument_token": 1003
+            },
+            {
+                "name": "FTSE 100",
+                "tradingsymbol": "FTSE",
+                "yfinancetradingsymbol": "^FTSE",
+                "instrument_token": 1004
+            },
+            {
+                "name": "DAX",
+                "tradingsymbol": "DAX",
+                "yfinancetradingsymbol": "^GDAXI",
+                "instrument_token": 1005
+            },
+            {
+                "name": "CAC 40",
+                "tradingsymbol": "CAC40",
+                "yfinancetradingsymbol": "^FCHI",
+                "instrument_token": 1006
+            },
+            {
+                "name": "Nikkei 225",
+                "tradingsymbol": "NIKKEI",
+                "yfinancetradingsymbol": "^N225",
+                "instrument_token": 1007
+            },
+            {
+                "name": "Hang Seng",
+                "tradingsymbol": "HSI",
+                "yfinancetradingsymbol": "^HSI",
+                "instrument_token": 1008
+            },
+            {
+                "name": "Shanghai Composite",
+                "tradingsymbol": "SSEC",
+                "yfinancetradingsymbol": "000001.SS",
+                "instrument_token": 1009
+            },
+            {
+                "name": "KOSPI",
+                "tradingsymbol": "KOSPI",
+                "yfinancetradingsymbol": "^KS11",
+                "instrument_token": 1010
             }
         ],
         "UnderlyingList": [

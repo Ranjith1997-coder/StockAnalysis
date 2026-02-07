@@ -201,12 +201,12 @@ def update_zerodha_option_chain(stockName = None, indexName = None):
         logger.info(f"Index {index.stock_symbol} zerodha_ctx updated")
 
 
-def create_stock_and_index_objects(stockName = None, indexName = None, commodityName = None):
+def create_stock_and_index_objects(stockName = None, indexName = None, commodityName = None, globalIndexName = None):
     def is_before_market_open():
         now = datetime.now()
         return now.weekday() < 5 and now.time() < time(9, 15)
     
-    stock_list, index_list, commodity_list = get_stock_objects_from_json()
+    stock_list, index_list, commodity_list, global_indices_list = get_stock_objects_from_json()
 
     count = 0
     yfinanceIndexSymbols = []
@@ -306,9 +306,41 @@ def create_stock_and_index_objects(stockName = None, indexName = None, commodity
                                             commodity_prev_OHLCV_df["Volume"])
             except Exception as e:
                 logger.error(f"Error setting prev day OHLCV for {commodity.stock_symbol}: {e}")
+    
+    # Create global indices objects
+    count = 0
+    yfinanceGlobalIndicesSymbols = []
+    for global_index in global_indices_list:
+        if globalIndexName and global_index["tradingsymbol"] != globalIndexName:
+            continue
+        
+        yfinanceGlobalIndicesSymbols.append(global_index["yfinancetradingsymbol"]) 
+
+        ticker = Stock(global_index["name"], global_index["tradingsymbol"], yfinanceSymbol=global_index["yfinancetradingsymbol"], is_index=True)
+        shared.app_ctx.global_indices_token_obj_dict[global_index["instrument_token"]] = ticker
+        shared.app_ctx.global_indices_list.append(global_index["tradingsymbol"])
+        count += 1
+
+    if yfinanceGlobalIndicesSymbols:
+        # Global indices trade at different times, so we fetch recent data
+        prevDayGlobalIndicesData = yf.download(yfinanceGlobalIndicesSymbols, period="5d", interval="1d", group_by='ticker')
+        logger.debug(f"Price data fetched to update previous OHLCV for global indices")
+        for global_index in shared.app_ctx.global_indices_token_obj_dict.values():
+            try:
+                if len(yfinanceGlobalIndicesSymbols) == 1:
+                    global_index_prev_OHLCV_df = prevDayGlobalIndicesData.iloc[-2]
+                else:
+                    global_index_prev_OHLCV_df = prevDayGlobalIndicesData[global_index.stockSymbolYFinance].iloc[-2]
+                logger.debug(f"Using second-to-last day's data for {global_index.stock_symbol}")
+
+                global_index.set_prev_day_ohlcv(global_index_prev_OHLCV_df["Open"], global_index_prev_OHLCV_df["Close"], 
+                                            global_index_prev_OHLCV_df["High"], global_index_prev_OHLCV_df["Low"], 
+                                            global_index_prev_OHLCV_df["Volume"])
+            except Exception as e:
+                logger.error(f"Error setting prev day OHLCV for {global_index.stock_symbol}: {e}")
 
 
-def fetch_price_data(stock_objs, index_objs, commodity_objs=None):
+def fetch_price_data(stock_objs, index_objs, commodity_objs=None, global_indices_objs=None):
     
     def update_price_data(ticker : Stock, data):
         try:
@@ -326,6 +358,7 @@ def fetch_price_data(stock_objs, index_objs, commodity_objs=None):
     stockSymbols = [stock.stockSymbolYFinance for stock in stock_objs]
     indexSymbols = [index.stockSymbolYFinance for index in index_objs]
     commoditySymbols = [commodity.stockSymbolYFinance for commodity in commodity_objs] if commodity_objs else []
+    globalIndicesSymbols = [global_index.stockSymbolYFinance for global_index in global_indices_objs] if global_indices_objs else []
 
     period = "2y" if shared.app_ctx.mode.name == shared.Mode.POSITIONAL.name else "5d"
     interval = "1d" if shared.app_ctx.mode.name == shared.Mode.POSITIONAL.name else "5m"
@@ -350,6 +383,15 @@ def fetch_price_data(stock_objs, index_objs, commodity_objs=None):
             else:
                 commodity_data = commodityData[commodity.stockSymbolYFinance]
             update_price_data(commodity, commodity_data)
+    
+    if globalIndicesSymbols:
+        globalIndicesData = yf.download(globalIndicesSymbols, period=period, interval=interval, group_by='ticker')
+        for global_index in global_indices_objs:
+            if len(globalIndicesSymbols) == 1:
+                global_index_data = globalIndicesData
+            else:
+                global_index_data = globalIndicesData[global_index.stockSymbolYFinance]
+            update_price_data(global_index, global_index_data)
 
 def fetch_futures_data(stock):
     try:
@@ -375,10 +417,11 @@ def fetch_and_analyze_stocks() -> List[Tuple[MonitorResult, bool, Optional[str]]
     stock_objs = list(shared.app_ctx.stock_token_obj_dict.values())
     index_objs = list(shared.app_ctx.index_token_obj_dict.values())
     commodity_objs = list(shared.app_ctx.commodity_token_obj_dict.values())
+    global_indices_objs = list(shared.app_ctx.global_indices_token_obj_dict.values())
     
     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
         # Fetch price data for all stocks at once
-        price_future = executor.submit(fetch_price_data, stock_objs, index_objs, commodity_objs)
+        price_future = executor.submit(fetch_price_data, stock_objs, index_objs, commodity_objs, global_indices_objs)
 
         if ENABLE_NSE_DERIVATIVES:
             # Fetch futures data for each stock in parallel
@@ -544,6 +587,55 @@ def report_commodity_data():
     TELEGRAM_NOTIFICATIONS.send_notification(report)
     logger.info(f"Commodity Report\n {report}")
 
+def report_global_indices_data():
+    logger.info("Reporting global indices data")
+    global_indices_objs = list(shared.app_ctx.global_indices_token_obj_dict.values())
+    
+    if not global_indices_objs:
+        return
+    
+    report = "*********** Global Indices Report ***********\n"
+    
+    # Group by region
+    usa_indices = []
+    europe_indices = []
+    asia_indices = []
+    
+    for global_index in global_indices_objs:
+        symbol = global_index.stock_symbol
+        if symbol in ["SPX", "DJI", "NASDAQ"]:
+            usa_indices.append(global_index)
+        elif symbol in ["FTSE", "DAX", "CAC40"]:
+            europe_indices.append(global_index)
+        else:
+            asia_indices.append(global_index)
+    
+    def format_index_data(indices, region_name):
+        region_report = f"\n{region_name}:\n"
+        for index in indices:
+            try:
+                if not index.is_price_data_empty():
+                    current_price = index.priceData['Close'].iloc[-1]
+                    if index.prevDayOHLCV and index.prevDayOHLCV.get("CLOSE"):
+                        prev_close = index.prevDayOHLCV["CLOSE"]
+                        change_percent = percentageChange(current_price, prev_close)
+                        region_report += f"  {index.stock_symbol}: {current_price:.2f} {change_percent:+.2f}%\n"
+                    else:
+                        region_report += f"  {index.stock_symbol}: {current_price:.2f}\n"
+            except Exception as e:
+                logger.error(f"Error while getting global index data for {index.stock_symbol}: {e}")
+        return region_report
+    
+    if usa_indices:
+        report += format_index_data(usa_indices, "USA")
+    if europe_indices:
+        report += format_index_data(europe_indices, "Europe")
+    if asia_indices:
+        report += format_index_data(asia_indices, "Asia")
+    
+    TELEGRAM_NOTIFICATIONS.send_notification(report)
+    logger.info(f"Global Indices Report\n {report}")
+
 def report_52_week_high_low(max_items: int = 40, clear_after: bool = False):
     """
     Report 52-week High / Low stocks.
@@ -666,6 +758,7 @@ def intraday_analysis(loop = True, loop_wait_time = 30):
         report_top_gainers_and_losers()
         report_index_data()
         report_commodity_data()
+        report_global_indices_data()
 
         for stock in shared.app_ctx.stock_token_obj_dict:
             shared.app_ctx.stock_token_obj_dict[stock].reset_price_data()
@@ -711,6 +804,7 @@ def positional_analysis():
     report_top_gainers_and_losers()
     report_index_data()
     report_commodity_data()
+    report_global_indices_data()
     report_52_week_high_low()
 
     # Post-market flows

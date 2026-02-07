@@ -14,7 +14,8 @@ def get_stock_objects_from_json():
     with open(STOCKS_JSON_FILE, "r") as file:
         stocks = json.load(file)
         commodity_list = stocks["data"].get("CommodityList", [])
-        return stocks["data"]["UnderlyingList"], stocks["data"]["IndexList"], commodity_list
+        global_indices_list = stocks["data"].get("GlobalIndicesList", [])
+        return stocks["data"]["UnderlyingList"], stocks["data"]["IndexList"], commodity_list, global_indices_list
 
 def get_stock_OHLCV_from_json():
     STOCKS_JSON_FILE = os.getcwd() + "/" + constants.STOCK_DATA_FILENAME
