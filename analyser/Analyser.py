@@ -207,6 +207,9 @@ class AnalyserOrchestrator:
                 elif analysis_type == 'MAX_PAIN_TREND':
                     message_parts.append(f" MAX_PAIN_TREND : {data.trend} Curr={data.curr_max_pain:.2f} Prev={data.prev_max_pain:.2f}")
                     message_parts.append(f"   Expiry={data.expiry} CurrDev={data.curr_deviation:+.2f}% PrevDev={data.prev_deviation:+.2f}%")
+                elif analysis_type == 'MAX_PAIN_ALIGNMENT':
+                    message_parts.append(f" MAX_PAIN_ALIGNMENT : {data.alignment} MaxPain={data.max_pain_type} PCR={data.pcr_type}")
+                    message_parts.append(f"   {data.signal}")
 
         return "\n".join(message_parts)
 

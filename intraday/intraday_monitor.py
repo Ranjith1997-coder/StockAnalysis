@@ -574,11 +574,26 @@ def report_commodity_data():
     for commodity in commodity_objs:
         try:
             if not commodity.is_price_data_empty():
-                current_price = commodity.priceData['Close'].iloc[-1]
+                # Get the last valid (non-NaN) close price
+                close_prices = commodity.priceData['Close'].dropna()
+                if close_prices.empty:
+                    logger.warning(f"No valid price data for {commodity.stock_symbol}")
+                    continue
+                    
+                current_price = close_prices.iloc[-1]
+                
+                # Check if price is valid
+                if pd.isna(current_price) or not isinstance(current_price, (int, float)):
+                    logger.warning(f"Invalid price for {commodity.stock_symbol}: {current_price}")
+                    continue
+                
                 if commodity.prevDayOHLCV and commodity.prevDayOHLCV.get("CLOSE"):
                     prev_close = commodity.prevDayOHLCV["CLOSE"]
-                    change_percent = percentageChange(current_price, prev_close)
-                    report += f"  {commodity.stock_symbol}: ${current_price:.2f} {change_percent:+.2f}%\n"
+                    if pd.notna(prev_close) and prev_close != 0:
+                        change_percent = percentageChange(current_price, prev_close)
+                        report += f"  {commodity.stock_symbol}: ${current_price:.2f} {change_percent:+.2f}%\n"
+                    else:
+                        report += f"  {commodity.stock_symbol}: ${current_price:.2f}\n"
                 else:
                     report += f"  {commodity.stock_symbol}: ${current_price:.2f}\n"
         except Exception as e:
