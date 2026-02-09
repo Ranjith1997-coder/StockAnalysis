@@ -630,11 +630,26 @@ def report_global_indices_data():
         for index in indices:
             try:
                 if not index.is_price_data_empty():
-                    current_price = index.priceData['Close'].iloc[-1]
+                    # Get the last valid (non-NaN) close price
+                    close_prices = index.priceData['Close'].dropna()
+                    if close_prices.empty:
+                        logger.warning(f"No valid price data for {index.stock_symbol}")
+                        continue
+                    
+                    current_price = close_prices.iloc[-1]
+                    
+                    # Check if price is valid
+                    if pd.isna(current_price) or not isinstance(current_price, (int, float)):
+                        logger.warning(f"Invalid price for {index.stock_symbol}: {current_price}")
+                        continue
+                    
                     if index.prevDayOHLCV and index.prevDayOHLCV.get("CLOSE"):
                         prev_close = index.prevDayOHLCV["CLOSE"]
-                        change_percent = percentageChange(current_price, prev_close)
-                        region_report += f"  {index.stock_symbol}: {current_price:.2f} {change_percent:+.2f}%\n"
+                        if pd.notna(prev_close) and prev_close != 0:
+                            change_percent = percentageChange(current_price, prev_close)
+                            region_report += f"  {index.stock_symbol}: {current_price:.2f} {change_percent:+.2f}%\n"
+                        else:
+                            region_report += f"  {index.stock_symbol}: {current_price:.2f}\n"
                     else:
                         region_report += f"  {index.stock_symbol}: {current_price:.2f}\n"
             except Exception as e:
