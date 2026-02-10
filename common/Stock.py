@@ -729,12 +729,12 @@ class Stock:
                                 "oi": candle.get('oi', None),
                                 "underlying_price": underlying_price
                             }
-                            # Append new row
+                            # Append new row - preserve datetime index properly
+                            new_row_df = pd.DataFrame([row]).set_index("date")
                             if not futures_data_current.empty:
-                                futures_data_current = pd.concat([futures_data_current, pd.DataFrame([row])], ignore_index=True)
+                                futures_data_current = pd.concat([futures_data_current, new_row_df])
                             else:
-                                futures_data_current = pd.DataFrame([row])
-                            futures_data_current.set_index("date", inplace=True)
+                                futures_data_current = new_row_df
                             logger.info(f"Futures data for {self.stock_symbol} (current expiry) at {dt}: {row}")
 
                 # Next expiry
@@ -777,12 +777,12 @@ class Stock:
                                     "oi": candle_next.get('oi', None),
                                     "underlying_price": candle_next['close']
                                 }
-                                # Append new row
+                                # Append new row - preserve datetime index properly
+                                new_row_df = pd.DataFrame([row_next]).set_index("date")
                                 if not futures_data_next.empty:
-                                    futures_data_next = pd.concat([futures_data_next, pd.DataFrame([row_next])], ignore_index=True)
+                                    futures_data_next = pd.concat([futures_data_next, new_row_df])
                                 else:
-                                    futures_data_next = pd.DataFrame([row_next])
-                                futures_data_next.set_index("date", inplace=True)
+                                    futures_data_next = new_row_df
                                 logger.info(f"Futures data for {self.stock_symbol} (next expiry) at {dt}: {row_next}")
 
                 zerodha_ctx["futures_data"]["current"] = futures_data_current
@@ -809,7 +809,9 @@ class Stock:
             pd.DataFrame: The historical data DataFrame, or None if the request fails.
         """
         try:
-            url = f"https://oxide.sensibull.com/v1/compute/cache/insights/stock_info?tradingsymbol={self.stock_symbol}"
+            from urllib.parse import quote
+            encoded_symbol = quote(self.stock_symbol, safe='')
+            url = f"https://oxide.sensibull.com/v1/compute/cache/insights/stock_info?tradingsymbol={encoded_symbol}"
             logger.info(f"Fetching Sensibull data for {self.stock_symbol} from {url}")
             
             response = requests.get(url, timeout=10)
