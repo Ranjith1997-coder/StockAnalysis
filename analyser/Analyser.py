@@ -1,5 +1,9 @@
 from common.logging_util import logger
 import common.constants as constant
+from common.scoring import (
+    calculate_score, should_notify, format_score_message,
+    NotificationPriority, ScoreResult
+)
 
 class BaseAnalyzer():
     def __init__(self) -> None:
@@ -92,37 +96,93 @@ class AnalyserOrchestrator:
         for analyser in self.analysers:
             analyser.reset_constants()
 
-    def run_all_intraday(self, stock, index = False):
+    def run_all_intraday(self, stock, index = False, use_scoring = True, min_priority = NotificationPriority.LOW):
+        """
+        Run all intraday analyses for a stock.
+        
+        Args:
+            stock: Stock object to analyze
+            index: Whether this is an index
+            use_scoring: If True, use the new scoring system. If False, use legacy REQUIRED_TRENDS
+            min_priority: Minimum priority level to consider as a valid trend (only used when use_scoring=True)
+        
+        Returns:
+            Tuple of (found_trend: bool, score_result: ScoreResult or None)
+        """
         logger.debug("Starting all analyses for stock {}".format(stock.stock_symbol))
-        found_trend = False
         for analyser in self.analysers:
             if index:
                 analyser.run_all_index_intraday_analyses(stock)
             else:
                 analyser.run_all_intraday_analyses(stock)
         logger.debug("All analyses complete for stock {}".format(stock.stock_symbol))
-        if stock.analysis["NoOfTrends"] >= constant.REQUIRED_TRENDS:
-            found_trend = True
-        return found_trend
+        
+        if use_scoring:
+            should_send, score_result = should_notify(stock.analysis, min_priority)
+            stock.analysis["ScoreResult"] = score_result
+            logger.debug(f"Score for {stock.stock_symbol}: {score_result.total_score} ({score_result.priority.value})")
+            return should_send, score_result
+        else:
+            # Legacy behavior
+            found_trend = stock.analysis["NoOfTrends"] >= constant.REQUIRED_TRENDS
+            return found_trend, None
     
-    def run_all_positional(self, stock, index = False):
+    def run_all_positional(self, stock, index = False, use_scoring = True, min_priority = NotificationPriority.LOW):
+        """
+        Run all positional analyses for a stock.
+        
+        Args:
+            stock: Stock object to analyze
+            index: Whether this is an index
+            use_scoring: If True, use the new scoring system. If False, use legacy REQUIRED_TRENDS
+            min_priority: Minimum priority level to consider as a valid trend (only used when use_scoring=True)
+        
+        Returns:
+            Tuple of (found_trend: bool, score_result: ScoreResult or None)
+        """
         logger.debug("Starting all analyses for stock {}".format(stock.stock_symbol))
-        found_trend = False
         for analyser in self.analysers:
             if index:
                 analyser.run_all_index_positional_analyses(stock)
             else:
                 analyser.run_all_positional_analyses(stock)
         logger.debug("All analyses complete for stock {}".format(stock.stock_symbol))
-        if stock.analysis["NoOfTrends"] >= constant.REQUIRED_TRENDS:
-            found_trend = True
-        return found_trend
+        
+        if use_scoring:
+            should_send, score_result = should_notify(stock.analysis, min_priority)
+            stock.analysis["ScoreResult"] = score_result
+            logger.debug(f"Score for {stock.stock_symbol}: {score_result.total_score} ({score_result.priority.value})")
+            return should_send, score_result
+        else:
+            # Legacy behavior
+            found_trend = stock.analysis["NoOfTrends"] >= constant.REQUIRED_TRENDS
+            return found_trend, None
     
-    def generate_analysis_message(self, stock):
+    def generate_analysis_message(self, stock, include_score=True):
         # return message
-        message_parts = [
-        f"Stock: {stock.stock_symbol}: {stock.ltp:.2f} {stock.ltp_change_perc:.2f}%",
-        ]
+        score_result = stock.analysis.get("ScoreResult")
+        
+        # Priority emoji mapping
+        priority_emoji = {
+            NotificationPriority.LOW: "📊",
+            NotificationPriority.MEDIUM: "📈",
+            NotificationPriority.HIGH: "🔥",
+            NotificationPriority.CRITICAL: "🚨"
+        }
+        
+        # Build header with score info
+        if include_score and score_result:
+            emoji = priority_emoji.get(score_result.priority, "📊")
+            message_parts = [
+                f"{emoji} [{score_result.priority.value}] {stock.stock_symbol}: {stock.ltp:.2f} ({stock.ltp_change_perc:+.2f}%)",
+                f"Score: {score_result.total_score} | {score_result.dominant_sentiment} ({score_result.confidence_pct}%)",
+            ]
+            if score_result.alignment_bonus > 0:
+                message_parts.append(f"Alignment: {score_result.signal_alignment} (+{score_result.alignment_bonus} bonus)")
+        else:
+            message_parts = [
+                f"Stock: {stock.stock_symbol}: {stock.ltp:.2f} {stock.ltp_change_perc:.2f}%",
+            ]
         for trend in ['BULLISH', 'BEARISH']:
             if stock.analysis[trend]:
                 message_parts.append(f"{trend}:")
@@ -167,6 +227,9 @@ class AnalyserOrchestrator:
                         message_parts.append(f" PCR_BIAS : {data.bias} PCR={data.total_pcr:.3f}")
                     elif analysis_type == 'PCR_TREND':
                         message_parts.append(f" PCR_TREND : {data.trend} PCR={data.pcr_current:.3f} Change={data.pcr_change_pct:.2f}%")
+                    elif analysis_type == 'PCR_REVERSAL':
+                        message_parts.append(f" PCR_REVERSAL : {data.reversal_type} {data.previous_zone}->{data.current_zone}")
+                        message_parts.append(f"   PCR: {data.previous_pcr:.3f} -> {data.current_pcr:.3f} | {data.signal}")
                     elif analysis_type == 'MAX_PAIN':
                         message_parts.append(f" MAX_PAIN : Price={data.current_price:.2f} MaxPain={data.max_pain_strike:.2f} Dev={data.deviation_pct:+.2f}% ({data.signal_strength})")
                         if data.pcr:

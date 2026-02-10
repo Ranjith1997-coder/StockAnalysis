@@ -94,13 +94,13 @@ def monitor(stock: Stock) -> Tuple[MonitorResult, bool, Optional[str]]:
                 logger.error(f"Error fetching Sensibull data for {stock.stockName}: {e}")
 
         if stock.is_index:
-            trend_found = (
+            trend_found, score_result = (
                 orchestrator.run_all_positional(stock, index=True)
                 if shared.app_ctx.mode == shared.Mode.POSITIONAL
                 else orchestrator.run_all_intraday(stock, index=True)
             )
         else: 
-            trend_found = (
+            trend_found, score_result = (
                 orchestrator.run_all_positional(stock)
                 if shared.app_ctx.mode == shared.Mode.POSITIONAL
                 else orchestrator.run_all_intraday(stock)
@@ -109,7 +109,9 @@ def monitor(stock: Stock) -> Tuple[MonitorResult, bool, Optional[str]]:
         logger.debug(f"{analysis_type} analysis for {stock.stockName} completed.")
         
         if trend_found:
-            logger.info(f"Trend found for {stock.stockName}")
+            priority_label = score_result.priority.value if score_result else "N/A"
+            score_value = score_result.total_score if score_result else stock.analysis["NoOfTrends"]
+            logger.info(f"Trend found for {stock.stockName} - Priority: {priority_label}, Score: {score_value}")
             message = orchestrator.generate_analysis_message(stock)
             TELEGRAM_NOTIFICATIONS.send_notification(message)
             return MonitorResult.SUCCESS, True, message
