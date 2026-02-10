@@ -74,6 +74,7 @@ ANALYSIS_WEIGHTS = {
     "PCR_EXTREME": 14,
     "PCR_BIAS": 10,
     "PCR_TREND": 12,
+    "PCR_REVERSAL": 16,          # PCR zone crossover or trend reversal
     "PCR_DIVERGENCE": 14,
     "IV_SPIKE": 12,
     "IV_TREND": 10,
@@ -117,7 +118,7 @@ SIGNAL_ALIGNMENT_BONUS = {
 TECHNICAL_ANALYSES = {"RSI", "MACD", "EMA_CROSSOVER", "ThreeContInc", "ThreeContDec", 
                       "TwoContInc", "TwoContDec", "Marubozu"}
 OPTIONS_ANALYSES = {"MAX_PAIN", "MAX_PAIN_TREND", "MAX_PAIN_ALIGNMENT", 
-                    "PCR_EXTREME", "PCR_BIAS", "PCR_TREND", "PCR_DIVERGENCE",
+                    "PCR_EXTREME", "PCR_BIAS", "PCR_TREND", "PCR_REVERSAL", "PCR_DIVERGENCE",
                     "IV_SPIKE", "IV_TREND"}
 FUTURES_ANALYSES = {"FUTURES_PREMIUM", "OI_BUILDUP"}
 

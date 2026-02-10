@@ -276,3 +276,132 @@ class PCRAnalyser(BaseAnalyzer):
             logger.error(f"Error in analyse_pcr_divergence for {stock.stock_symbol}: {str(e)}")
             logger.error(f"Traceback: {traceback.format_exc()}")
             return False
+
+    @BaseAnalyzer.intraday
+    @BaseAnalyzer.index_intraday
+    def analyse_pcr_reversal(self, stock: Stock):
+        """
+        Detect PCR reversal - when PCR crosses from one bias zone to another.
+        
+        Reversal types:
+        1. Zone crossover: PCR moves from bearish zone (<0.5) to bullish zone (>1.0) or vice versa
+        2. Trend reversal: PCR was consistently rising/falling and has now reversed direction
+        
+        A bullish reversal (PCR rising from bearish to bullish zone) suggests sentiment shift from call-heavy to put-heavy.
+        A bearish reversal (PCR falling from bullish to bearish zone) suggests sentiment shift from put-heavy to call-heavy.
+        """
+        try:
+            sensibull_ctx = stock.sensibull_ctx
+            historical_df = sensibull_ctx.get("historical_data")
+            
+            if historical_df is None or historical_df.empty:
+                logger.debug(f"No historical Sensibull data for {stock.stock_symbol}")
+                return False
+            
+            if len(historical_df) < 4:
+                logger.debug(f"Insufficient historical data for PCR reversal analysis for {stock.stock_symbol}")
+                return False
+            
+            # Get last 4 PCR values for reversal detection
+            recent_data = historical_df.tail(4)
+            pcr_values = recent_data["total_pcr"].dropna()
+            
+            if len(pcr_values) < 4:
+                return False
+            
+            pcr_list = pcr_values.tolist()
+            current_pcr = pcr_list[-1]
+            previous_pcr = pcr_list[-2]
+            
+            PCR_REVERSAL = namedtuple("PCR_REVERSAL", [
+                "reversal_type", "previous_pcr", "current_pcr", 
+                "previous_zone", "current_zone", "signal"
+            ])
+            
+            # Determine zones
+            def get_zone(pcr):
+                if pcr < PCRAnalyser.PCR_BEARISH_THRESHOLD:
+                    return "BEARISH"
+                elif pcr > PCRAnalyser.PCR_BULLISH_THRESHOLD:
+                    return "BULLISH"
+                else:
+                    return "NEUTRAL"
+            
+            # Check for zone crossover reversal
+            # Look at the zone of the first 2 values vs the last 2 values
+            old_avg_pcr = (pcr_list[0] + pcr_list[1]) / 2
+            new_avg_pcr = (pcr_list[2] + pcr_list[3]) / 2
+            
+            old_zone = get_zone(old_avg_pcr)
+            new_zone = get_zone(new_avg_pcr)
+            
+            # Detect significant zone crossover
+            if old_zone != new_zone and old_zone != "NEUTRAL" and new_zone != "NEUTRAL":
+                if old_zone == "BEARISH" and new_zone == "BULLISH":
+                    # PCR moved from low (call-heavy) to high (put-heavy) -> Bullish reversal
+                    stock.set_analysis("BULLISH", "PCR_REVERSAL", PCR_REVERSAL(
+                        reversal_type="ZONE_CROSSOVER",
+                        previous_pcr=old_avg_pcr,
+                        current_pcr=new_avg_pcr,
+                        previous_zone=old_zone,
+                        current_zone=new_zone,
+                        signal="PCR reversed from bearish to bullish zone - sentiment shifting to puts (Bullish)"
+                    ))
+                    logger.info(f"Bullish PCR reversal for {stock.stock_symbol}: {old_avg_pcr:.3f} -> {new_avg_pcr:.3f}")
+                    return True
+                
+                elif old_zone == "BULLISH" and new_zone == "BEARISH":
+                    # PCR moved from high (put-heavy) to low (call-heavy) -> Bearish reversal
+                    stock.set_analysis("BEARISH", "PCR_REVERSAL", PCR_REVERSAL(
+                        reversal_type="ZONE_CROSSOVER",
+                        previous_pcr=old_avg_pcr,
+                        current_pcr=new_avg_pcr,
+                        previous_zone=old_zone,
+                        current_zone=new_zone,
+                        signal="PCR reversed from bullish to bearish zone - sentiment shifting to calls (Bearish)"
+                    ))
+                    logger.info(f"Bearish PCR reversal for {stock.stock_symbol}: {old_avg_pcr:.3f} -> {new_avg_pcr:.3f}")
+                    return True
+            
+            # Check for trend reversal (direction change)
+            # First 3 values were trending one way, but the 4th reverses
+            first_trend = pcr_list[1] - pcr_list[0]
+            second_trend = pcr_list[2] - pcr_list[1]
+            third_trend = pcr_list[3] - pcr_list[2]
+            
+            # Was rising (positive trend), now falling
+            if first_trend > 0 and second_trend > 0 and third_trend < 0:
+                trend_magnitude = abs(third_trend / pcr_list[2]) * 100 if pcr_list[2] != 0 else 0
+                if trend_magnitude > 10:  # Significant reversal (>10% change)
+                    stock.set_analysis("BEARISH", "PCR_REVERSAL", PCR_REVERSAL(
+                        reversal_type="TREND_REVERSAL",
+                        previous_pcr=pcr_list[2],
+                        current_pcr=current_pcr,
+                        previous_zone=get_zone(pcr_list[2]),
+                        current_zone=get_zone(current_pcr),
+                        signal=f"PCR trend reversed from rising to falling ({trend_magnitude:.1f}% drop) - Bearish"
+                    ))
+                    logger.info(f"PCR trend reversal (rising->falling) for {stock.stock_symbol}: {trend_magnitude:.1f}% drop")
+                    return True
+            
+            # Was falling (negative trend), now rising
+            if first_trend < 0 and second_trend < 0 and third_trend > 0:
+                trend_magnitude = abs(third_trend / pcr_list[2]) * 100 if pcr_list[2] != 0 else 0
+                if trend_magnitude > 10:  # Significant reversal (>10% change)
+                    stock.set_analysis("BULLISH", "PCR_REVERSAL", PCR_REVERSAL(
+                        reversal_type="TREND_REVERSAL",
+                        previous_pcr=pcr_list[2],
+                        current_pcr=current_pcr,
+                        previous_zone=get_zone(pcr_list[2]),
+                        current_zone=get_zone(current_pcr),
+                        signal=f"PCR trend reversed from falling to rising ({trend_magnitude:.1f}% rise) - Bullish"
+                    ))
+                    logger.info(f"PCR trend reversal (falling->rising) for {stock.stock_symbol}: {trend_magnitude:.1f}% rise")
+                    return True
+            
+            return False
+            
+        except Exception as e:
+            logger.error(f"Error in analyse_pcr_reversal for {stock.stock_symbol}: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            return False

@@ -227,6 +227,9 @@ class AnalyserOrchestrator:
                         message_parts.append(f" PCR_BIAS : {data.bias} PCR={data.total_pcr:.3f}")
                     elif analysis_type == 'PCR_TREND':
                         message_parts.append(f" PCR_TREND : {data.trend} PCR={data.pcr_current:.3f} Change={data.pcr_change_pct:.2f}%")
+                    elif analysis_type == 'PCR_REVERSAL':
+                        message_parts.append(f" PCR_REVERSAL : {data.reversal_type} {data.previous_zone}->{data.current_zone}")
+                        message_parts.append(f"   PCR: {data.previous_pcr:.3f} -> {data.current_pcr:.3f} | {data.signal}")
                     elif analysis_type == 'MAX_PAIN':
                         message_parts.append(f" MAX_PAIN : Price={data.current_price:.2f} MaxPain={data.max_pain_strike:.2f} Dev={data.deviation_pct:+.2f}% ({data.signal_strength})")
                         if data.pcr:
