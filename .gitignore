@@ -1,13 +1,39 @@
-# Default ignored files
-/.venv
-/__pycache__
-/.vscode
-/intraday/__pycache__
-/nse/__pycache__
-/common/__pycache__
-/fno/__pycache__
-/analyser/__pycache__
-/notification/__pycache__
-/zerodha/__pycache__
-/post_market_analysis/__pycache__
-/backtest/__pycache__
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# IDE settings
+.vscode/
+.idea/
+*.iml
+
+# Environment variables
+.env
+.env.*
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+*.egg
+
+# Type checker cache
+.mypy_cache/
+.pytype/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Keys and credentials
+*.pem
