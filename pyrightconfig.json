@@ -1,0 +1,37 @@
+{
+    "include": [
+        "analyser",
+        "backtest",
+        "common",
+        "fno",
+        "intraday",
+        "metaData",
+        "notification",
+        "nse",
+        "post_market_analysis",
+        "scripts",
+        "sentiment",
+        "zerodha",
+        "*.py"
+    ],
+    "exclude": [
+        ".venv",
+        "**/__pycache__",
+        "**/.git"
+    ],
+    "venvPath": ".",
+    "venv": ".venv",
+    "pythonVersion": "3.13",
+    "pythonPlatform": "Darwin",
+    "executionEnvironments": [
+        {
+            "root": ".",
+            "extraPaths": ["."]
+        }
+    ],
+    "typeCheckingMode": "basic",
+    "reportMissingImports": "warning",
+    "reportMissingModuleSource": "warning",
+    "reportOptionalMemberAccess": "information",
+    "reportGeneralTypeIssues": "warning"
+}
