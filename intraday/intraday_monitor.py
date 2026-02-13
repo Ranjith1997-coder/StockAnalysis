@@ -29,6 +29,7 @@ from notification.bot_listener import init_telegram_bot
 import threading
 from zerodha.zerodha_connect import KiteConnect
 from post_market_analysis.runner import run_and_summarize
+from premarket.premarket_report import run_global_cues_report, run_preopen_report
 from urllib.parse import quote
 
 class Trend (Enum):
@@ -121,7 +122,7 @@ def monitor(stock: Stock) -> Tuple[MonitorResult, bool, Optional[str]]:
             score_value = score_result.total_score if score_result else stock.analysis["NoOfTrends"]
             logger.info(f"Trend found for {stock.stockName} - Priority: {priority_label}, Score: {score_value}")
             message = orchestrator.generate_analysis_message(stock)
-            TELEGRAM_NOTIFICATIONS.send_notification(message)
+            TELEGRAM_NOTIFICATIONS.send_notification(message, parse_mode="HTML")
             return MonitorResult.SUCCESS, True, message
         
         return MonitorResult.SUCCESS, False, None
@@ -536,41 +537,36 @@ def get_top_gainers_and_losers(stock_objs):
 
 def generate_top_gainers_and_losers_report(gainers, losers):
     """
-    Generates a report with top gainers and top losers based on percentage change in stock prices.
-
-    Args:
-        gainers (list): List of tuples of (stock symbol, percentage gain).
-        losers (list): List of tuples of (stock symbol, percentage loss).
-
-    Returns:
-        str: Report as a string.
+    Generates an HTML-formatted report with top gainers and top losers.
     """
-    report = "*********** Top Gainers ***********\n"
+    report = "\U0001F4C8 <b>Top Gainers</b>\n"
     for i, (stock, change_percent) in enumerate(gainers):
-        report += f"{i+1}. {stock}: {change_percent:.2f}%\n"
+        report += f"  \U0001F7E2 {i+1}. <b>{stock}</b>: <code>{change_percent:+.2f}%</code>\n"
 
-    report += "\n*********** Top Losers ***********\n"
+    report += f"\n\U0001F4C9 <b>Top Losers</b>\n"
     for i, (stock, change_percent) in enumerate(losers):
-        report += f"{i+1}. {stock}: {change_percent:.2f}%\n"
+        report += f"  \U0001F534 {i+1}. <b>{stock}</b>: <code>{change_percent:.2f}%</code>\n"
 
     return report
 
 def report_top_gainers_and_losers():
     top_gainers , top_losers = get_top_gainers_and_losers(shared.app_ctx.stock_token_obj_dict)
     report = generate_top_gainers_and_losers_report(top_gainers, top_losers)
-    TELEGRAM_NOTIFICATIONS.send_notification(report)
+    TELEGRAM_NOTIFICATIONS.send_notification(report, parse_mode="HTML")
     logger.info(f"EOD Report\n {report}")
 
 def report_index_data():
     logger.info("Reporting index data")
-    report = "*********** Index Report ***********\n"
+    report = "\U0001F3E6 <b>Index Report</b>\n"
     index_objs = list(shared.app_ctx.index_token_obj_dict.values())
     for index in index_objs:
         try:
-            report += f"  {index.stock_symbol}: {index.ltp:.2f} {index.ltp_change_perc:.2f}%\n"
+            dot = "\U0001F7E2" if index.ltp_change_perc >= 0 else "\U0001F534"
+            sign = "+" if index.ltp_change_perc >= 0 else ""
+            report += f"  {dot} <b>{index.stock_symbol}</b>: <code>{index.ltp:.2f}</code> ({sign}{index.ltp_change_perc:.2f}%)\n"
         except Exception as e:
             logger.error(f"Error while getting index data for {index}: {e}")
-    TELEGRAM_NOTIFICATIONS.send_notification(report)
+    TELEGRAM_NOTIFICATIONS.send_notification(report, parse_mode="HTML")
     logger.info(f"Index Report\n {report}")
 
 def report_commodity_data():
@@ -580,11 +576,10 @@ def report_commodity_data():
     if not commodity_objs:
         return
     
-    report = "*********** Commodity Report ***********\n"
+    report = "\U0001F6E2\uFE0F <b>Commodity Report</b>\n"
     for commodity in commodity_objs:
         try:
             if not commodity.is_price_data_empty():
-                # Get the last valid (non-NaN) close price
                 close_prices = commodity.priceData['Close'].dropna()
                 if close_prices.empty:
                     logger.warning(f"No valid price data for {commodity.stock_symbol}")
@@ -592,7 +587,6 @@ def report_commodity_data():
                     
                 current_price = close_prices.iloc[-1]
                 
-                # Check if price is valid
                 if pd.isna(current_price) or not isinstance(current_price, (int, float)):
                     logger.warning(f"Invalid price for {commodity.stock_symbol}: {current_price}")
                     continue
@@ -601,15 +595,16 @@ def report_commodity_data():
                     prev_close = commodity.prevDayOHLCV["CLOSE"]
                     if pd.notna(prev_close) and prev_close != 0:
                         change_percent = percentageChange(current_price, prev_close)
-                        report += f"  {commodity.stock_symbol}: ${current_price:.2f} {change_percent:+.2f}%\n"
+                        dot = "\U0001F7E2" if change_percent >= 0 else "\U0001F534"
+                        report += f"  {dot} <b>{commodity.stock_symbol}</b>: <code>${current_price:.2f}</code> ({change_percent:+.2f}%)\n"
                     else:
-                        report += f"  {commodity.stock_symbol}: ${current_price:.2f}\n"
+                        report += f"  <b>{commodity.stock_symbol}</b>: <code>${current_price:.2f}</code>\n"
                 else:
-                    report += f"  {commodity.stock_symbol}: ${current_price:.2f}\n"
+                    report += f"  <b>{commodity.stock_symbol}</b>: <code>${current_price:.2f}</code>\n"
         except Exception as e:
             logger.error(f"Error while getting commodity data for {commodity.stock_symbol}: {e}")
     
-    TELEGRAM_NOTIFICATIONS.send_notification(report)
+    TELEGRAM_NOTIFICATIONS.send_notification(report, parse_mode="HTML")
     logger.info(f"Commodity Report\n {report}")
 
 def report_global_indices_data():
@@ -619,7 +614,7 @@ def report_global_indices_data():
     if not global_indices_objs:
         return
     
-    report = "*********** Global Indices Report ***********\n"
+    report = "\U0001F30D <b>Global Indices Report</b>\n"
     
     # Group by region
     usa_indices = []
@@ -635,12 +630,14 @@ def report_global_indices_data():
         else:
             asia_indices.append(global_index)
     
+    region_icons = {"USA": "\U0001F1FA\U0001F1F8", "Europe": "\U0001F1EA\U0001F1FA", "Asia": "\U0001F30F"}
+
     def format_index_data(indices, region_name):
-        region_report = f"\n{region_name}:\n"
+        icon = region_icons.get(region_name, "")
+        region_report = f"\n{icon} <b>{region_name}</b>\n"
         for index in indices:
             try:
                 if not index.is_price_data_empty():
-                    # Get the last valid (non-NaN) close price
                     close_prices = index.priceData['Close'].dropna()
                     if close_prices.empty:
                         logger.warning(f"No valid price data for {index.stock_symbol}")
@@ -648,7 +645,6 @@ def report_global_indices_data():
                     
                     current_price = close_prices.iloc[-1]
                     
-                    # Check if price is valid
                     if pd.isna(current_price) or not isinstance(current_price, (int, float)):
                         logger.warning(f"Invalid price for {index.stock_symbol}: {current_price}")
                         continue
@@ -657,11 +653,12 @@ def report_global_indices_data():
                         prev_close = index.prevDayOHLCV["CLOSE"]
                         if pd.notna(prev_close) and prev_close != 0:
                             change_percent = percentageChange(current_price, prev_close)
-                            region_report += f"  {index.stock_symbol}: {current_price:.2f} {change_percent:+.2f}%\n"
+                            dot = "\U0001F7E2" if change_percent >= 0 else "\U0001F534"
+                            region_report += f"  {dot} <b>{index.stock_symbol}</b>: <code>{current_price:.2f}</code> ({change_percent:+.2f}%)\n"
                         else:
-                            region_report += f"  {index.stock_symbol}: {current_price:.2f}\n"
+                            region_report += f"  <b>{index.stock_symbol}</b>: <code>{current_price:.2f}</code>\n"
                     else:
-                        region_report += f"  {index.stock_symbol}: {current_price:.2f}\n"
+                        region_report += f"  <b>{index.stock_symbol}</b>: <code>{current_price:.2f}</code>\n"
             except Exception as e:
                 logger.error(f"Error while getting global index data for {index.stock_symbol}: {e}")
         return region_report
@@ -673,7 +670,7 @@ def report_global_indices_data():
     if asia_indices:
         report += format_index_data(asia_indices, "Asia")
     
-    TELEGRAM_NOTIFICATIONS.send_notification(report)
+    TELEGRAM_NOTIFICATIONS.send_notification(report, parse_mode="HTML")
     logger.info(f"Global Indices Report\n {report}")
 
 def report_52_week_high_low(max_items: int = 40, clear_after: bool = False):
@@ -686,7 +683,7 @@ def report_52_week_high_low(max_items: int = 40, clear_after: bool = False):
     low_objs  = shared.ticker_52_week_low_list
 
     if not high_objs and not low_objs:
-        TELEGRAM_NOTIFICATIONS.send_notification("52W High/Low: None today.")
+        TELEGRAM_NOTIFICATIONS.send_notification("\U0001F4A5 <b>52W High/Low</b>: None today.", parse_mode="HTML")
         logger.info("52W High/Low: None today.")
         return
 
@@ -732,44 +729,41 @@ def report_52_week_high_low(max_items: int = 40, clear_after: bool = False):
                 pass
         return price, chg
 
-    def build_section(title, stocks, sort_desc=True):
+    def build_section(title, icon, stocks, sort_desc=True):
         if not stocks:
-            return f"{title} (0): None"
+            return f"{icon} <b>{title}</b> (0): None"
         rows = []
         for s in stocks:
             p, c = price_and_change(s)
             rows.append({"symbol": s.stock_symbol, "price": p, "chg": c})
-        # Filter rows with price
         rows = [r for r in rows if r["price"] is not None]
-        # Sort highs by % change desc, lows asc
         rows.sort(key=lambda r: (r["chg"] if r["chg"] is not None else (-1e9 if sort_desc else 1e9)),
                   reverse=sort_desc)
 
         display = rows[:max_items]
         extra = len(rows) - len(display)
 
-        sym_w = max(6, *(len(r["symbol"]) for r in display)) if display else 6
-        header = f"{title} ({len(rows)})"
-        lines = [
-            header,
-            f"{'Symbol'.ljust(sym_w)}  {'Price':>9}  {'%Chg':>7}",
-            f"{'-'*sym_w}  {'-'*9}  {'-'*7}"
-        ]
+        lines = [f"{icon} <b>{title}</b> ({len(rows)})"]
         for r in display:
             price_str = f"{r['price']:.2f}" if r['price'] is not None else "NA"
-            chg_str = f"{r['chg']:+.2f}%" if r['chg'] is not None else "NA"
-            lines.append(f"{r['symbol'].ljust(sym_w)}  {price_str:>9}  {chg_str:>7}")
+            if r['chg'] is not None:
+                dot = "\U0001F7E2" if r['chg'] >= 0 else "\U0001F534"
+                chg_str = f"{r['chg']:+.2f}%"
+            else:
+                dot = "\u26AA"
+                chg_str = "NA"
+            lines.append(f"  {dot} <b>{r['symbol']}</b>: <code>{price_str:>9}</code>  {chg_str}")
         if extra > 0:
-            lines.append(f"... (+{extra} more)")
+            lines.append(f"  <i>... (+{extra} more)</i>")
         return "\n".join(lines)
 
     msg = (
-        "*********** 52-Week High / Low ***********\n"
-        + build_section("52W Highs", high_objs, sort_desc=True) + "\n\n"
-        + build_section("52W Lows", low_objs, sort_desc=False)
+        "\U0001F4A5 <b>52-Week High / Low</b>\n\n"
+        + build_section("52W Highs", "\U0001F4C8", high_objs, sort_desc=True) + "\n\n"
+        + build_section("52W Lows", "\U0001F4C9", low_objs, sort_desc=False)
     )
 
-    TELEGRAM_NOTIFICATIONS.send_notification(msg)
+    TELEGRAM_NOTIFICATIONS.send_notification(msg, parse_mode="HTML")
     logger.info(msg)
 
     if clear_after:
@@ -781,7 +775,7 @@ def intraday_analysis(loop = True, loop_wait_time = 30):
 
     logger.info("Market time open. Starting Intraday analysis")
 
-    TELEGRAM_NOTIFICATIONS.send_notification("*********** Intraday Analysis ***********")
+    TELEGRAM_NOTIFICATIONS.send_notification("\U0001F4C8 <b>Intraday Analysis Started</b> \U0001F4C8", parse_mode="HTML")
 
     orchestrator.reset_all_constants()
     is_in_time_period = isNowInTimePeriod(time(9,15), time(15,30), datetime.now().time())
@@ -833,7 +827,7 @@ def positional_analysis():
             sleep(time_to_sleep.total_seconds())
     
     logger.info("EOD analysis Started")
-    TELEGRAM_NOTIFICATIONS.send_notification("*********** EOD Analysis ***********")
+    TELEGRAM_NOTIFICATIONS.send_notification("\U0001F4CA <b>EOD Analysis Started</b> \U0001F4CA", parse_mode="HTML")
     orchestrator.reset_all_constants()
     try:
         results = fetch_and_analyze_stocks()
@@ -853,7 +847,7 @@ def positional_analysis():
             post_market_msg_list = run_and_summarize()
             if post_market_msg_list:
                 for msg in post_market_msg_list:
-                    TELEGRAM_NOTIFICATIONS.send_notification(msg)
+                    TELEGRAM_NOTIFICATIONS.send_notification(msg, parse_mode="HTML")
                     logger.info(msg)
         except Exception as e:
             logger.error(f"Post-market pipeline failed: {e}")
@@ -984,10 +978,45 @@ def start_stock_analysis():
     if PRODUCTION:
         if datetime.now().time() < time(9,15):
             now = datetime.now()
-            new_time = now.replace(hour=9, minute=15, second=0, microsecond=0)
-            time_to_sleep = new_time - now
-            logger.info("Sleeping for {} sec to 9:15 AM".format(time_to_sleep.total_seconds()))
-            sleep(time_to_sleep.total_seconds())
+            preopen_time = now.replace(hour=9, minute=7, second=0, microsecond=0)
+            market_open_time = now.replace(hour=9, minute=15, second=0, microsecond=0)
+
+            # --- Pre-market reports go to the POSITIONAL chat ---
+            TELEGRAM_NOTIFICATIONS.is_intraday = False
+            TELEGRAM_NOTIFICATIONS.send_notification("\U0001F4CB <b>Pre-Market Analysis Started</b> \U0001F4CB", parse_mode="HTML")
+
+            # --- Global Cues Report (available 24/7) — send immediately ---
+            try:
+                logger.info("Sending global cues & FII/DII report...")
+                run_global_cues_report()
+                logger.info("Global cues report sent successfully")
+            except Exception as e:
+                logger.error(f"Global cues report failed: {e}")
+
+            # --- Sleep until 9:07 AM for NSE pre-open data ---
+            now = datetime.now()
+            if now.time() < time(9, 7):
+                sleep_until_preopen = (preopen_time - now).total_seconds()
+                logger.info(f"Sleeping for {sleep_until_preopen:.0f}s until 9:07 AM for pre-open report")
+                sleep(sleep_until_preopen)
+
+            # --- NSE Pre-Open Session Report (only meaningful 9:00-9:08 AM) ---
+            try:
+                logger.info("Sending NSE pre-open session report...")
+                run_preopen_report()
+                logger.info("Pre-open session report sent successfully")
+            except Exception as e:
+                logger.error(f"Pre-open session report failed: {e}")
+
+            # --- Switch back to INTRADAY chat for market-hours notifications ---
+            TELEGRAM_NOTIFICATIONS.is_intraday = True
+
+            # --- Sleep until 9:15 AM for market open ---
+            now = datetime.now()
+            if now.time() < time(9, 15):
+                sleep_until_open = (market_open_time - now).total_seconds()
+                logger.info(f"Sleeping for {sleep_until_open:.0f}s until 9:15 AM market open")
+                sleep(sleep_until_open)
 
         is_in_time_period = isNowInTimePeriod(time(9,15), time(15,30), datetime.now().time())
         if is_in_time_period:
@@ -996,7 +1025,7 @@ def start_stock_analysis():
             positional_analysis()
         
         logger.info("shutting down the system.")
-        TELEGRAM_NOTIFICATIONS.send_notification("*********** System shutdown ***********")
+        TELEGRAM_NOTIFICATIONS.send_notification("\U0001F6D1 <b>System Shutdown</b> \U0001F6D1", parse_mode="HTML")
         # Shutdown system
         if SHUTDOWN_SYSTEM:
             from subprocess import run

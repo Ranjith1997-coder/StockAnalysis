@@ -159,152 +159,159 @@ class AnalyserOrchestrator:
             return found_trend, None
     
     def generate_analysis_message(self, stock, include_score=True):
-        # return message
+        """Generate an HTML-formatted analysis message for Telegram."""
         score_result = stock.analysis.get("ScoreResult")
-        
+
         # Priority emoji mapping
         priority_emoji = {
-            NotificationPriority.LOW: "📊",
-            NotificationPriority.MEDIUM: "📈",
-            NotificationPriority.HIGH: "🔥",
-            NotificationPriority.CRITICAL: "🚨"
+            NotificationPriority.LOW: "\U0001F4CA",
+            NotificationPriority.MEDIUM: "\U0001F4C8",
+            NotificationPriority.HIGH: "\U0001F525",
+            NotificationPriority.CRITICAL: "\U0001F6A8"
         }
-        
+
         # Build header with score info
         if include_score and score_result:
-            emoji = priority_emoji.get(score_result.priority, "📊")
+            emoji = priority_emoji.get(score_result.priority, "\U0001F4CA")
+            chg_dot = "\U0001F7E2" if stock.ltp_change_perc >= 0 else "\U0001F534"
             message_parts = [
-                f"{emoji} [{score_result.priority.value}] {stock.stock_symbol}: {stock.ltp:.2f} ({stock.ltp_change_perc:+.2f}%)",
-                f"Score: {score_result.total_score} | {score_result.dominant_sentiment} ({score_result.confidence_pct}%)",
+                f"{emoji} <b>[{score_result.priority.value}] {stock.stock_symbol}</b>: "
+                f"<code>{stock.ltp:.2f}</code> {chg_dot} ({stock.ltp_change_perc:+.2f}%)",
+                f"Score: <b>{score_result.total_score}</b> | "
+                f"<b>{score_result.dominant_sentiment}</b> ({score_result.confidence_pct}%)",
             ]
             if score_result.alignment_bonus > 0:
-                message_parts.append(f"Alignment: {score_result.signal_alignment} (+{score_result.alignment_bonus} bonus)")
+                message_parts.append(
+                    f"Alignment: {score_result.signal_alignment} (+{score_result.alignment_bonus} bonus)")
         else:
             message_parts = [
-                f"Stock: {stock.stock_symbol}: {stock.ltp:.2f} {stock.ltp_change_perc:.2f}%",
+                f"\U0001F4CA <b>{stock.stock_symbol}</b>: "
+                f"<code>{stock.ltp:.2f}</code> ({stock.ltp_change_perc:.2f}%)",
             ]
+
         for trend in ['BULLISH', 'BEARISH']:
             if stock.analysis[trend]:
-                message_parts.append(f"{trend}:")
+                trend_icon = "\U0001F7E2" if trend == 'BULLISH' else "\U0001F534"
+                message_parts.append(f"\n{trend_icon} <b>{trend}</b>:")
                 for analysis_type, data in stock.analysis[trend].items():
                     if analysis_type == 'Volume':
-                        message_parts.append(f" Volume {trend.lower()}: {data.Volume_rate_percent:.2f}%")
-                        message_parts.append(f" Price {trend.lower()}: {data.price_change_percent:.2f}%")
+                        message_parts.append(f"  Volume {trend.lower()}: <code>{data.Volume_rate_percent:.2f}%</code>")
+                        message_parts.append(f"  Price {trend.lower()}: <code>{data.price_change_percent:.2f}%</code>")
                     elif analysis_type == 'RSI':
-                        message_parts.append(f" RSI value: {data.value:.2f}")
+                        message_parts.append(f"  RSI: <code>{data.value:.2f}</code>")
                     elif analysis_type == 'rsi_crossover':
-                        message_parts.append(f" RSI crossover: pv:{data.prev_value:.2f}, cv:{data.curr_value:.2f} ")
+                        message_parts.append(f"  RSI crossover: <code>{data.prev_value:.2f} \u2192 {data.curr_value:.2f}</code>")
                     elif analysis_type == 'BollingerBand':
-                        def format_bollinger_band(data, trend):
-                            close_price = f"{data.close:.2f}"
-                            comparison = '<' if trend == 'BULLISH' else '>'
-                            band_type = 'Lower' if trend == 'BULLISH' else 'Upper'
-                            band_value = f"{data.lower_band:.2f}" if trend == 'BULLISH' else f"{data.upper_band:.2f}"
-                            return f" Bollinger Band: Price({close_price}) {comparison} {band_type}_band ({band_value})"
-                        message_parts.append(format_bollinger_band(data, trend))
+                        comparison = '&lt;' if trend == 'BULLISH' else '&gt;'
+                        band_type = 'Lower' if trend == 'BULLISH' else 'Upper'
+                        band_value = f"{data.lower_band:.2f}" if trend == 'BULLISH' else f"{data.upper_band:.2f}"
+                        message_parts.append(f"  BB: Price(<code>{data.close:.2f}</code>) {comparison} {band_type}(<code>{band_value}</code>)")
                     elif analysis_type == 'Single_candle_stick_pattern':
-                        message_parts.append(f" Single Candle stick Pattern: {data}")
+                        message_parts.append(f"  Candle (1): <i>{data}</i>")
                     elif analysis_type == 'Double_candle_stick_pattern':
-                        message_parts.append(f" Double Candle stick Pattern: {data}")  
+                        message_parts.append(f"  Candle (2): <i>{data}</i>")
                     elif analysis_type == "Triple_candle_stick_pattern":
-                        message_parts.append(f" Triple Candle stick Pattern: {data}")
+                        message_parts.append(f"  Candle (3): <i>{data}</i>")
                     elif analysis_type == 'FUTURE_ACTION':
-                        message_parts.append(f" Futures action: {data.action}, p%:{data.price_percentage:.2f}, oi%:{data.oi_percentage:.2f}")
+                        message_parts.append(f"  Futures: <b>{data.action}</b> p%:<code>{data.price_percentage:.2f}</code> oi%:<code>{data.oi_percentage:.2f}</code>")
                     elif analysis_type == 'vwap_deviation':
-                        message_parts.append(f" VWAP: Close({data.close:.2f}) {'<' if trend == 'BULLISH' else '>'} VWAP({data.vwap:.2f}) DEVIATION: {data.deviation:.2f}%")
-                        message_parts.append(f"   Intervals {'below' if trend == 'BULLISH' else 'above'} VWAP: {data.vwap_days}")
+                        cmp = '&lt;' if trend == 'BULLISH' else '&gt;'
+                        side = 'below' if trend == 'BULLISH' else 'above'
+                        message_parts.append(f"  VWAP: <code>{data.close:.2f}</code> {cmp} <code>{data.vwap:.2f}</code> Dev:<code>{data.deviation:.2f}%</code>")
+                        message_parts.append(f"    Intervals {side}: {data.vwap_days}")
                     elif analysis_type == 'MACD':
-                        message_parts.append(f" MACD : {data}")
+                        message_parts.append(f"  MACD: <i>{data}</i>")
                     elif analysis_type == 'BUY_SELL':
-                        message_parts.append(f" BUY_SELL : buy_quantity: {data.buy_quantity:.2f} {'>' if trend == 'BULLISH' else '<'} sell_quantity: {data.sell_quantity:.2f} ")
+                        cmp = '&gt;' if trend == 'BULLISH' else '&lt;'
+                        message_parts.append(f"  BuySell: Buy <code>{data.buy_quantity:.0f}</code> {cmp} Sell <code>{data.sell_quantity:.0f}</code>")
                     elif analysis_type == 'FUTURE_BREAKOUT_PATTERN':
-                        message_parts.append(f" FUTURE_BREAKOUT_PATTERN : {data.pattern}")
+                        message_parts.append(f"  Futures Breakout: <b>{data.pattern}</b>")
                     elif analysis_type == 'EMA_CROSSOVER':
-                        message_parts.append(f" EMA_CROSSOVER :{data.direction}, fast_ema: {data.fast_ema:.2f} {'>' if trend == 'BULLISH' else '<'} slow_ema: {data.slow_ema:.2f} ")
+                        cmp = '&gt;' if trend == 'BULLISH' else '&lt;'
+                        message_parts.append(f"  EMA: <b>{data.direction}</b> fast:<code>{data.fast_ema:.2f}</code> {cmp} slow:<code>{data.slow_ema:.2f}</code>")
                     elif analysis_type == 'PCR_EXTREME':
-                        message_parts.append(f" PCR_EXTREME : {data.zone} PCR={data.pcr_value:.3f} - {data.signal}")
+                        message_parts.append(f"  PCR Extreme: <b>{data.zone}</b> PCR=<code>{data.pcr_value:.3f}</code> - <i>{data.signal}</i>")
                     elif analysis_type == 'PCR_BIAS':
-                        message_parts.append(f" PCR_BIAS : {data.bias} PCR={data.total_pcr:.3f}")
+                        message_parts.append(f"  PCR Bias: <b>{data.bias}</b> PCR=<code>{data.total_pcr:.3f}</code>")
                     elif analysis_type == 'PCR_TREND':
-                        message_parts.append(f" PCR_TREND : {data.trend} PCR={data.pcr_current:.3f} Change={data.pcr_change_pct:.2f}%")
+                        message_parts.append(f"  PCR Trend: <b>{data.trend}</b> PCR=<code>{data.pcr_current:.3f}</code> \u0394=<code>{data.pcr_change_pct:.2f}%</code>")
                     elif analysis_type == 'PCR_REVERSAL':
-                        message_parts.append(f" PCR_REVERSAL : {data.reversal_type} {data.previous_zone}->{data.current_zone}")
-                        message_parts.append(f"   PCR: {data.previous_pcr:.3f} -> {data.current_pcr:.3f} | {data.signal}")
+                        message_parts.append(f"  PCR Reversal: <b>{data.reversal_type}</b> {data.previous_zone}\u2192{data.current_zone}")
+                        message_parts.append(f"    PCR: <code>{data.previous_pcr:.3f}</code> \u2192 <code>{data.current_pcr:.3f}</code> | <i>{data.signal}</i>")
                     elif analysis_type == 'MAX_PAIN':
-                        message_parts.append(f" MAX_PAIN : Price={data.current_price:.2f} MaxPain={data.max_pain_strike:.2f} Dev={data.deviation_pct:+.2f}% ({data.signal_strength})")
+                        message_parts.append(f"  MaxPain: Price=<code>{data.current_price:.2f}</code> MP=<code>{data.max_pain_strike:.2f}</code> Dev=<code>{data.deviation_pct:+.2f}%</code> ({data.signal_strength})")
                         if data.pcr:
-                            message_parts.append(f"   Expiry={data.expiry} PCR={data.pcr:.3f} Type={data.max_pain_type}")
+                            message_parts.append(f"    Exp={data.expiry} PCR=<code>{data.pcr:.3f}</code> Type={data.max_pain_type}")
                     elif analysis_type == 'MAX_PAIN_ALIGNMENT':
-                        message_parts.append(f" MAX_PAIN_ALIGNMENT : {data.alignment} MaxPain={data.max_pain_type} PCR={data.pcr_type}")
-                        message_parts.append(f"   {data.signal}")
+                        message_parts.append(f"  MP Align: <b>{data.alignment}</b> MP={data.max_pain_type} PCR={data.pcr_type}")
+                        message_parts.append(f"    <i>{data.signal}</i>")
                     elif analysis_type == 'OI_SUPPORT_RESISTANCE':
-                        message_parts.append(f" OI_S/R : Support={data.support_strike:.0f}(OI:{data.support_oi:,.0f}) Resistance={data.resistance_strike:.0f}(OI:{data.resistance_oi:,.0f})")
-                        message_parts.append(f"   Price={data.current_price:.2f} | {data.signal}")
+                        message_parts.append(f"  OI S/R: S=<code>{data.support_strike:.0f}</code>(OI:{data.support_oi:,.0f}) R=<code>{data.resistance_strike:.0f}</code>(OI:{data.resistance_oi:,.0f})")
+                        message_parts.append(f"    Price=<code>{data.current_price:.2f}</code> | <i>{data.signal}</i>")
                     elif analysis_type == 'OI_BUILDUP':
-                        message_parts.append(f" OI_BUILDUP : {data.buildup_type} CallΔ={data.total_call_oi_change:+,.0f} PutΔ={data.total_put_oi_change:+,.0f} Ratio={data.call_put_oi_change_ratio:.1f}x")
-                        message_parts.append(f"   {data.signal}")
+                        ratio_val = data.call_put_oi_change_ratio
+                        ratio_str = f"{ratio_val:.1f}x" if ratio_val != float('inf') else "\u221E"
+                        message_parts.append(f"  OI Buildup: <b>{data.buildup_type}</b> Call\u0394=<code>{data.total_call_oi_change:+,.0f}</code> Put\u0394=<code>{data.total_put_oi_change:+,.0f}</code> Ratio=<code>{ratio_str}</code>")
+                        message_parts.append(f"    <i>{data.signal}</i>")
                     elif analysis_type == 'OI_WALL':
-                        message_parts.append(f" OI_WALL : {data.wall_type}")
-                        message_parts.append(f"   {data.signal}")
-                    elif analysis_type == 'OI_CALC_MAX_PAIN':
-                        message_parts.append(f" OI_MAX_PAIN : MaxPain={data.max_pain_strike:.0f} Price={data.current_price:.2f} Dev={data.deviation_pct:+.2f}%")
-                        message_parts.append(f"   {data.signal}")
+                        message_parts.append(f"  OI Wall: <b>{data.wall_type}</b>")
+                        message_parts.append(f"    <i>{data.signal}</i>")
                     elif analysis_type == 'OI_SHIFT':
                         call_center_str = f"{data.call_oi_center:.0f}" if data.call_oi_center else "N/A"
                         put_center_str = f"{data.put_oi_center:.0f}" if data.put_oi_center else "N/A"
-                        message_parts.append(f" OI_SHIFT : CallCenter={call_center_str} PutCenter={put_center_str}")
-                        message_parts.append(f"   NewCallOI={data.total_new_call_oi:,.0f} NewPutOI={data.total_new_put_oi:,.0f}")
-                        message_parts.append(f"   {data.signal}")
+                        message_parts.append(f"  OI Shift: CallCenter=<code>{call_center_str}</code> PutCenter=<code>{put_center_str}</code>")
+                        message_parts.append(f"    NewCall=<code>{data.total_new_call_oi:,.0f}</code> NewPut=<code>{data.total_new_put_oi:,.0f}</code>")
+                        message_parts.append(f"    <i>{data.signal}</i>")
                     elif analysis_type == 'OI_INTRADAY_TREND':
-                        message_parts.append(f" OI_TREND : Call={data.call_oi_trend}({data.call_oi_change_pct:+.1f}%) Put={data.put_oi_trend}({data.put_oi_change_pct:+.1f}%) PCR={data.pcr_trend}({data.first_pcr:.2f}→{data.last_pcr:.2f})")
-                        message_parts.append(f"   [{data.snapshots_used} snapshots] {data.signal}")
+                        message_parts.append(f"  OI Trend: Call={data.call_oi_trend}(<code>{data.call_oi_change_pct:+.1f}%</code>) Put={data.put_oi_trend}(<code>{data.put_oi_change_pct:+.1f}%</code>) PCR={data.pcr_trend}(<code>{data.first_pcr:.2f}\u2192{data.last_pcr:.2f}</code>)")
+                        message_parts.append(f"    [{data.snapshots_used} snaps] <i>{data.signal}</i>")
                     elif analysis_type == 'OI_SR_SHIFT':
-                        message_parts.append(f" OI_SR_SHIFT : R:{data.first_resistance:.0f}→{data.last_resistance:.0f} S:{data.first_support:.0f}→{data.last_support:.0f}")
-                        message_parts.append(f"   [{data.snapshots_used} snapshots] {data.signal}")
+                        message_parts.append(f"  OI S/R Shift: R:<code>{data.first_resistance:.0f}\u2192{data.last_resistance:.0f}</code> S:<code>{data.first_support:.0f}\u2192{data.last_support:.0f}</code>")
+                        message_parts.append(f"    [{data.snapshots_used} snaps] <i>{data.signal}</i>")
 
         if stock.analysis['NEUTRAL']:
-            message_parts.append("NEUTRAL:")
+            message_parts.append(f"\n\u26AA <b>NEUTRAL</b>:")
             for analysis_type, data in stock.analysis['NEUTRAL'].items():
                 if analysis_type == '52-week-high':
-                    message_parts.append("  Price at 52 WEEK HIGH")
+                    message_parts.append("  \U0001F4A5 Price at <b>52 WEEK HIGH</b>")
                 elif analysis_type == '52-week-low':
-                    message_parts.append("  Price at 52 WEEK LOW")
+                    message_parts.append("  \U0001F4A5 Price at <b>52 WEEK LOW</b>")
                 elif analysis_type == 'ATR':
-                    message_parts.append(f" ATR : {data.atr_value:.2f} {data.atr_percentage:.2f}% ")
+                    message_parts.append(f"  ATR: <code>{data.atr_value:.2f}</code> (<code>{data.atr_percentage:.2f}%</code>)")
                 elif analysis_type == 'IV_SPIKE':
                     if isinstance(data, list):
                         for iv_spike in data:
-                            message_parts.append(f" IV_SPIKE : {iv_spike.expiry} {iv_spike.iv_change:.2f}% ")
+                            message_parts.append(f"  IV Spike: {iv_spike.expiry} <code>{iv_spike.iv_change:.2f}%</code>")
                     else:
-                        message_parts.append(f" IV_SPIKE : {data.expiry} {data.iv_change:.2f}% ")
+                        message_parts.append(f"  IV Spike: {data.expiry} <code>{data.iv_change:.2f}%</code>")
                 elif analysis_type == 'IV_TREND':
                     if isinstance(data, list):
                         for iv_trend in data:
-                            message_parts.append(f" IV_TREND : {iv_trend.expiry} {iv_trend.trend} {iv_trend.iv_change_pct:.2f}%")
+                            message_parts.append(f"  IV Trend: {iv_trend.expiry} <b>{iv_trend.trend}</b> <code>{iv_trend.iv_change_pct:.2f}%</code>")
                     else:
-                        message_parts.append(f" IV_TREND : {data.expiry} {data.trend} {data.iv_change_pct:.2f}%")
+                        message_parts.append(f"  IV Trend: {data.expiry} <b>{data.trend}</b> <code>{data.iv_change_pct:.2f}%</code>")
                 elif analysis_type == 'FUTURE_PVO_PATTERN':
                     if isinstance(data, list):
                         for fut_data in data:
-                            message_parts.append(f" FuturesPVOPattern : {fut_data.pattern} p:{fut_data.price_pct:.2f}%, v:{fut_data.vol_pct:.2f}%, oi:{fut_data.oi_pct:.2f}%")
+                            message_parts.append(f"  PVO: <b>{fut_data.pattern}</b> p:<code>{fut_data.price_pct:.2f}%</code> v:<code>{fut_data.vol_pct:.2f}%</code> oi:<code>{fut_data.oi_pct:.2f}%</code>")
                     else:
-                        message_parts.append(f" FuturesPVOPattern : {data.pattern} p:{data.price_pct:.2f}%, v:{data.vol_pct:.2f}%, oi:{data.oi_pct:.2f}%")
+                        message_parts.append(f"  PVO: <b>{data.pattern}</b> p:<code>{data.price_pct:.2f}%</code> v:<code>{data.vol_pct:.2f}%</code> oi:<code>{data.oi_pct:.2f}%</code>")
                 elif analysis_type == 'PCR_DIVERGENCE':
-                    message_parts.append(f" PCR_DIVERGENCE : Near={data.near_month_pcr:.3f} Far={data.far_month_pcr:.3f} Div={data.divergence:.3f} - {data.signal}")
+                    message_parts.append(f"  PCR Div: Near=<code>{data.near_month_pcr:.3f}</code> Far=<code>{data.far_month_pcr:.3f}</code> Div=<code>{data.divergence:.3f}</code> - <i>{data.signal}</i>")
                 elif analysis_type == 'MAX_PAIN_TREND':
-                    message_parts.append(f" MAX_PAIN_TREND : {data.trend} Curr={data.curr_max_pain:.2f} Prev={data.prev_max_pain:.2f}")
-                    message_parts.append(f"   Expiry={data.expiry} CurrDev={data.curr_deviation:+.2f}% PrevDev={data.prev_deviation:+.2f}%")
+                    message_parts.append(f"  MP Trend: <b>{data.trend}</b> Curr=<code>{data.curr_max_pain:.2f}</code> Prev=<code>{data.prev_max_pain:.2f}</code>")
+                    message_parts.append(f"    Exp={data.expiry} CurrDev=<code>{data.curr_deviation:+.2f}%</code> PrevDev=<code>{data.prev_deviation:+.2f}%</code>")
                 elif analysis_type == 'MAX_PAIN_ALIGNMENT':
-                    message_parts.append(f" MAX_PAIN_ALIGNMENT : {data.alignment} MaxPain={data.max_pain_type} PCR={data.pcr_type}")
-                    message_parts.append(f"   {data.signal}")
+                    message_parts.append(f"  MP Align: <b>{data.alignment}</b> MP={data.max_pain_type} PCR={data.pcr_type}")
+                    message_parts.append(f"    <i>{data.signal}</i>")
                 elif analysis_type == 'OI_SUPPORT_RESISTANCE':
-                    message_parts.append(f" OI_S/R : Range={data.oi_range} | Support={data.support_strike:.0f} Resistance={data.resistance_strike:.0f}")
+                    message_parts.append(f"  OI S/R: Range={data.oi_range} | S=<code>{data.support_strike:.0f}</code> R=<code>{data.resistance_strike:.0f}</code>")
                 elif analysis_type == 'OI_INTRADAY_TREND':
-                    message_parts.append(f" OI_TREND : Call={data.call_oi_trend} Put={data.put_oi_trend} PCR={data.pcr_trend}")
-                    message_parts.append(f"   {data.signal}")
+                    message_parts.append(f"  OI Trend: Call={data.call_oi_trend} Put={data.put_oi_trend} PCR={data.pcr_trend}")
+                    message_parts.append(f"    <i>{data.signal}</i>")
                 elif analysis_type == 'OI_SR_SHIFT':
-                    message_parts.append(f" OI_SR_SHIFT : R:{data.first_resistance:.0f}→{data.last_resistance:.0f} S:{data.first_support:.0f}→{data.last_support:.0f}")
-                    message_parts.append(f"   {data.signal}")
+                    message_parts.append(f"  OI S/R Shift: R:<code>{data.first_resistance:.0f}\u2192{data.last_resistance:.0f}</code> S:<code>{data.first_support:.0f}\u2192{data.last_support:.0f}</code>")
+                    message_parts.append(f"    <i>{data.signal}</i>")
 
         return "\n".join(message_parts)
 

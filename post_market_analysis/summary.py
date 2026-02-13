@@ -1,5 +1,11 @@
 import math
 
+def _val_dot(v):
+    """Return green/red dot emoji based on sign of value."""
+    if v is None or (isinstance(v, float) and math.isnan(v)):
+        return "\u26AA"
+    return "\U0001F7E2" if v >= 0 else "\U0001F534"
+
 class BaseSummaryFormatter:
     source_name = None
     def format(self, analysis: dict) -> str:
@@ -30,14 +36,18 @@ class FiiDiiSummaryFormatter(BaseSummaryFormatter):
 
     def format(self, analysis: dict) -> str:
         if not analysis:
-            return "No FII/DII data"
+            return "\U0001F4B0 <b>FII/DII Flows</b>: No data"
+
+        fii_cash = analysis.get('fii_cash_net')
+        dii_cash = analysis.get('dii_cash_net')
+
         header_latest = (
-            f"FII/DII Flows (Latest {analysis.get('date')})\n"
-            f"FII Cash: {analysis.get('fii_cash_net')}  "
-            f"DII Cash: {analysis.get('dii_cash_net')}  "
-            f"5d FII: {analysis.get('fii_cash_5d_sum')}  "
-            f"Idx Fut: {analysis.get('fii_index_fut_net')}  "
-            f"Idx Opt: {analysis.get('fii_index_opt_net')}"
+            f"\U0001F4B0 <b>FII/DII Flows</b> ({analysis.get('date')})\n"
+            f"  {_val_dot(fii_cash)} FII Cash: <code>{fii_cash}</code>  "
+            f"{_val_dot(dii_cash)} DII Cash: <code>{dii_cash}</code>\n"
+            f"  5d FII: <code>{analysis.get('fii_cash_5d_sum')}</code>  "
+            f"Idx Fut: <code>{analysis.get('fii_index_fut_net')}</code>  "
+            f"Idx Opt: <code>{analysis.get('fii_index_opt_net')}</code>"
         )
         last5 = analysis.get("last5") or []
         if not last5:
@@ -64,11 +74,13 @@ class FiiDiiSummaryFormatter(BaseSummaryFormatter):
             )
             data_lines.append(line)
 
-        block = "\n".join([header_latest, "", header_row, sep_row, *data_lines])
+        table = "\n".join([header_row, sep_row, *data_lines])
+        block = header_latest + "\n\n<pre>" + table + "</pre>"
         # length guard (Telegram)
         if len(block) > 3900:
             data_lines = data_lines[-5:]
-            block = "\n".join([header_latest, "", header_row, sep_row, *data_lines])
+            table = "\n".join([header_row, sep_row, *data_lines])
+            block = header_latest + "\n\n<pre>" + table + "</pre>"
         return block
 
 class SectorSummaryFormatter(BaseSummaryFormatter):
@@ -76,10 +88,10 @@ class SectorSummaryFormatter(BaseSummaryFormatter):
 
     def format(self, analysis: dict) -> str:
         if not analysis:
-            return "No sector performance data"
+            return "\U0001F3ED <b>Sector Performance</b>: No data"
         tg = analysis.get("top_gainers", [])
         tl = analysis.get("top_losers", [])
-        # Helpers
+
         def fmt_chg(v):
             if v is None:
                 return "NA"
@@ -87,34 +99,37 @@ class SectorSummaryFormatter(BaseSummaryFormatter):
         def fmt_mcap(v):
             if v is None:
                 return "NA"
-            # Keep large numbers compact (cr -> crore approx) if huge? Just show full for now.
             return f"{int(v):,}"
-        def build_table(title, rows):
+
+        def build_table(title, icon, rows):
             if not rows:
-                return f"{title}: None"
-            name_w = max(6, *(len(r["name"]) for r in rows))
-            lines = [title,
-                     f"{'Sector'.ljust(name_w)}  {'Chg%':>7}  {'Mcap':>10}  {'Stocks':>6}",
-                     f"{'-'*name_w}  {'-'*7}  {'-'*10}  {'-'*6}"]
+                return f"{icon} <b>{title}</b>: None"
+            lines = [f"{icon} <b>{title}</b>"]
             for r in rows:
+                chg = r.get('chg')
+                dot = _val_dot(chg)
                 lines.append(
-                    f"{r['name'].ljust(name_w)}  {fmt_chg(r['chg']):>7}  {fmt_mcap(r['mcap']):>10}  {str(r['stocks']):>6}"
+                    f"  {dot} <b>{r['name']}</b>: {fmt_chg(chg)}  "
+                    f"Mcap: <code>{fmt_mcap(r['mcap'])}</code>  Stocks: {r['stocks']}"
                 )
             return "\n".join(lines)
 
+        adv = analysis.get('advancing', 0)
+        dec = analysis.get('declining', 0)
         header = (
-            f"Sectors ({analysis.get('as_of')}) "
-            f"Adv:{analysis.get('advancing')}/Dec:{analysis.get('declining')}/Unch:{analysis.get('unchanged')} "
-            f"Total:{analysis.get('total_sectors')}"
+            f"\U0001F3ED <b>Sector Performance</b> ({analysis.get('as_of')})\n"
+            f"  \U0001F7E2 Advancing: {adv}  \U0001F534 Declining: {dec}  "
+            f"\u26AA Unchanged: {analysis.get('unchanged')}  Total: {analysis.get('total_sectors')}"
         )
         block = "\n".join([
             header,
-            build_table("Top 5 Gaining Sectors", tg),
             "",
-            build_table("Top 5 Losing Sectors", tl)
+            build_table("Top 5 Gaining Sectors", "\U0001F4C8", tg),
+            "",
+            build_table("Top 5 Losing Sectors", "\U0001F4C9", tl)
         ])
         if len(block) > 3900:
-            block = block[:3900] + "\n(truncated)"
+            block = block[:3900] + "\n<i>(truncated)</i>"
         return block
 
 class FoParticipantOISummaryFormatter(BaseSummaryFormatter):
@@ -122,27 +137,37 @@ class FoParticipantOISummaryFormatter(BaseSummaryFormatter):
 
     def format(self, analysis: dict) -> str:
         if not analysis or not analysis.get("last5"):
-            return "No F&O Participant OI data"
+            return "\U0001F4CA <b>F&amp;O Participant OI</b>: No data"
         rows = analysis["last5"]
         participants = ["Client", "DII", "FII", "Pro"]
-        # Header
-        lines = ["Futures Participant OI Contracts (last 5 days)"]
+
+        lines = ["\U0001F4CA <b>F&amp;O Participant OI</b> (last 5 days)"]
+
+        # Build monospace table
         header = "Date       " + "  ".join(f"{p:>8}" for p in participants)
-        lines.append(header)
-        lines.append("-" * len(header))
+        sep = "-" * len(header)
+        table_lines = [header, sep]
         for day in rows:
             date = day["date"]
             nets = []
             for p in participants:
                 v = day.get(p, {}).get("Net")
                 nets.append(f"{v:+,}" if v is not None else "NA")
-            lines.append(f"{date}  " + "  ".join(f"{n:>8}" for n in nets))
+            table_lines.append(f"{date}  " + "  ".join(f"{n:>8}" for n in nets))
+
+        lines.append("<pre>" + "\n".join(table_lines) + "</pre>")
+
         # Details for latest day
         latest = rows[0]
-        lines.append("\nLatest breakdown:")
+        lines.append("\n<b>Latest breakdown:</b>")
         for p in participants:
             d = latest.get(p, {})
-            lines.append(f"{p:>7}: Net {d.get('Net','NA'):>8} | Long {d.get('Long','NA'):>8} | Short {d.get('Short','NA'):>8}")
+            net_v = d.get('Net')
+            dot = _val_dot(net_v)
+            net_s = f"{net_v:>8}" if net_v is not None else "      NA"
+            long_s = f"{d.get('Long','NA'):>8}"
+            short_s = f"{d.get('Short','NA'):>8}"
+            lines.append(f"  {dot} <b>{p}</b>: Net <code>{net_s}</code> | Long <code>{long_s}</code> | Short <code>{short_s}</code>")
         return "\n".join(lines)
 
 class IndexReturnsSummaryFormatter(BaseSummaryFormatter):
@@ -150,49 +175,46 @@ class IndexReturnsSummaryFormatter(BaseSummaryFormatter):
 
     def format(self, analysis: dict) -> str:
         if not analysis:
-            return "No index returns data"
+            return "\U0001F4C8 <b>NSE Indices</b>: No data"
         
         tg = analysis.get("top_gainers", [])
         tl = analysis.get("top_losers", [])
         
-        def build_table(title, rows):
+        def build_table(title, icon, rows):
             if not rows:
-                return f"{title}: None"
+                return f"{icon} <b>{title}</b>: None"
             
-            # Find max name width
-            name_w = max(10, *(len(r["name"]) for r in rows))
-            
-            lines = [
-                title,
-                f"{'Index'.ljust(name_w)}  {'Chg%':>7}  {'Pts':>8}  {'Close':>10}",
-                f"{'-'*name_w}  {'-'*7}  {'-'*8}  {'-'*10}"
-            ]
-            
+            lines = [f"{icon} <b>{title}</b>"]
             for r in rows:
-                chg_pct = f"{r['chg_pct']:+.2f}%" if r['chg_pct'] is not None else "NA"
-                chg_pts = f"{r['chg_pts']:+.2f}" if r['chg_pts'] is not None else "NA"
-                close = f"{r['close']:.2f}" if r['close'] is not None else "NA"
+                chg_pct = r.get('chg_pct')
+                dot = _val_dot(chg_pct)
+                chg_pct_s = f"{chg_pct:+.2f}%" if chg_pct is not None else "NA"
+                chg_pts_s = f"{r['chg_pts']:+.2f}" if r.get('chg_pts') is not None else "NA"
+                close_s = f"{r['close']:.2f}" if r.get('close') is not None else "NA"
                 lines.append(
-                    f"{r['name'].ljust(name_w)}  {chg_pct:>7}  {chg_pts:>8}  {close:>10}"
+                    f"  {dot} <b>{r['name']}</b>: <code>{close_s}</code>  "
+                    f"{chg_pct_s}  ({chg_pts_s} pts)"
                 )
-            
             return "\n".join(lines)
-        
+
+        adv = analysis.get('advancing', 0)
+        dec = analysis.get('declining', 0)
         header = (
-            f"NSE Indices ({analysis.get('as_of')}) "
-            f"Adv:{analysis.get('advancing')}/Dec:{analysis.get('declining')}/Unch:{analysis.get('unchanged')} "
-            f"Total:{analysis.get('total_indices')}"
+            f"\U0001F4C8 <b>NSE Indices</b> ({analysis.get('as_of')})\n"
+            f"  \U0001F7E2 Advancing: {adv}  \U0001F534 Declining: {dec}  "
+            f"\u26AA Unchanged: {analysis.get('unchanged')}  Total: {analysis.get('total_indices')}"
         )
         
         block = "\n".join([
             header,
-            build_table("Top 10 Gaining Indices", tg),
             "",
-            build_table("Top 10 Losing Indices", tl)
+            build_table("Top 10 Gaining Indices", "\U0001F4C8", tg),
+            "",
+            build_table("Top 10 Losing Indices", "\U0001F4C9", tl)
         ])
         
         if len(block) > 3900:
-            block = block[:3900] + "\n(truncated)"
+            block = block[:3900] + "\n<i>(truncated)</i>"
         
         return block
 

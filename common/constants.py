@@ -89,7 +89,6 @@ ANALYSIS_WEIGHTS = {
     # OI Chain Analysis (per-strike data from Sensibull OI endpoint)
     "OI_SUPPORT_RESISTANCE": 14,  # OI-based support/resistance levels
     "OI_WALL": 13,                # OI wall detection (concentrated OI barriers)
-    "OI_CALC_MAX_PAIN": 12,       # Independent max pain from raw OI data
     "OI_SHIFT": 13,               # OI position migration / shift analysis
     "OI_INTRADAY_TREND": 15,      # Intraday OI + PCR trend across periodic snapshots
     "OI_SR_SHIFT": 14,            # Intraday support/resistance level migration
@@ -118,7 +117,7 @@ NOTIFICATION_PRIORITY = {
 
 # Minimum score required to send any notification
 # Raised to filter out weak multi-signal noise — need at least 4-5 aligned signals
-MIN_NOTIFICATION_SCORE = 65
+MIN_NOTIFICATION_SCORE = 75
 
 # Bonus multipliers for signal alignment
 SIGNAL_ALIGNMENT_BONUS = {
@@ -134,7 +133,7 @@ TECHNICAL_ANALYSES = {"RSI", "MACD", "EMA_CROSSOVER", "ThreeContInc", "ThreeCont
 OPTIONS_ANALYSES = {"MAX_PAIN", "MAX_PAIN_TREND", "MAX_PAIN_ALIGNMENT", 
                     "PCR_EXTREME", "PCR_BIAS", "PCR_TREND", "PCR_REVERSAL", "PCR_DIVERGENCE",
                     "IV_SPIKE", "IV_TREND",
-                    "OI_BUILDUP", "OI_SUPPORT_RESISTANCE", "OI_WALL", "OI_CALC_MAX_PAIN", "OI_SHIFT",
+                    "OI_BUILDUP", "OI_SUPPORT_RESISTANCE", "OI_WALL", "OI_SHIFT",
                     "OI_INTRADAY_TREND", "OI_SR_SHIFT"}
 FUTURES_ANALYSES = {"FUTURES_PREMIUM"}
 
