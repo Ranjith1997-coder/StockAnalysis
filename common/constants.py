@@ -81,10 +81,18 @@ ANALYSIS_WEIGHTS = {
     
     # Futures Analysis
     "FUTURES_PREMIUM": 12,
-    "OI_BUILDUP": 14,
+    "OI_BUILDUP": 14,             # OI buildup from per-strike OI chain data
     "FUTURE_ACTION": 14,          # Futures OI + Price action
     "FUTURE_BREAKOUT_PATTERN": 15,# ORB breakout with OI confirmation
     "FUTURE_PVO_PATTERN": 10,     # Price/Volume/OI patterns
+    
+    # OI Chain Analysis (per-strike data from Sensibull OI endpoint)
+    "OI_SUPPORT_RESISTANCE": 14,  # OI-based support/resistance levels
+    "OI_WALL": 13,                # OI wall detection (concentrated OI barriers)
+    "OI_CALC_MAX_PAIN": 12,       # Independent max pain from raw OI data
+    "OI_SHIFT": 13,               # OI position migration / shift analysis
+    "OI_INTRADAY_TREND": 15,      # Intraday OI + PCR trend across periodic snapshots
+    "OI_SR_SHIFT": 14,            # Intraday support/resistance level migration
     
     # Price Levels
     "52-week-high": 8,
@@ -95,16 +103,22 @@ ANALYSIS_WEIGHTS = {
 }
 
 # Notification priority thresholds
-# Score determines which priority bucket the notification falls into
+# Updated for expanded analyser pool (Technical + Options + Futures + OI Chain)
+# Typical score ranges:
+#   - 2-3 random signals: ~25-35 (noise, should NOT notify)
+#   - 4-5 aligned signals across 2 categories: ~50-65 (notable)
+#   - 6-8 aligned signals across 3+ categories: ~75-110 (actionable)
+#   - 8+ signals with OI chain confirmation + alignment bonus: ~120+ (strong conviction)
 NOTIFICATION_PRIORITY = {
-    "LOW": 20,       # Score >= 20: Low priority (informational)
-    "MEDIUM": 35,    # Score >= 35: Medium priority (notable)
-    "HIGH": 50,      # Score >= 50: High priority (actionable)
-    "CRITICAL": 70   # Score >= 70: Critical (strong conviction signal)
+    "LOW": 30,       # Score >= 30: Low priority (informational, 3+ signals)
+    "MEDIUM": 50,    # Score >= 50: Medium priority (multiple categories agree)
+    "HIGH": 75,      # Score >= 75: High priority (strong multi-category confirmation)
+    "CRITICAL": 100  # Score >= 100: Critical (overwhelming aligned signals)
 }
 
 # Minimum score required to send any notification
-MIN_NOTIFICATION_SCORE = 45
+# Raised to filter out weak multi-signal noise — need at least 4-5 aligned signals
+MIN_NOTIFICATION_SCORE = 65
 
 # Bonus multipliers for signal alignment
 SIGNAL_ALIGNMENT_BONUS = {
@@ -119,8 +133,10 @@ TECHNICAL_ANALYSES = {"RSI", "MACD", "EMA_CROSSOVER", "ThreeContInc", "ThreeCont
                       "TwoContInc", "TwoContDec", "Marubozu"}
 OPTIONS_ANALYSES = {"MAX_PAIN", "MAX_PAIN_TREND", "MAX_PAIN_ALIGNMENT", 
                     "PCR_EXTREME", "PCR_BIAS", "PCR_TREND", "PCR_REVERSAL", "PCR_DIVERGENCE",
-                    "IV_SPIKE", "IV_TREND"}
-FUTURES_ANALYSES = {"FUTURES_PREMIUM", "OI_BUILDUP"}
+                    "IV_SPIKE", "IV_TREND",
+                    "OI_BUILDUP", "OI_SUPPORT_RESISTANCE", "OI_WALL", "OI_CALC_MAX_PAIN", "OI_SHIFT",
+                    "OI_INTRADAY_TREND", "OI_SR_SHIFT"}
+FUTURES_ANALYSES = {"FUTURES_PREMIUM"}
 
 # NEUTRAL signals that should NOT contribute to score
 # These indicate uncertainty/mixed signals rather than actionable info
@@ -128,6 +144,8 @@ NEUTRAL_EXCLUDE_FROM_SCORE = {
     "MAX_PAIN_ALIGNMENT",   # When DIVERGENT - conflicting signals
     "MAX_PAIN_TREND",       # When DIVERGING - price moving away from max pain
     "PCR_DIVERGENCE",       # Term structure divergence - uncertainty
+    "OI_SUPPORT_RESISTANCE",# When neutral - just informational S/R levels
+    "OI_SR_SHIFT",          # When neutral - range squeeze/expand is informational
 }
 
 # NEUTRAL signals that SHOULD contribute to score (informational but valuable)
