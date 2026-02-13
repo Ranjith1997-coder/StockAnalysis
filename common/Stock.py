@@ -109,7 +109,9 @@ class Stock:
                 "per_expiry_map": None,
                 "nse_stats": None
             },
-            "historical_data": pd.DataFrame()  # Time-series data
+            "historical_data": pd.DataFrame(),  # Time-series data
+            "oi_chain": None,          # Latest per-strike OI chain snapshot
+            "oi_chain_history": []     # List of periodic OI chain snapshots (max 15 for intraday)
         }
 
         self._zerodha_lock = threading.Lock()
@@ -906,6 +908,167 @@ class Stock:
             return None
         except Exception as e:
             logger.error(f"Unexpected error fetching Sensibull data for {self.stock_symbol}: {e}")
+            return None
+
+    def _build_oi_chain_expiry_body(self):
+        """
+        Build the expiries dict for the OI chain POST request body.
+        Uses expiry data from the already-fetched Sensibull insights (per_expiry_map).
+        Enables the nearest expiry and disables the rest.
+        
+        Returns:
+            dict: Expiries dict for the POST body, or None if no expiry data available.
+        """
+        per_expiry_map = self.sensibull_ctx.get("current", {}).get("per_expiry_map")
+        if not per_expiry_map:
+            logger.debug(f"No per_expiry_map available for {self.stock_symbol}, cannot build OI chain request")
+            return None
+        
+        sorted_expiries = sorted(per_expiry_map.keys())
+        if not sorted_expiries:
+            return None
+        
+        expiries_body = {}
+        nearest_expiry = sorted_expiries[0]
+        for exp in sorted_expiries:
+            expiries_body[exp] = {
+                "is_weekly": False,
+                "is_enabled": exp == nearest_expiry
+            }
+        
+        return expiries_body
+
+    def fetch_sensibull_oi_chain(self, mode="positional"):
+        """
+        Fetches per-strike OI chain data from Sensibull OI chart endpoint (POST).
+        
+        For positional mode:
+            - Fetches a single snapshot and stores it for analysis.
+        
+        For intraday mode:
+            - Called every ~5 minutes by the monitor loop.
+            - Stores the latest snapshot and appends to oi_chain_history (max 15 entries).
+            - History is used by OIChainAnalyser for trend detection.
+        
+        API: POST https://oxide.sensibull.com/v1/compute/1/oi_graphs/oi_chart
+        Body: {underlying, expiries, atm_strike_selection, auto_update, show_prev_oi, ...}
+        
+        Requires: fetch_sensibull_data() to be called first (for expiry info).
+        
+        Args:
+            mode (str): "positional" for single snapshot or "intraday" for periodic updates.
+        
+        Returns:
+            dict: The OI chain snapshot stored in sensibull_ctx["oi_chain"], or None on failure.
+        """
+        try:
+            url = "https://oxide.sensibull.com/v1/compute/1/oi_graphs/oi_chart"
+            
+            # Build expiry body from insights data
+            expiries_body = self._build_oi_chain_expiry_body()
+            if not expiries_body:
+                logger.warning(f"Cannot fetch OI chain for {self.stock_symbol}: no expiry data available. "
+                              "Ensure fetch_sensibull_data() is called first.")
+                return None
+            
+            # Build POST body
+            request_body = {
+                "underlying": self.stock_symbol,
+                "expiries": expiries_body,
+                "atm_strike_selection": "twenty",
+                "input_min_strike": None,
+                "input_max_strike": None,
+                "auto_update": "full_day",
+                "show_prev_oi": True
+            }
+            
+            logger.info(f"Fetching Sensibull OI chain for {self.stock_symbol} ({mode}) from {url}")
+            
+            response = requests.post(url, json=request_body, timeout=15)
+            response.raise_for_status()
+            
+            data = response.json()
+            
+            if not data.get("success") or "payload" not in data:
+                logger.warning(f"Sensibull OI chain API returned unsuccessful response for {self.stock_symbol}")
+                return None
+            
+            payload = data["payload"]
+            
+            # Find the enabled expiry from response
+            expiries_resp = payload.get("input", {}).get("expiries", {})
+            enabled_expiry = None
+            for exp_date, exp_info in expiries_resp.items():
+                if exp_info.get("is_enabled", False):
+                    enabled_expiry = exp_date
+                    break
+            
+            # Build OI chain snapshot
+            timestamp = datetime.datetime.now()
+            oi_chain = {
+                "timestamp": timestamp,
+                "date": payload.get("input", {}).get("date", datetime.datetime.now().strftime("%Y-%m-%d")),
+                "expiry": enabled_expiry,
+                "underlying_symbol": self.stock_symbol,
+                
+                # Price data
+                "prev_ltp": payload.get("prev_ltp"),
+                "current_ltp": payload.get("current_ltp") or payload.get("date_ltp"),
+                "date_ltp": payload.get("date_ltp"),
+                "atm_strike": payload.get("atm_strike"),
+                
+                # Aggregated OI
+                "total_call_oi": payload.get("total_call_oi", 0),
+                "total_put_oi": payload.get("total_put_oi", 0),
+                "total_call_oi_change": payload.get("total_call_oi_change", 0),
+                "total_put_oi_change": payload.get("total_put_oi_change", 0),
+                "pcr": payload.get("pcr"),
+                
+                # Per-strike data
+                "per_strike_data": payload.get("per_strike_data", {}),
+                "strike_list": payload.get("strike_list", []),
+                "min_strike": payload.get("min_strike"),
+                "max_strike": payload.get("max_strike"),
+                
+                # Metadata
+                "underlying_token": payload.get("underlying_token"),
+            }
+            
+            # Store latest snapshot
+            self.sensibull_ctx["oi_chain"] = oi_chain
+            
+            # Handle history based on mode
+            if mode == "intraday":
+                # Append to history, keep last 15 snapshots
+                history = self.sensibull_ctx["oi_chain_history"]
+                history.append(oi_chain)
+                if len(history) > 15:
+                    self.sensibull_ctx["oi_chain_history"] = history[-15:]
+                
+                logger.info(f"Sensibull OI chain fetched for {self.stock_symbol} (intraday): "
+                           f"PCR={oi_chain['pcr']}, LTP={oi_chain['current_ltp']}, "
+                           f"Strikes={len(oi_chain['per_strike_data'])}, "
+                           f"History={len(self.sensibull_ctx['oi_chain_history'])}/15, "
+                           f"Call OI={oi_chain['total_call_oi']:,}, Put OI={oi_chain['total_put_oi']:,}")
+            else:
+                # Positional: single snapshot, clear history
+                self.sensibull_ctx["oi_chain_history"] = [oi_chain]
+                
+                logger.info(f"Sensibull OI chain fetched for {self.stock_symbol} (positional): "
+                           f"PCR={oi_chain['pcr']}, LTP={oi_chain['current_ltp']}, "
+                           f"Strikes={len(oi_chain['per_strike_data'])}, "
+                           f"Call OI={oi_chain['total_call_oi']:,}, Put OI={oi_chain['total_put_oi']:,}")
+            
+            return oi_chain
+            
+        except requests.exceptions.Timeout:
+            logger.error(f"Timeout while fetching Sensibull OI chain for {self.stock_symbol}")
+            return None
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Request error fetching Sensibull OI chain for {self.stock_symbol}: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Unexpected error fetching Sensibull OI chain for {self.stock_symbol}: {e}")
             return None
 
     @property
