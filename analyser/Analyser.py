@@ -237,6 +237,30 @@ class AnalyserOrchestrator:
                     elif analysis_type == 'MAX_PAIN_ALIGNMENT':
                         message_parts.append(f" MAX_PAIN_ALIGNMENT : {data.alignment} MaxPain={data.max_pain_type} PCR={data.pcr_type}")
                         message_parts.append(f"   {data.signal}")
+                    elif analysis_type == 'OI_SUPPORT_RESISTANCE':
+                        message_parts.append(f" OI_S/R : Support={data.support_strike:.0f}(OI:{data.support_oi:,.0f}) Resistance={data.resistance_strike:.0f}(OI:{data.resistance_oi:,.0f})")
+                        message_parts.append(f"   Price={data.current_price:.2f} | {data.signal}")
+                    elif analysis_type == 'OI_BUILDUP':
+                        message_parts.append(f" OI_BUILDUP : {data.buildup_type} CallΔ={data.total_call_oi_change:+,.0f} PutΔ={data.total_put_oi_change:+,.0f} Ratio={data.call_put_oi_change_ratio:.1f}x")
+                        message_parts.append(f"   {data.signal}")
+                    elif analysis_type == 'OI_WALL':
+                        message_parts.append(f" OI_WALL : {data.wall_type}")
+                        message_parts.append(f"   {data.signal}")
+                    elif analysis_type == 'OI_CALC_MAX_PAIN':
+                        message_parts.append(f" OI_MAX_PAIN : MaxPain={data.max_pain_strike:.0f} Price={data.current_price:.2f} Dev={data.deviation_pct:+.2f}%")
+                        message_parts.append(f"   {data.signal}")
+                    elif analysis_type == 'OI_SHIFT':
+                        call_center_str = f"{data.call_oi_center:.0f}" if data.call_oi_center else "N/A"
+                        put_center_str = f"{data.put_oi_center:.0f}" if data.put_oi_center else "N/A"
+                        message_parts.append(f" OI_SHIFT : CallCenter={call_center_str} PutCenter={put_center_str}")
+                        message_parts.append(f"   NewCallOI={data.total_new_call_oi:,.0f} NewPutOI={data.total_new_put_oi:,.0f}")
+                        message_parts.append(f"   {data.signal}")
+                    elif analysis_type == 'OI_INTRADAY_TREND':
+                        message_parts.append(f" OI_TREND : Call={data.call_oi_trend}({data.call_oi_change_pct:+.1f}%) Put={data.put_oi_trend}({data.put_oi_change_pct:+.1f}%) PCR={data.pcr_trend}({data.first_pcr:.2f}→{data.last_pcr:.2f})")
+                        message_parts.append(f"   [{data.snapshots_used} snapshots] {data.signal}")
+                    elif analysis_type == 'OI_SR_SHIFT':
+                        message_parts.append(f" OI_SR_SHIFT : R:{data.first_resistance:.0f}→{data.last_resistance:.0f} S:{data.first_support:.0f}→{data.last_support:.0f}")
+                        message_parts.append(f"   [{data.snapshots_used} snapshots] {data.signal}")
 
         if stock.analysis['NEUTRAL']:
             message_parts.append("NEUTRAL:")
@@ -272,6 +296,14 @@ class AnalyserOrchestrator:
                     message_parts.append(f"   Expiry={data.expiry} CurrDev={data.curr_deviation:+.2f}% PrevDev={data.prev_deviation:+.2f}%")
                 elif analysis_type == 'MAX_PAIN_ALIGNMENT':
                     message_parts.append(f" MAX_PAIN_ALIGNMENT : {data.alignment} MaxPain={data.max_pain_type} PCR={data.pcr_type}")
+                    message_parts.append(f"   {data.signal}")
+                elif analysis_type == 'OI_SUPPORT_RESISTANCE':
+                    message_parts.append(f" OI_S/R : Range={data.oi_range} | Support={data.support_strike:.0f} Resistance={data.resistance_strike:.0f}")
+                elif analysis_type == 'OI_INTRADAY_TREND':
+                    message_parts.append(f" OI_TREND : Call={data.call_oi_trend} Put={data.put_oi_trend} PCR={data.pcr_trend}")
+                    message_parts.append(f"   {data.signal}")
+                elif analysis_type == 'OI_SR_SHIFT':
+                    message_parts.append(f" OI_SR_SHIFT : R:{data.first_resistance:.0f}→{data.last_resistance:.0f} S:{data.first_support:.0f}→{data.last_support:.0f}")
                     message_parts.append(f"   {data.signal}")
 
         return "\n".join(message_parts)

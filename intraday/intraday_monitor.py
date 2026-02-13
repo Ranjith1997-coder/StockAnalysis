@@ -18,6 +18,7 @@ from analyser.candleStickPatternAnalyser import CandleStickAnalyser
 from analyser.IVAnalyser import IVAnalyser
 from analyser.PCRAnalyser import PCRAnalyser
 from analyser.MaxPainAnalyser import MaxPainAnalyser
+from analyser.OIChainAnalyser import OIChainAnalyser
 from common.logging_util import logger
 from typing import List, Tuple, Optional
 from enum import Enum
@@ -92,6 +93,13 @@ def monitor(stock: Stock) -> Tuple[MonitorResult, bool, Optional[str]]:
                 logger.debug(f"Sensibull data fetched successfully for {stock.stockName}")
             except Exception as e:
                 logger.error(f"Error fetching Sensibull data for {stock.stockName}: {e}")
+            
+            # Fetch Sensibull OI chain data (per-strike OI analysis)
+            try:
+                stock.fetch_sensibull_oi_chain(mode=analysis_type)
+                logger.debug(f"Sensibull OI chain data fetched successfully for {stock.stockName}")
+            except Exception as e:
+                logger.error(f"Error fetching Sensibull OI chain data for {stock.stockName}: {e}")
 
         if stock.is_index:
             trend_found, score_result = (
@@ -949,6 +957,7 @@ def init():
     orchestrator.register(FuturesAnalyser())
     orchestrator.register(PCRAnalyser())
     orchestrator.register(MaxPainAnalyser())
+    orchestrator.register(OIChainAnalyser())
     if ENABLE_NSE_DERIVATIVES:
         shared.app_ctx.stockExpires = NSE_DATA_CLASS.expiry_dates_future()        
     
