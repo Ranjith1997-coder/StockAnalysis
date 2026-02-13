@@ -40,9 +40,6 @@ class OIChainAnalyser(BaseAnalyzer):
     OI_WALL_MAX_DISTANCE_PCT = 5.0          # Only walls within 5% of price
     OI_WALL_MIN_ASYMMETRY_RATIO = 2.0       # Distance ratio for asymmetry signal
     
-    # Max Pain
-    MAX_PAIN_MIN_DEVIATION_PCT = 3.0        # Only signal for >3% deviation from max pain
-    
     # OI Shift
     OI_SHIFT_MIN_WRITING_RATIO = 5.0        # 5x imbalance required for shift signal
     OI_SHIFT_CENTER_THRESHOLD_PCT = 3.0     # OI center must be >3% from price for directional
@@ -74,7 +71,6 @@ class OIChainAnalyser(BaseAnalyzer):
             OIChainAnalyser.OI_WALL_STD_MULTIPLIER = 1.8
             OIChainAnalyser.OI_WALL_MAX_DISTANCE_PCT = 3.0
             OIChainAnalyser.OI_WALL_MIN_ASYMMETRY_RATIO = 1.8
-            OIChainAnalyser.MAX_PAIN_MIN_DEVIATION_PCT = 2.0
             OIChainAnalyser.OI_SHIFT_MIN_WRITING_RATIO = 4.0
             OIChainAnalyser.OI_SHIFT_CENTER_THRESHOLD_PCT = 2.0
             OIChainAnalyser.OI_TREND_MIN_SNAPSHOTS = 5
@@ -93,7 +89,6 @@ class OIChainAnalyser(BaseAnalyzer):
             OIChainAnalyser.OI_WALL_STD_MULTIPLIER = 2.0
             OIChainAnalyser.OI_WALL_MAX_DISTANCE_PCT = 5.0
             OIChainAnalyser.OI_WALL_MIN_ASYMMETRY_RATIO = 2.0
-            OIChainAnalyser.MAX_PAIN_MIN_DEVIATION_PCT = 3.0
             OIChainAnalyser.OI_SHIFT_MIN_WRITING_RATIO = 5.0
             OIChainAnalyser.OI_SHIFT_CENTER_THRESHOLD_PCT = 3.0
             OIChainAnalyser.OI_TREND_MIN_SNAPSHOTS = 5
@@ -387,7 +382,10 @@ class OIChainAnalyser(BaseAnalyzer):
                 "signal", "expiry"
             ])
             
-            # Avoid division by zero
+            # Ratio logic:
+            # - Both positive: normal ratio comparison
+            # - Call positive + Put negative/zero: extreme bearish (writing + unwinding) → inf
+            # - Put positive + Call negative/zero: extreme bullish (writing + unwinding) → inf
             call_put_ratio = (total_call_oi_change / total_put_oi_change) if total_put_oi_change > 0 else float('inf')
             put_call_ratio = (total_put_oi_change / total_call_oi_change) if total_call_oi_change > 0 else float('inf')
             
@@ -401,8 +399,15 @@ class OIChainAnalyser(BaseAnalyzer):
                 
                 top_strikes = significant_call_buildup[:5]
                 key_strikes_str = ", ".join([f"{s[0]:.0f}(+{s[1]:,.0f})" for s in top_strikes])
-                signal = (f"ABNORMAL call writing ({call_put_ratio:.1f}x put writing). "
-                         f"Call OI +{total_call_oi_change:,.0f} vs Put OI +{total_put_oi_change:,.0f}. "
+                if call_put_ratio == float('inf'):
+                    if total_put_oi_change < 0:
+                        ratio_str = f"call writing + put unwinding"
+                    else:
+                        ratio_str = f"pure call writing (no put activity)"
+                else:
+                    ratio_str = f"{call_put_ratio:.1f}x put writing"
+                signal = (f"ABNORMAL {ratio_str}. "
+                         f"Call OI {total_call_oi_change:+,.0f} vs Put OI {total_put_oi_change:+,.0f}. "
                          f"Key strikes: {key_strikes_str}")
                 
                 stock.set_analysis("BEARISH", "OI_BUILDUP", OIBuildup(
@@ -423,8 +428,15 @@ class OIChainAnalyser(BaseAnalyzer):
                 
                 top_strikes = significant_put_buildup[:5]
                 key_strikes_str = ", ".join([f"{s[0]:.0f}(+{s[1]:,.0f})" for s in top_strikes])
-                signal = (f"ABNORMAL put writing ({put_call_ratio:.1f}x call writing). "
-                         f"Put OI +{total_put_oi_change:,.0f} vs Call OI +{total_call_oi_change:,.0f}. "
+                if put_call_ratio == float('inf'):
+                    if total_call_oi_change < 0:
+                        ratio_str = f"put writing + call unwinding"
+                    else:
+                        ratio_str = f"pure put writing (no call activity)"
+                else:
+                    ratio_str = f"{put_call_ratio:.1f}x call writing"
+                signal = (f"ABNORMAL {ratio_str}. "
+                         f"Put OI {total_put_oi_change:+,.0f} vs Call OI {total_call_oi_change:+,.0f}. "
                          f"Key strikes: {key_strikes_str}")
                 
                 stock.set_analysis("BULLISH", "OI_BUILDUP", OIBuildup(
@@ -445,7 +457,7 @@ class OIChainAnalyser(BaseAnalyzer):
                 top_call_strikes = significant_call_buildup[:3]
                 key_strikes_str = ", ".join([f"{s[0]:.0f}(+{s[1]:,.0f})" for s in top_call_strikes])
                 signal = (f"Extreme call dominance ({call_put_ratio:.1f}x). "
-                         f"Call OI +{total_call_oi_change:,.0f} vs Put OI +{total_put_oi_change:,.0f}. "
+                         f"Call OI {total_call_oi_change:+,.0f} vs Put OI {total_put_oi_change:+,.0f}. "
                          f"Top strikes: {key_strikes_str}")
                 
                 stock.set_analysis("BEARISH", "OI_BUILDUP", OIBuildup(
@@ -466,7 +478,7 @@ class OIChainAnalyser(BaseAnalyzer):
                 top_put_strikes = significant_put_buildup[:3]
                 key_strikes_str = ", ".join([f"{s[0]:.0f}(+{s[1]:,.0f})" for s in top_put_strikes])
                 signal = (f"Extreme put dominance ({put_call_ratio:.1f}x). "
-                         f"Put OI +{total_put_oi_change:,.0f} vs Call OI +{total_call_oi_change:,.0f}. "
+                         f"Put OI {total_put_oi_change:+,.0f} vs Call OI {total_call_oi_change:+,.0f}. "
                          f"Top strikes: {key_strikes_str}")
                 
                 stock.set_analysis("BULLISH", "OI_BUILDUP", OIBuildup(
@@ -640,108 +652,7 @@ class OIChainAnalyser(BaseAnalyzer):
             return False
 
     # ──────────────────────────────────────────────────────────────────────────
-    # 4. Max Pain Calculation from Raw OI
-    # ──────────────────────────────────────────────────────────────────────────
-    @BaseAnalyzer.both
-    @BaseAnalyzer.index_both
-    def analyse_calculated_max_pain(self, stock: Stock):
-        """
-        Calculate Max Pain from per-strike OI data independently.
-        
-        Max Pain = Strike where total loss for option buyers is maximum
-                 = Strike where sum of (Call OI * max(0, strike - S)) + 
-                   (Put OI * max(0, S - strike)) is minimum for all strikes S.
-        
-        This provides an independent verification against Sensibull's pre-calculated
-        max pain used in MaxPainAnalyser.
-        """
-        try:
-            per_strike_data, meta = self._get_oi_chain_data(stock)
-            if per_strike_data is None:
-                return False
-            
-            current_ltp = meta["current_ltp"]
-            if not current_ltp:
-                return False
-            
-            # Build strike and OI arrays
-            strikes = []
-            call_ois = []
-            put_ois = []
-            
-            for strike_str, data in per_strike_data.items():
-                strike = float(strike_str)
-                strikes.append(strike)
-                call_ois.append(data.get("call_oi", 0))
-                put_ois.append(data.get("put_oi", 0))
-            
-            if len(strikes) < 3:
-                return False
-            
-            strikes = np.array(strikes)
-            call_ois = np.array(call_ois)
-            put_ois = np.array(put_ois)
-            
-            # For each potential expiry price (each strike), calculate total intrinsic value
-            total_pain = []
-            for test_price in strikes:
-                # Call intrinsic value: max(0, test_price - strike) for ITM calls
-                call_itv = np.maximum(0, test_price - strikes) * call_ois
-                # Put intrinsic value: max(0, strike - test_price) for ITM puts
-                put_itv = np.maximum(0, strikes - test_price) * put_ois
-                total_pain.append(np.sum(call_itv) + np.sum(put_itv))
-            
-            total_pain = np.array(total_pain)
-            min_pain_idx = np.argmin(total_pain)
-            max_pain_strike = strikes[min_pain_idx]
-            max_pain_value = total_pain[min_pain_idx]
-            
-            # Calculate deviation from max pain
-            deviation_pct = ((current_ltp - max_pain_strike) / max_pain_strike) * 100
-            
-            CalcMaxPain = namedtuple("CalcMaxPain", [
-                "max_pain_strike", "max_pain_value", "current_price",
-                "deviation_pct", "above_max_pain", "signal", "expiry"
-            ])
-            
-            above_max_pain = current_ltp > max_pain_strike
-            
-            # ── Gate: Only signal for significant deviations ──
-            if abs(deviation_pct) < OIChainAnalyser.MAX_PAIN_MIN_DEVIATION_PCT:
-                logger.debug(f"Max Pain skipped for {stock.stock_symbol}: deviation "
-                           f"{deviation_pct:+.2f}% < ±{OIChainAnalyser.MAX_PAIN_MIN_DEVIATION_PCT}% threshold")
-                return False
-            
-            if deviation_pct > 0:
-                # Price above max pain → expect gravitational pull down
-                signal = (f"Price {current_ltp:.2f} above calculated MaxPain {max_pain_strike:.0f} "
-                         f"by {deviation_pct:+.2f}% - downward pressure expected")
-                sentiment = "BEARISH"
-            else:
-                # Price below max pain → expect gravitational pull up
-                signal = (f"Price {current_ltp:.2f} below calculated MaxPain {max_pain_strike:.0f} "
-                         f"by {deviation_pct:+.2f}% - upward pressure expected")
-                sentiment = "BULLISH"
-            
-            stock.set_analysis(sentiment, "OI_CALC_MAX_PAIN", CalcMaxPain(
-                max_pain_strike=max_pain_strike,
-                max_pain_value=max_pain_value,
-                current_price=current_ltp,
-                deviation_pct=deviation_pct,
-                above_max_pain=above_max_pain,
-                signal=signal,
-                expiry=meta.get("expiry")
-            ))
-            logger.info(f"Calculated MaxPain for {stock.stock_symbol}: {signal}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error in analyse_calculated_max_pain for {stock.stock_symbol}: {str(e)}")
-            logger.error(f"Traceback: {traceback.format_exc()}")
-            return False
-
-    # ──────────────────────────────────────────────────────────────────────────
-    # 5. OI Shift / Position Migration Analysis
+    # 4. OI Shift / Position Migration Analysis
     # ──────────────────────────────────────────────────────────────────────────
     @BaseAnalyzer.both
     @BaseAnalyzer.index_both

@@ -34,9 +34,14 @@ class TELEGRAM_NOTIFICATIONS:
         else:
             print('Message sent')
     @classmethod
-    def send_notification(cls, message):
-         # Pass your Access Token here
-        # Make a dictionary that includes, title and body
+    def send_notification(cls, message, parse_mode=None):
+        """Send a Telegram message.
+
+        Args:
+            message: The text to send.
+            parse_mode: Optional. 'HTML' or 'Markdown' for rich formatting.
+                        None sends as plain text (backward-compatible default).
+        """
         if not cls.is_production:
             return
         TELEGRAM_CHAT_ID = ""
@@ -49,6 +54,8 @@ class TELEGRAM_NOTIFICATIONS:
             TELEGRAM_TOKEN = TELEGRAM_POSITIONAL_TOKEN
             
         msg = {"chat_id": TELEGRAM_CHAT_ID, "text": message}
+        if parse_mode:
+            msg["parse_mode"] = parse_mode
         resp = None
         try:
             resp = requests.post(
