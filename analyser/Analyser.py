@@ -207,11 +207,17 @@ class AnalyserOrchestrator:
                         band_value = f"{data.lower_band:.2f}" if trend == 'BULLISH' else f"{data.upper_band:.2f}"
                         message_parts.append(f"  BB: Price(<code>{data.close:.2f}</code>) {comparison} {band_type}(<code>{band_value}</code>)")
                     elif analysis_type == 'Single_candle_stick_pattern':
-                        message_parts.append(f"  Candle (1): <i>{data}</i>")
+                        entries = data if isinstance(data, list) else [data]
+                        for d in entries:
+                            message_parts.append(f"  Candle (1): <i>{d}</i>")
                     elif analysis_type == 'Double_candle_stick_pattern':
-                        message_parts.append(f"  Candle (2): <i>{data}</i>")
+                        entries = data if isinstance(data, list) else [data]
+                        for d in entries:
+                            message_parts.append(f"  Candle (2): <i>{d}</i>")
                     elif analysis_type == "Triple_candle_stick_pattern":
-                        message_parts.append(f"  Candle (3): <i>{data}</i>")
+                        entries = data if isinstance(data, list) else [data]
+                        for d in entries:
+                            message_parts.append(f"  Candle (3): <i>{d}</i>")
                     elif analysis_type == 'FUTURE_ACTION':
                         message_parts.append(f"  Futures: <b>{data.action}</b> p%:<code>{data.price_percentage:.2f}</code> oi%:<code>{data.oi_percentage:.2f}</code>")
                     elif analysis_type == 'vwap_deviation':
@@ -229,6 +235,17 @@ class AnalyserOrchestrator:
                     elif analysis_type == 'EMA_CROSSOVER':
                         cmp = '&gt;' if trend == 'BULLISH' else '&lt;'
                         message_parts.append(f"  EMA: <b>{data.direction}</b> fast:<code>{data.fast_ema:.2f}</code> {cmp} slow:<code>{data.slow_ema:.2f}</code>")
+                    elif analysis_type == 'SUPERTREND':
+                        arrow = '\u2191' if trend == 'BULLISH' else '\u2193'
+                        message_parts.append(f"  Supertrend: {arrow} ST=<code>{data.supertrend_value:.2f}</code> Price=<code>{data.close:.2f}</code> | <i>{data.signal}</i>")
+                    elif analysis_type == 'RSI_DIVERGENCE':
+                        message_parts.append(f"  RSI Div: <b>{data.divergence_type}</b> P:<code>{data.price_previous:.2f}\u2192{data.price_current:.2f}</code> RSI:<code>{data.rsi_previous:.1f}\u2192{data.rsi_current:.1f}</code>")
+                    elif analysis_type == 'STOCHASTIC':
+                        message_parts.append(f"  Stoch: %K=<code>{data.k_value:.1f}</code> %D=<code>{data.d_value:.1f}</code> | <i>{data.signal}</i>")
+                    elif analysis_type == 'OBV':
+                        message_parts.append(f"  OBV: <b>{data.divergence_type}</b> Price={data.price_trend} OBV={data.obv_trend}")
+                    elif analysis_type == 'PIVOT_POINTS':
+                        message_parts.append(f"  Pivot: <b>{data.signal}</b> Price=<code>{data.close:.2f}</code> {data.level_name}=<code>{data.level_value:.2f}</code> PP=<code>{data.pivot:.2f}</code>")
                     elif analysis_type == 'PCR_EXTREME':
                         message_parts.append(f"  PCR Extreme: <b>{data.zone}</b> PCR=<code>{data.pcr_value:.3f}</code> - <i>{data.signal}</i>")
                     elif analysis_type == 'PCR_BIAS':
