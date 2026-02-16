@@ -56,16 +56,19 @@ ANALYSIS_WEIGHTS = {
     "VOLUME": 10,
     "Volume": 10,                 # Alternative key
     "BUY_SELL": 10,               # Buy/Sell quantity imbalance
+    "SUPERTREND": 15,             # Supertrend reversal signal
+    "RSI_DIVERGENCE": 18,         # RSI divergence - high conviction reversal
+    "STOCHASTIC": 12,             # Stochastic oscillator crossover
+    "OBV": 12,                    # On-Balance Volume divergence
+    "PIVOT_POINTS": 10,           # Pivot point breakout/breakdown
     
     # Candlestick Patterns
-    "ThreeContInc": 12,
-    "ThreeContDec": 12,
-    "TwoContInc": 8,
-    "TwoContDec": 8,
-    "Marubozu": 10,
-    "Single_candle_stick_pattern": 8,
-    "Double_candle_stick_pattern": 10,
-    "Triple_candle_stick_pattern": 12,
+    # Single: Marubozu, Hammer, Shooting Star
+    "Single_candle_stick_pattern": 10,
+    # Double: Bullish/Bearish Engulfing, Piercing Line, Dark Cloud Cover, 2-continuous
+    "Double_candle_stick_pattern": 13,
+    # Triple: Morning Star, Evening Star, 3-continuous
+    "Triple_candle_stick_pattern": 15,
     
     # Options & Derivatives Analysis
     "MAX_PAIN": 15,
@@ -102,21 +105,28 @@ ANALYSIS_WEIGHTS = {
 }
 
 # Notification priority thresholds
-# Updated for expanded analyser pool (Technical + Options + Futures + OI Chain)
-# Typical score ranges:
-#   - 2-3 random signals: ~25-35 (noise, should NOT notify)
-#   - 4-5 aligned signals across 2 categories: ~50-65 (notable)
-#   - 6-8 aligned signals across 3+ categories: ~75-110 (actionable)
-#   - 8+ signals with OI chain confirmation + alignment bonus: ~120+ (strong conviction)
+# Recalibrated for expanded analyser pool:
+#   ~18 technical indicators (RSI, MACD, Supertrend, RSI Divergence, Stochastic, OBV,
+#    Pivot Points, EMA, Bollinger, VWAP, ATR, Volume, BuySell + 3 candlestick tiers)
+#   ~10 options/OI chain signals, ~5 futures signals
+#
+# Typical score ranges with alignment bonuses:
+#   - 2-3 random mixed signals: ~25-35 × 1.0 = 25-35  (noise, ignore)
+#   - 3-4 aligned technical only: ~40-55 × 1.3 = 52-71 (informational)
+#   - 4-5 strong aligned technical: ~55-70 × 1.3 = 71-91 (notable trend)
+#   - 5-6 cross-category (tech + options): ~70-85 × 1.5 = 105-127 (actionable)
+#   - 7+ across 3+ categories: ~90-120 × 1.5 = 135-180 (strong conviction)
 NOTIFICATION_PRIORITY = {
-    "LOW": 30,       # Score >= 30: Low priority (informational, 3+ signals)
-    "MEDIUM": 50,    # Score >= 50: Medium priority (multiple categories agree)
-    "HIGH": 75,      # Score >= 75: High priority (strong multi-category confirmation)
-    "CRITICAL": 100  # Score >= 100: Critical (overwhelming aligned signals)
+    "LOW": 35,       # Score >= 35: 3-4 aligned signals, worth monitoring
+    "MEDIUM": 60,    # Score >= 60: 4-5 aligned signals, notable trend forming
+    "HIGH": 90,      # Score >= 90: Strong cross-category confirmation, actionable
+    "CRITICAL": 130  # Score >= 130: Overwhelming conviction across 3+ categories
 }
 
 # Minimum score required to send any notification
-# Raised to filter out weak multi-signal noise — need at least 4-5 aligned signals
+# Lowered from 75 → 60 to include MEDIUM-priority signals, since the expanded
+# technical pool (Supertrend, RSI Divergence, Stochastic, OBV, Pivot Points,
+# enhanced candlestick patterns) provides higher confidence at moderate scores
 MIN_NOTIFICATION_SCORE = 75
 
 # Bonus multipliers for signal alignment
@@ -128,8 +138,10 @@ SIGNAL_ALIGNMENT_BONUS = {
 }
 
 # Analysis categories for alignment detection
-TECHNICAL_ANALYSES = {"RSI", "MACD", "EMA_CROSSOVER", "ThreeContInc", "ThreeContDec", 
-                      "TwoContInc", "TwoContDec", "Marubozu"}
+TECHNICAL_ANALYSES = {"RSI", "MACD", "EMA_CROSSOVER",
+                      "Single_candle_stick_pattern", "Double_candle_stick_pattern",
+                      "Triple_candle_stick_pattern",
+                      "SUPERTREND", "RSI_DIVERGENCE", "STOCHASTIC", "OBV", "PIVOT_POINTS"}
 OPTIONS_ANALYSES = {"MAX_PAIN", "MAX_PAIN_TREND", "MAX_PAIN_ALIGNMENT", 
                     "PCR_EXTREME", "PCR_BIAS", "PCR_TREND", "PCR_REVERSAL", "PCR_DIVERGENCE",
                     "IV_SPIKE", "IV_TREND",
