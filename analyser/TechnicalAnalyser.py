@@ -11,10 +11,11 @@ import common.shared as shared
 
 class TechnicalAnalyser(BaseAnalyzer):
 
-    RSI_UPPER_THRESHOLD = 80
-    RSI_LOWER_THRESHOLD = 20
+    # Optimised for positional (profit_factor=1.20, 18 stocks, 2020-2024 train)
+    RSI_UPPER_THRESHOLD = 85
+    RSI_LOWER_THRESHOLD = 30
     RSI_LOOKUP_PERIOD = 14
-    RSI_TREND_PERIODS = 3
+    RSI_TREND_PERIODS = 5
     RSI_STRENGTH_THRESHOLD = 2
     RSI_MOMENTUM_THRESHOLD = 2
 
@@ -30,9 +31,9 @@ class TechnicalAnalyser(BaseAnalyzer):
     EMA_DIFF_THRESHOLD = 0      # minimum % separation after crossover
     EMA_MIN_SLOPE = 0    
 
-    # Supertrend
-    SUPERTREND_PERIOD = 10
-    SUPERTREND_MULTIPLIER = 3
+    # Supertrend — optimised for positional (profit_factor=1.24, 18 stocks, 2020-2024 train)
+    SUPERTREND_PERIOD = 14
+    SUPERTREND_MULTIPLIER = 2.5
 
     # Stochastic Oscillator
     STOCHASTIC_K_PERIOD = 14
@@ -47,6 +48,15 @@ class TechnicalAnalyser(BaseAnalyzer):
     # OBV (On-Balance Volume)
     OBV_EMA_PERIOD = 20
 
+    # Bollinger Bands
+    BB_WINDOW = 20
+    BB_NUM_STD = 2.0
+
+    # MACD
+    MACD_FAST_PERIOD = 12
+    MACD_SLOW_PERIOD = 26
+    MACD_SIGNAL_PERIOD = 9
+
     
     def __init__(self) -> None:
         self.analyserName = "Technical Analyser"
@@ -56,9 +66,25 @@ class TechnicalAnalyser(BaseAnalyzer):
         if shared.app_ctx.mode.name == shared.Mode.INTRADAY.name:
             TechnicalAnalyser.FAST_EMA_PERIOD = 9
             TechnicalAnalyser.SLOW_EMA_PERIOD = 21
+            # Intraday RSI — original defaults (not optimised yet)
+            TechnicalAnalyser.RSI_UPPER_THRESHOLD = 80
+            TechnicalAnalyser.RSI_LOWER_THRESHOLD = 20
+            TechnicalAnalyser.RSI_LOOKUP_PERIOD = 14
+            TechnicalAnalyser.RSI_TREND_PERIODS = 3
+            # Intraday Supertrend — original defaults (not optimised yet)
+            TechnicalAnalyser.SUPERTREND_PERIOD = 10
+            TechnicalAnalyser.SUPERTREND_MULTIPLIER = 3
         else:
             TechnicalAnalyser.FAST_EMA_PERIOD = 50
             TechnicalAnalyser.SLOW_EMA_PERIOD = 200
+            # Positional RSI — optimised (18 stocks, 2020-2024, profit_factor)
+            TechnicalAnalyser.RSI_UPPER_THRESHOLD = 85
+            TechnicalAnalyser.RSI_LOWER_THRESHOLD = 30
+            TechnicalAnalyser.RSI_LOOKUP_PERIOD = 14
+            TechnicalAnalyser.RSI_TREND_PERIODS = 5
+            # Positional Supertrend — optimised (18 stocks, 2020-2024, profit_factor)
+            TechnicalAnalyser.SUPERTREND_PERIOD = 14
+            TechnicalAnalyser.SUPERTREND_MULTIPLIER = 2.5
         logger.debug(f"Technical Analyser constants reset for mode {shared.app_ctx.mode.name}")
         logger.debug(f"RSI_UPPER_THRESHOLD = {TechnicalAnalyser.RSI_UPPER_THRESHOLD} , RSI_LOWER_THRESHOLD = {TechnicalAnalyser.RSI_LOWER_THRESHOLD}, ATR_THRESHOLD = {TechnicalAnalyser.ATR_THRESHOLD}")
 
@@ -157,7 +183,7 @@ class TechnicalAnalyser(BaseAnalyzer):
                 return sma, upper, lower
             
             logger.debug(f'Inside analyse_Bolinger_band for stock {stock.stock_symbol}')
-            sma , upper_band, lower_band = compute_latest_bollinger_bands(stock.priceData['Close'])
+            sma , upper_band, lower_band = compute_latest_bollinger_bands(stock.priceData['Close'], window=TechnicalAnalyser.BB_WINDOW, num_std=TechnicalAnalyser.BB_NUM_STD)
             curr_data = stock.current_equity_data
             BBAnalysis = namedtuple("BBAnalysis", ["close", "upper_band", "lower_band"])
             if curr_data['Close'] > upper_band: 
@@ -287,7 +313,7 @@ class TechnicalAnalyser(BaseAnalyzer):
             price_data = stock.priceData
             
             # Calculate latest MACD values
-            macd_data = calculate_latest_macd(price_data)
+            macd_data = calculate_latest_macd(price_data, fast_period=TechnicalAnalyser.MACD_FAST_PERIOD, slow_period=TechnicalAnalyser.MACD_SLOW_PERIOD, signal_period=TechnicalAnalyser.MACD_SIGNAL_PERIOD)
             
             latest_macd = macd_data.iloc[-1]
             previous_macd = macd_data.iloc[-2]
