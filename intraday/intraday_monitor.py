@@ -561,11 +561,16 @@ def report_index_data():
     index_objs = list(shared.app_ctx.index_token_obj_dict.values())
     for index in index_objs:
         try:
-            dot = "\U0001F7E2" if index.ltp_change_perc >= 0 else "\U0001F534"
-            sign = "+" if index.ltp_change_perc >= 0 else ""
-            report += f"  {dot} <b>{index.stock_symbol}</b>: <code>{index.ltp:.2f}</code> ({sign}{index.ltp_change_perc:.2f}%)\n"
+            if index.ltp is None:
+                continue
+            if index.ltp_change_perc is not None:
+                dot = "\U0001F7E2" if index.ltp_change_perc >= 0 else "\U0001F534"
+                sign = "+" if index.ltp_change_perc >= 0 else ""
+                report += f"  {dot} <b>{index.stock_symbol}</b>: <code>{index.ltp:.2f}</code> ({sign}{index.ltp_change_perc:.2f}%)\n"
+            else:
+                report += f"  <b>{index.stock_symbol}</b>: <code>{index.ltp:.2f}</code>\n"
         except Exception as e:
-            logger.error(f"Error while getting index data for {index}: {e}")
+            logger.error(f"Error while getting index data for {index.stock_symbol}: {e}")
     TELEGRAM_NOTIFICATIONS.send_notification(report, parse_mode="HTML")
     logger.info(f"Index Report\n {report}")
 
@@ -580,7 +585,13 @@ def report_commodity_data():
     for commodity in commodity_objs:
         try:
             if not commodity.is_price_data_empty():
-                close_prices = commodity.priceData['Close'].dropna()
+                close_col = commodity.priceData['Close']
+
+                # Handle MultiIndex columns from yfinance (e.g. Close > GOLD)
+                if isinstance(close_col, pd.DataFrame):
+                    close_col = close_col.iloc[:, 0]
+
+                close_prices = close_col.dropna()
                 if close_prices.empty:
                     logger.warning(f"No valid price data for {commodity.stock_symbol}")
                     continue
@@ -588,17 +599,19 @@ def report_commodity_data():
                 current_price = close_prices.iloc[-1]
                 
                 if pd.isna(current_price) or not isinstance(current_price, (int, float)):
-                    logger.warning(f"Invalid price for {commodity.stock_symbol}: {current_price}")
+                    logger.warning(f"Invalid price for {commodity.stock_symbol}: {current_price} (type={type(current_price).__name__})")
                     continue
                 
-                if commodity.prevDayOHLCV and commodity.prevDayOHLCV.get("CLOSE"):
+                prev_close = None
+                if commodity.prevDayOHLCV and commodity.prevDayOHLCV.get("CLOSE") and pd.notna(commodity.prevDayOHLCV["CLOSE"]):
                     prev_close = commodity.prevDayOHLCV["CLOSE"]
-                    if pd.notna(prev_close) and prev_close != 0:
-                        change_percent = percentageChange(current_price, prev_close)
-                        dot = "\U0001F7E2" if change_percent >= 0 else "\U0001F534"
-                        report += f"  {dot} <b>{commodity.stock_symbol}</b>: <code>${current_price:.2f}</code> ({change_percent:+.2f}%)\n"
-                    else:
-                        report += f"  <b>{commodity.stock_symbol}</b>: <code>${current_price:.2f}</code>\n"
+                elif len(close_prices) >= 2:
+                    prev_close = close_prices.iloc[-2]
+
+                if prev_close is not None and pd.notna(prev_close) and prev_close != 0:
+                    change_percent = percentageChange(current_price, prev_close)
+                    dot = "\U0001F7E2" if change_percent >= 0 else "\U0001F534"
+                    report += f"  {dot} <b>{commodity.stock_symbol}</b>: <code>${current_price:.2f}</code> ({change_percent:+.2f}%)\n"
                 else:
                     report += f"  <b>{commodity.stock_symbol}</b>: <code>${current_price:.2f}</code>\n"
         except Exception as e:
@@ -638,7 +651,13 @@ def report_global_indices_data():
         for index in indices:
             try:
                 if not index.is_price_data_empty():
-                    close_prices = index.priceData['Close'].dropna()
+                    close_col = index.priceData['Close']
+
+                    # Handle MultiIndex columns from yfinance (e.g. Close > SPX)
+                    if isinstance(close_col, pd.DataFrame):
+                        close_col = close_col.iloc[:, 0]
+
+                    close_prices = close_col.dropna()
                     if close_prices.empty:
                         logger.warning(f"No valid price data for {index.stock_symbol}")
                         continue
@@ -646,17 +665,19 @@ def report_global_indices_data():
                     current_price = close_prices.iloc[-1]
                     
                     if pd.isna(current_price) or not isinstance(current_price, (int, float)):
-                        logger.warning(f"Invalid price for {index.stock_symbol}: {current_price}")
+                        logger.warning(f"Invalid price for {index.stock_symbol}: {current_price} (type={type(current_price).__name__})")
                         continue
                     
-                    if index.prevDayOHLCV and index.prevDayOHLCV.get("CLOSE"):
+                    prev_close = None
+                    if index.prevDayOHLCV and index.prevDayOHLCV.get("CLOSE") and pd.notna(index.prevDayOHLCV["CLOSE"]):
                         prev_close = index.prevDayOHLCV["CLOSE"]
-                        if pd.notna(prev_close) and prev_close != 0:
-                            change_percent = percentageChange(current_price, prev_close)
-                            dot = "\U0001F7E2" if change_percent >= 0 else "\U0001F534"
-                            region_report += f"  {dot} <b>{index.stock_symbol}</b>: <code>{current_price:.2f}</code> ({change_percent:+.2f}%)\n"
-                        else:
-                            region_report += f"  <b>{index.stock_symbol}</b>: <code>{current_price:.2f}</code>\n"
+                    elif len(close_prices) >= 2:
+                        prev_close = close_prices.iloc[-2]
+
+                    if prev_close is not None and pd.notna(prev_close) and prev_close != 0:
+                        change_percent = percentageChange(current_price, prev_close)
+                        dot = "\U0001F7E2" if change_percent >= 0 else "\U0001F534"
+                        region_report += f"  {dot} <b>{index.stock_symbol}</b>: <code>{current_price:.2f}</code> ({change_percent:+.2f}%)\n"
                     else:
                         region_report += f"  <b>{index.stock_symbol}</b>: <code>{current_price:.2f}</code>\n"
             except Exception as e:

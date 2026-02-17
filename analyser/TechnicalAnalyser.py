@@ -35,11 +35,11 @@ class TechnicalAnalyser(BaseAnalyzer):
     SUPERTREND_PERIOD = 14
     SUPERTREND_MULTIPLIER = 2.5
 
-    # Stochastic Oscillator
-    STOCHASTIC_K_PERIOD = 14
-    STOCHASTIC_D_PERIOD = 3
-    STOCHASTIC_UPPER = 80
-    STOCHASTIC_LOWER = 20
+    # Stochastic Oscillator — optimised for positional (profit_factor=1.41 test, 18 stocks, 2020-2024 train)
+    STOCHASTIC_K_PERIOD = 5
+    STOCHASTIC_D_PERIOD = 5
+    STOCHASTIC_UPPER = 90
+    STOCHASTIC_LOWER = 30
 
     # RSI Divergence
     RSI_DIVERGENCE_LOOKBACK = 50
@@ -74,6 +74,11 @@ class TechnicalAnalyser(BaseAnalyzer):
             # Intraday Supertrend — original defaults (not optimised yet)
             TechnicalAnalyser.SUPERTREND_PERIOD = 10
             TechnicalAnalyser.SUPERTREND_MULTIPLIER = 3
+            # Intraday Stochastic — original defaults (not optimised yet)
+            TechnicalAnalyser.STOCHASTIC_K_PERIOD = 14
+            TechnicalAnalyser.STOCHASTIC_D_PERIOD = 3
+            TechnicalAnalyser.STOCHASTIC_UPPER = 80
+            TechnicalAnalyser.STOCHASTIC_LOWER = 20
         else:
             TechnicalAnalyser.FAST_EMA_PERIOD = 50
             TechnicalAnalyser.SLOW_EMA_PERIOD = 200
@@ -85,6 +90,11 @@ class TechnicalAnalyser(BaseAnalyzer):
             # Positional Supertrend — optimised (18 stocks, 2020-2024, profit_factor)
             TechnicalAnalyser.SUPERTREND_PERIOD = 14
             TechnicalAnalyser.SUPERTREND_MULTIPLIER = 2.5
+            # Positional Stochastic — optimised (18 stocks, 2020-2024, profit_factor)
+            TechnicalAnalyser.STOCHASTIC_K_PERIOD = 5
+            TechnicalAnalyser.STOCHASTIC_D_PERIOD = 5
+            TechnicalAnalyser.STOCHASTIC_UPPER = 90
+            TechnicalAnalyser.STOCHASTIC_LOWER = 30
         logger.debug(f"Technical Analyser constants reset for mode {shared.app_ctx.mode.name}")
         logger.debug(f"RSI_UPPER_THRESHOLD = {TechnicalAnalyser.RSI_UPPER_THRESHOLD} , RSI_LOWER_THRESHOLD = {TechnicalAnalyser.RSI_LOWER_THRESHOLD}, ATR_THRESHOLD = {TechnicalAnalyser.ATR_THRESHOLD}")
 
