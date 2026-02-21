@@ -209,15 +209,31 @@ class AnalyserOrchestrator:
                     elif analysis_type == 'Single_candle_stick_pattern':
                         entries = data if isinstance(data, list) else [data]
                         for d in entries:
-                            message_parts.append(f"  Candle (1): <i>{d}</i>")
+                            message_parts.append(f"  Candle (1) Mom: <i>{d}</i>")
+                    elif analysis_type == 'Single_candle_reversal_pattern':
+                        entries = data if isinstance(data, list) else [data]
+                        for d in entries:
+                            message_parts.append(f"  Candle (1) Rev: <i>{d}</i>")
                     elif analysis_type == 'Double_candle_stick_pattern':
                         entries = data if isinstance(data, list) else [data]
                         for d in entries:
                             message_parts.append(f"  Candle (2): <i>{d}</i>")
+                    elif analysis_type == 'Double_candle_continuation_pattern':
+                        entries = data if isinstance(data, list) else [data]
+                        for d in entries:
+                            message_parts.append(f"  Candle (2) Cont: <i>{d}</i>")
                     elif analysis_type == "Triple_candle_stick_pattern":
                         entries = data if isinstance(data, list) else [data]
                         for d in entries:
                             message_parts.append(f"  Candle (3): <i>{d}</i>")
+                    elif analysis_type == "Triple_candle_reversal_pattern":
+                        entries = data if isinstance(data, list) else [data]
+                        for d in entries:
+                            message_parts.append(f"  Candle (3) Rev: <i>{d}</i>")
+                    elif analysis_type == "Triple_candle_continuation_pattern":
+                        entries = data if isinstance(data, list) else [data]
+                        for d in entries:
+                            message_parts.append(f"  Candle (3) Cont: <i>{d}</i>")
                     elif analysis_type == 'FUTURE_ACTION':
                         message_parts.append(f"  Futures: <b>{data.action}</b> p%:<code>{data.price_percentage:.2f}</code> oi%:<code>{data.oi_percentage:.2f}</code>")
                     elif analysis_type == 'vwap_deviation':
