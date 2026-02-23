@@ -1,0 +1,142 @@
+# ML Pipeline Configuration for Stock Movement Prediction
+# ======================================================
+# This configuration file contains all parameters for the ML pipeline
+
+# Data Configuration
+data:
+  start_date: '2020-01-01'
+  end_date: '2024-12-31'
+  train_test_split: 0.8
+  stocks_universe: 'fno'  # Options: 'fno', 'nifty50', 'custom'
+  data_source: 'yfinance'
+  custom_stocks: []  # List of stock symbols if universe is 'custom'
+
+# Feature Configuration
+features:
+  technical:
+    enabled: true
+    rsi_periods: [5, 10, 14]
+    ema_periods: [9, 21, 50]
+    sma_periods: [20, 50]
+    macd_params: [12, 26, 9]
+    bollinger_params: [20, 2]
+    atr_period: 14
+    stochastic_params: [5, 5]
+    adx_period: 14
+    williams_r_period: 14
+    supertrend_params: [14, 2.5]
+  
+  price:
+    enabled: true
+    return_periods: [1, 5, 10, 20]
+    volatility_periods: [5, 10, 20]
+    include_gap_features: true
+    include_swing_detection: true
+    include_price_position: true
+  
+  volume:
+    enabled: true
+    volume_ratio_periods: [5, 10, 20]
+    include_obv: true
+    include_accumulation_distribution: true
+    include_chaikin_money_flow: true
+    include_volume_spikes: true
+  
+  market:
+    enabled: true
+    index_symbols: ['^NSEI', '^NSEBANK']  # Nifty 50, Bank Nifty
+    include_beta: true
+    include_correlation: true
+    include_relative_strength: true
+
+# Label Configuration
+labels:
+  up_threshold: 1.0    # > 1% = UP
+  down_threshold: -1.0  # < -1% = DOWN
+  # Between -1% and +1% = FLAT
+
+# Model Configurations
+models:
+  xgboost:
+    n_estimators: 500
+    max_depth: 6
+    learning_rate: 0.05
+    subsample: 0.8
+    colsample_bytree: 0.8
+    min_child_weight: 3
+    gamma: 0.1
+    reg_alpha: 0.1
+    reg_lambda: 1.0
+    random_state: 42
+    n_jobs: -1
+    use_label_encoder: false
+    eval_metric: 'mlogloss'
+  
+  random_forest:
+    n_estimators: 500
+    max_depth: 10
+    min_samples_split: 5
+    min_samples_leaf: 2
+    max_features: 'sqrt'
+    bootstrap: true
+    random_state: 42
+    n_jobs: -1
+    class_weight: 'balanced'
+  
+  lightgbm:
+    n_estimators: 500
+    max_depth: 8
+    learning_rate: 0.05
+    num_leaves: 31
+    min_child_samples: 20
+    subsample: 0.8
+    colsample_bytree: 0.8
+    reg_alpha: 0.1
+    reg_lambda: 1.0
+    random_state: 42
+    n_jobs: -1
+    verbose: -1
+  
+  ensemble:
+    voting: 'soft'  # Options: 'soft', 'hard'
+    weighting_method: 'equal'  # Options: 'equal', 'performance_based', 'optimized'
+    custom_weights:
+      xgboost: 0.33
+      random_forest: 0.33
+      lightgbm: 0.34
+    min_agreement_threshold: 0.6
+
+# Training Configuration
+training:
+  n_splits: 5
+  early_stopping_rounds: 50
+  purge_days: 5  # Days to purge between train and validation to prevent leakage
+  hyperparameter_tuning_enabled: true
+  n_trials: 100
+  timeout: 3600  # 1 hour max for tuning
+
+# Evaluation Configuration
+evaluation:
+  confidence_threshold: 0.6  # Only trade if max probability > 60%
+  metrics:
+    - accuracy
+    - precision
+    - recall
+    - f1
+    - log_loss
+    - roc_auc
+
+# Backtest Configuration
+backtest:
+  initial_capital: 100000
+  position_size: 0.05  # 5% per trade
+  transaction_cost: 0.001  # 0.1% per trade
+  slippage: 0.0005  # 0.05% slippage
+
+# Output Configuration
+output:
+  save_predictions: true
+  save_feature_importance: true
+  save_model_artifacts: true
+  notification_enabled: true
+  telegram_enabled: true
