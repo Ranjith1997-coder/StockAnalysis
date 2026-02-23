@@ -1,0 +1,44 @@
+# ML Pipeline Requirements
+# =======================
+# Install these dependencies to use the ML pipeline for stock prediction
+# 
+# Installation: pip install -r ml_pipeline/requirements.txt
+
+# Core ML Libraries
+scikit-learn>=1.5.0
+numpy>=1.24.0
+pandas>=2.0.0
+scipy>=1.10.0
+
+# Gradient Boosting Models
+xgboost>=2.0.3
+lightgbm>=4.3.0
+
+# Hyperparameter Optimization
+optuna>=3.6.0
+
+# Model Persistence
+joblib>=1.4.0
+
+# Data Storage (use newer pyarrow for Python 3.13 support)
+pyarrow>=18.0.0
+
+# Configuration
+pyyaml>=6.0.1
+
+# Model Interpretation
+shap>=0.44.1
+
+# Data Collection (if not already installed)
+yfinance>=0.2.40
+
+# Technical Analysis Library
+ta>=0.11.0
+
+# Optional: Deep Learning (for future phases)
+# torch>=2.2.0
+# tensorflow>=2.15.0
+
+# Optional: Visualization
+# matplotlib>=3.7.0
+# seaborn>=0.12.0
