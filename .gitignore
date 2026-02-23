@@ -37,3 +37,20 @@ Thumbs.db
 
 # Keys and credentials
 *.pem
+
+# ML Pipeline cache
+ml_pipeline/__pycache__/
+ml_pipeline/**/__pycache__/
+
+# Generated data
+data/backtest_results/
+data/indices/
+data/models/
+data/processed/
+data/raw/
+data/stocks/
+
+# Model artifacts
+*.pkl
+*.joblib
+*.parquet
