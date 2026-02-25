@@ -99,61 +99,129 @@ class TechnicalAnalyser(BaseAnalyzer):
         logger.debug(f"RSI_UPPER_THRESHOLD = {TechnicalAnalyser.RSI_UPPER_THRESHOLD} , RSI_LOWER_THRESHOLD = {TechnicalAnalyser.RSI_LOWER_THRESHOLD}, ATR_THRESHOLD = {TechnicalAnalyser.ATR_THRESHOLD}")
 
     
+    def _compute_rsi(self, close_series: pd.Series) -> pd.Series:
+        """
+        Shared RSI computation using Wilder's smoothing method.
+        
+        Args:
+            close_series: Series of closing prices
+            
+        Returns:
+            RSI series
+        """
+        if len(close_series) < self.RSI_LOOKUP_PERIOD + 1:
+            raise ValueError(f"Need at least {self.RSI_LOOKUP_PERIOD + 1} data points to compute RSI")
+
+        delta = close_series.diff().dropna()
+
+        gains = delta.where(delta > 0, 0)
+        losses = -delta.where(delta < 0, 0)
+
+        # Use Wilder's smoothing method (EMA with adjust=False)
+        avg_gain = gains.ewm(span=self.RSI_LOOKUP_PERIOD, adjust=False).mean()
+        avg_loss = losses.ewm(span=self.RSI_LOOKUP_PERIOD, adjust=False).mean()
+
+        rs = avg_gain / avg_loss
+        rsi = 100 - (100 / (1 + rs))
+
+        return rsi
+
     @BaseAnalyzer.both
     @BaseAnalyzer.index_both
     def analyse_rsi(self, stock: Stock):
+        """
+        RSI Overbought/Oversold strategy with trend filter.
+        
+        Logic:
+        - RSI > Upper Threshold → BEARISH (expect mean reversion down)
+        - RSI < Lower Threshold → BULLISH (expect mean reversion up)
+        
+        Trend Filter (optional, improves win rate):
+        - Only signal if trend aligns with expected reversal direction
+        - Uses EMA 20/50 crossover for trend detection
+        - BULLISH signal: Only if trend is BEARISH or NEUTRAL (reversal expected)
+        - BEARISH signal: Only if trend is BULLISH or NEUTRAL (reversal expected)
+        """
         try : 
-            def compute_rsi(close_series):
-                if len(close_series) < TechnicalAnalyser.RSI_LOOKUP_PERIOD + 1:
-                    raise ValueError(f"Need at least {TechnicalAnalyser.RSI_LOOKUP_PERIOD  + 1} data points to compute RSI")
-
-                delta = close_series.diff().dropna()
-
-                gains = delta.where(delta > 0, 0)
-                losses = -delta.where(delta < 0, 0)
-
-                # Use Wilder's smoothing method (EMA with adjust=False)
-                avg_gain = gains.ewm(span=TechnicalAnalyser.RSI_LOOKUP_PERIOD, adjust=False).mean()
-                avg_loss = losses.ewm(span=TechnicalAnalyser.RSI_LOOKUP_PERIOD, adjust=False).mean()
-
-                rs = avg_gain / avg_loss
-                rsi = 100 - (100 / (1 + rs))
-
-                return rsi
             logger.debug(f'Inside analyse_rsi for stock {stock.stock_symbol}')
-            rsi_series = compute_rsi(stock.priceData["Close"].iloc[-100:])
-            RSIAnalysis = namedtuple("RSIAnalysis", ["value", "previous_value", "trend",])
-
+            close = stock.priceData["Close"]
+            
+            # Need enough data for RSI + EMA trend filter
+            if len(close) < 100:
+                return False
+            
+            rsi_series = self._compute_rsi(close.iloc[-100:])
+            
+            # Calculate trend using EMA 20/50
+            ema_20 = close.ewm(span=20, adjust=False).mean()
+            ema_50 = close.ewm(span=50, adjust=False).mean()
+            
+            ema_20_curr = ema_20.iloc[-1]
+            ema_50_curr = ema_50.iloc[-1]
+            ema_20_prev = ema_20.iloc[-2]
+            ema_50_prev = ema_50.iloc[-2]
+            
+            # Determine trend
+            if ema_20_curr > ema_50_curr and ema_20_prev > ema_50_prev:
+                trend = "BULLISH"
+            elif ema_20_curr < ema_50_curr and ema_20_prev < ema_50_prev:
+                trend = "BEARISH"
+            else:
+                trend = "NEUTRAL"
+            
             current_rsi = rsi_series.iloc[-1]
             previous_rsi = rsi_series.iloc[-2]
-
 
             trend_found = False
 
             if current_rsi > TechnicalAnalyser.RSI_UPPER_THRESHOLD: 
-                trend = "Overbought" if all(rsi > TechnicalAnalyser.RSI_UPPER_THRESHOLD for rsi in rsi_series.iloc[-self.RSI_TREND_PERIODS:]) else "Weakening"
-                # strength = min(int((current_rsi - TechnicalAnalyser.RSI_UPPER_THRESHOLD) / self.RSI_STRENGTH_THRESHOLD), 5)
-                # momentum = min(int((current_rsi - previous_rsi) / self.RSI_MOMENTUM_THRESHOLD), 5)
+                # Count how many candles RSI has been in overbought zone
+                overbought_candles = 0
+                for i in range(len(rsi_series) - 1, -1, -1):
+                    if rsi_series.iloc[i] > TechnicalAnalyser.RSI_UPPER_THRESHOLD:
+                        overbought_candles += 1
+                    else:
+                        break
                 
-                # if trend == "Overbought" and strength >= 3 and momentum >= 2:
-                if trend == "Overbought":
+                rsi_trend = "Overbought" if overbought_candles >= self.RSI_TREND_PERIODS else "Weakening"
+                
+                # Only signal BEARISH if price trend is BULLISH or NEUTRAL (reversal expected)
+                # Skip signal if already in BEARISH trend (RSI overbought in downtrend = strong momentum)
+                if rsi_trend == "Overbought" and trend in ("BULLISH", "NEUTRAL"):
+                    RSIAnalysis = namedtuple("RSIAnalysis", [
+                        "value", "previous_value", "trend", "price_trend", "zone_candles"
+                    ])
                     stock.set_analysis("BEARISH", "RSI", RSIAnalysis(
                         value=current_rsi,
                         previous_value=previous_rsi,
-                        trend=trend
+                        trend=rsi_trend,
+                        price_trend=trend,
+                        zone_candles=overbought_candles
                     ))
                     trend_found = True
             elif current_rsi < TechnicalAnalyser.RSI_LOWER_THRESHOLD:
-                trend = "Oversold" if all(rsi < TechnicalAnalyser.RSI_LOWER_THRESHOLD for rsi in rsi_series.iloc[-self.RSI_TREND_PERIODS:]) else "Strengthening"
-                # strength = min(int((TechnicalAnalyser.RSI_LOWER_THRESHOLD - current_rsi) / self.RSI_STRENGTH_THRESHOLD), 5)
-                # momentum = min(int((previous_rsi - current_rsi) / self.RSI_MOMENTUM_THRESHOLD), 5)
+                # Count how many candles RSI has been in oversold zone
+                oversold_candles = 0
+                for i in range(len(rsi_series) - 1, -1, -1):
+                    if rsi_series.iloc[i] < TechnicalAnalyser.RSI_LOWER_THRESHOLD:
+                        oversold_candles += 1
+                    else:
+                        break
                 
-                # if trend == "Oversold" and strength >= 3 and momentum >= 2:
-                if trend == "Oversold":
+                rsi_trend = "Oversold" if oversold_candles >= self.RSI_TREND_PERIODS else "Strengthening"
+                
+                # Only signal BULLISH if price trend is BEARISH or NEUTRAL (reversal expected)
+                # Skip signal if already in BULLISH trend (RSI oversold in uptrend = strong momentum)
+                if rsi_trend == "Oversold" and trend in ("BEARISH", "NEUTRAL"):
+                    RSIAnalysis = namedtuple("RSIAnalysis", [
+                        "value", "previous_value", "trend", "price_trend", "zone_candles"
+                    ])
                     stock.set_analysis("BULLISH", "RSI", RSIAnalysis(
                         value=current_rsi,
                         previous_value=previous_rsi,
-                        trend=trend
+                        trend=rsi_trend,
+                        price_trend=trend,
+                        zone_candles=oversold_candles
                     ))
                     trend_found = True
             
@@ -174,35 +242,176 @@ class TechnicalAnalyser(BaseAnalyzer):
     @BaseAnalyzer.both
     @BaseAnalyzer.index_both
     def analyse_Bolinger_band(self, stock: Stock):
+        """
+        Enhanced Bollinger Band analysis with momentum approach and filters.
+        
+        Filters applied:
+        1. Confirmation filter: Price must stay outside band for 2+ consecutive candles
+        2. Trend filter: Signal must align with the dominant trend (EMA-based)
+        
+        Momentum Strategy:
+        - Price > Upper Band + Uptrend → BULLISH (momentum continuation)
+        - Price < Lower Band + Downtrend → BEARISH (momentum breakdown)
+        """
         try : 
-            def compute_latest_bollinger_bands(series, window=20, num_std=2):
+            def compute_bollinger_bands(series, window=20, num_std=2):
                 """
-                Compute latest Bollinger Bands values using only the last 'window' points.
-                Returns: (sma, upper_band, lower_band)
+                Compute Bollinger Bands for the entire series.
+                Returns: DataFrame with sma, upper_band, lower_band columns
                 """
                 if len(series) < window:
-                    raise ValueError("Not enough data to compute Bollinger Bands.")
-
-                recent = series[-window:]
-                sma = recent.mean()
-                std = recent.std()
-
+                    return None, None, None
+                
+                sma = series.rolling(window=window).mean()
+                std = series.rolling(window=window).std()
+                
                 upper = sma + num_std * std
                 lower = sma - num_std * std
-
+                
                 return sma, upper, lower
             
+            def get_trend(close_series, fast_period=20, slow_period=50):
+                """
+                Determine the dominant trend using EMA crossover.
+                Returns: 'BULLISH', 'BEARISH', or 'NEUTRAL'
+                """
+                if len(close_series) < slow_period:
+                    return 'NEUTRAL'
+                
+                fast_ema = close_series.ewm(span=fast_period, adjust=False).mean()
+                slow_ema = close_series.ewm(span=slow_period, adjust=False).mean()
+                
+                fast_latest = fast_ema.iloc[-1]
+                slow_latest = slow_ema.iloc[-1]
+                
+                # Check trend strength (percentage difference)
+                pct_diff = ((fast_latest - slow_latest) / slow_latest) * 100
+                
+                if pct_diff > 0.5:  # Fast EMA is 0.5% above slow EMA
+                    return 'BULLISH'
+                elif pct_diff < -0.5:  # Fast EMA is 0.5% below slow EMA
+                    return 'BEARISH'
+                else:
+                    return 'NEUTRAL'
+            
             logger.debug(f'Inside analyse_Bolinger_band for stock {stock.stock_symbol}')
-            sma , upper_band, lower_band = compute_latest_bollinger_bands(stock.priceData['Close'], window=TechnicalAnalyser.BB_WINDOW, num_std=TechnicalAnalyser.BB_NUM_STD)
+            
+            close_series = stock.priceData['Close']
+            
+            # Compute Bollinger Bands for entire series
+            sma_series, upper_series, lower_series = compute_bollinger_bands(
+                close_series, 
+                window=TechnicalAnalyser.BB_WINDOW, 
+                num_std=TechnicalAnalyser.BB_NUM_STD
+            )
+            
+            if sma_series is None or len(sma_series) < 3:
+                return False
+            
             curr_data = stock.current_equity_data
-            BBAnalysis = namedtuple("BBAnalysis", ["close", "upper_band", "lower_band"])
-            if curr_data['Close'] > upper_band: 
-                stock.set_analysis("BEARISH", "BollingerBand", BBAnalysis(close=curr_data['Close'], upper_band=upper_band, lower_band=lower_band))
-                return True
-            elif curr_data['Close'] < lower_band:
-                stock.set_analysis("BULLISH", "BollingerBand", BBAnalysis(close=curr_data['Close'], upper_band=upper_band, lower_band=lower_band))
-                return True
-            return False
+            curr_close = curr_data['Close']
+            
+            # Get latest band values
+            upper_band = upper_series.iloc[-1]
+            lower_band = lower_series.iloc[-1]
+            sma = sma_series.iloc[-1]
+            
+            # Get previous candle values for confirmation filter
+            prev_close = close_series.iloc[-2]
+            prev_upper = upper_series.iloc[-2]
+            prev_lower = lower_series.iloc[-2]
+            
+            BBAnalysis = namedtuple("BBAnalysis", [
+                "close", "upper_band", "lower_band", "sma", 
+                "signal_type", "trend", "confirmation_candles"
+            ])
+            
+            # Determine dominant trend
+            trend = get_trend(close_series)
+            
+            # ==========================================
+            # FILTER 1: Confirmation Filter
+            # Price must stay outside band for 2+ consecutive candles
+            # ==========================================
+            
+            # Check for bullish breakout (price above upper band)
+            above_upper_curr = curr_close > upper_band
+            above_upper_prev = prev_close > prev_upper
+            
+            # Check for bearish breakdown (price below lower band)
+            below_lower_curr = curr_close < lower_band
+            below_lower_prev = prev_close < prev_lower
+            
+            confirmation_candles = 0
+            signal_type = None
+            sentiment = None
+            
+            # Bullish signal: Price above upper band for 2+ candles
+            if above_upper_curr and above_upper_prev:
+                confirmation_candles = 2
+                # Check for more confirmation candles
+                for i in range(3, min(6, len(close_series) + 1)):
+                    if close_series.iloc[-i] > upper_series.iloc[-i]:
+                        confirmation_candles += 1
+                    else:
+                        break
+                
+                # ==========================================
+                # FILTER 2: Trend Filter
+                # Only signal if trend aligns (BULLISH or NEUTRAL trend)
+                # ==========================================
+                if trend in ('BULLISH', 'NEUTRAL'):
+                    signal_type = "momentum_breakout_above"
+                    sentiment = "BULLISH"
+                else:
+                    # Trend is BEARISH - don't signal against the trend
+                    logger.debug(f"BB bullish signal filtered: trend is {trend}")
+                    return False
+            
+            # Bearish signal: Price below lower band for 2+ candles
+            elif below_lower_curr and below_lower_prev:
+                confirmation_candles = 2
+                # Check for more confirmation candles
+                for i in range(3, min(6, len(close_series) + 1)):
+                    if close_series.iloc[-i] < lower_series.iloc[-i]:
+                        confirmation_candles += 1
+                    else:
+                        break
+                
+                # ==========================================
+                # FILTER 2: Trend Filter
+                # Only signal if trend aligns (BEARISH or NEUTRAL trend)
+                # ==========================================
+                if trend in ('BEARISH', 'NEUTRAL'):
+                    signal_type = "momentum_breakout_below"
+                    sentiment = "BEARISH"
+                else:
+                    # Trend is BULLISH - don't signal against the trend
+                    logger.debug(f"BB bearish signal filtered: trend is {trend}")
+                    return False
+            
+            # No signal if confirmation filter not met
+            if signal_type is None:
+                return False
+            
+            # Set analysis with enhanced data
+            stock.set_analysis(sentiment, "BollingerBand", BBAnalysis(
+                close=curr_close, 
+                upper_band=upper_band, 
+                lower_band=lower_band,
+                sma=sma,
+                signal_type=signal_type,
+                trend=trend,
+                confirmation_candles=confirmation_candles
+            ))
+            
+            band_name = 'upper' if 'above' in signal_type else 'lower'
+            band_value = upper_band if 'above' in signal_type else lower_band
+            logger.info(f"BB {signal_type} for {stock.stock_symbol}: "
+                       f"close={curr_close:.2f}, band={band_name}={band_value:.2f}, "
+                       f"trend={trend}, confirmation={confirmation_candles}candles")
+            return True
+            
         except Exception as e:
             logger.error(f"Error in analyse_Bolinger_band for stock {stock.stock_symbol}: {str(e)}")
             logger.error(f"Traceback: {traceback.format_exc()}")
@@ -662,32 +871,54 @@ class TechnicalAnalyser(BaseAnalyzer):
     @BaseAnalyzer.index_both
     def analyse_rsi_divergence(self, stock: Stock):
         """
-        Detects RSI divergence — a high-conviction reversal signal.
+        Detects RSI divergence with enhanced filters for higher conviction signals.
+        
         Bearish divergence: price makes a higher high but RSI makes a lower high.
-        Bullish divergence: price makes a lower low  but RSI makes a higher low.
-        Swing points are identified in the price series and RSI is read at those bars.
+        Bullish divergence: price makes a lower low but RSI makes a higher low.
+        
+        Enhanced Filters:
+        1. RSI Zone: Divergence only valid in overbought/oversold zones
+        2. Trend Filter: Only signal if trend is weakening (not in strong trend)
+        3. Minimum RSI Difference: At least 3 points difference between swings
+        4. Larger Swing Order: 3 candles for more significant swings
         """
         try:
             logger.debug(f'Inside analyse_rsi_divergence for stock {stock.stock_symbol}')
             close = stock.priceData['Close']
-            lookback = self.RSI_DIVERGENCE_LOOKBACK
-            order = self.RSI_DIVERGENCE_SWING_ORDER
+            
+            # Enhanced parameters
+            lookback = 50  # Balanced lookback
+            order = 3  # Increased from 2 for significant swings
+            min_rsi_diff = 3  # Minimum RSI difference for valid divergence
+            rsi_overbought = 75  # Relaxed zone for bearish divergence
+            rsi_oversold = 25  # Relaxed zone for bullish divergence
 
             if len(close) < lookback + self.RSI_LOOKUP_PERIOD + 1:
                 return False
 
-            # Compute RSI over the full series
-            delta = close.diff().dropna()
-            gains = delta.where(delta > 0, 0)
-            losses = -delta.where(delta < 0, 0)
-            avg_gain = gains.ewm(span=self.RSI_LOOKUP_PERIOD, adjust=False).mean()
-            avg_loss = losses.ewm(span=self.RSI_LOOKUP_PERIOD, adjust=False).mean()
-            rs = avg_gain / avg_loss
-            rsi = 100 - (100 / (1 + rs))
+            # Compute RSI using shared method
+            rsi = self._compute_rsi(close)
 
             # Work on the recent window (reset index for simple integer indexing)
             recent_close = close.iloc[-lookback:].reset_index(drop=True)
             recent_rsi = rsi.iloc[-lookback:].reset_index(drop=True)
+            
+            # Calculate trend using EMA
+            ema_20 = close.ewm(span=20, adjust=False).mean()
+            ema_50 = close.ewm(span=50, adjust=False).mean()
+            
+            # Determine trend - check if EMAs are converging (trend weakening)
+            ema_diff_curr = abs(ema_20.iloc[-1] - ema_50.iloc[-1])
+            ema_diff_prev = abs(ema_20.iloc[-5] - ema_50.iloc[-5])
+            trend_weakening = ema_diff_curr < ema_diff_prev
+            
+            # Determine trend direction
+            if ema_20.iloc[-1] > ema_50.iloc[-1]:
+                trend = "BULLISH"
+            elif ema_20.iloc[-1] < ema_50.iloc[-1]:
+                trend = "BEARISH"
+            else:
+                trend = "NEUTRAL"
 
             def find_swing_highs(series, swing_order):
                 """Indices where value is strictly greater than `swing_order` neighbours each side."""
@@ -709,36 +940,64 @@ class TechnicalAnalyser(BaseAnalyzer):
 
             RSIDivergenceAnalysis = namedtuple("RSIDivergenceAnalysis", [
                 "divergence_type", "price_current", "price_previous",
-                "rsi_current", "rsi_previous"
+                "rsi_current", "rsi_previous", "trend", "trend_weakening"
             ])
 
             # Bearish divergence: price higher-high, RSI lower-high
+            # Enhanced: Only in overbought zone + trend weakening
             price_highs = find_swing_highs(recent_close, order)
             if len(price_highs) >= 2:
                 h1, h2 = price_highs[-2], price_highs[-1]
+                rsi_curr = recent_rsi.iloc[h2]
+                rsi_prev = recent_rsi.iloc[h1]
+                rsi_diff = rsi_prev - rsi_curr  # Should be positive for lower high
+                
+                # Enhanced filters:
+                # 1. Price makes higher high
+                # 2. RSI makes lower high (with minimum difference)
+                # 3. Current RSI in overbought zone (relaxed)
+                # 4. Trend is weakening OR not strongly bullish
                 if (recent_close.iloc[h2] > recent_close.iloc[h1] and
-                        recent_rsi.iloc[h2] < recent_rsi.iloc[h1]):
+                        rsi_diff >= min_rsi_diff and
+                        rsi_curr >= rsi_overbought and
+                        (trend_weakening or trend != "BULLISH")):
                     stock.set_analysis("BEARISH", "RSI_DIVERGENCE", RSIDivergenceAnalysis(
                         divergence_type="bearish",
                         price_current=recent_close.iloc[h2],
                         price_previous=recent_close.iloc[h1],
-                        rsi_current=recent_rsi.iloc[h2],
-                        rsi_previous=recent_rsi.iloc[h1]
+                        rsi_current=rsi_curr,
+                        rsi_previous=rsi_prev,
+                        trend=trend,
+                        trend_weakening=trend_weakening
                     ))
                     return True
 
             # Bullish divergence: price lower-low, RSI higher-low
+            # Enhanced: Only in oversold zone + trend weakening
             price_lows = find_swing_lows(recent_close, order)
             if len(price_lows) >= 2:
                 l1, l2 = price_lows[-2], price_lows[-1]
+                rsi_curr = recent_rsi.iloc[l2]
+                rsi_prev = recent_rsi.iloc[l1]
+                rsi_diff = rsi_curr - rsi_prev  # Should be positive for higher low
+                
+                # Enhanced filters:
+                # 1. Price makes lower low
+                # 2. RSI makes higher low (with minimum difference)
+                # 3. Current RSI in oversold zone (relaxed)
+                # 4. Trend is weakening OR not strongly bearish
                 if (recent_close.iloc[l2] < recent_close.iloc[l1] and
-                        recent_rsi.iloc[l2] > recent_rsi.iloc[l1]):
+                        rsi_diff >= min_rsi_diff and
+                        rsi_curr <= rsi_oversold and
+                        (trend_weakening or trend != "BEARISH")):
                     stock.set_analysis("BULLISH", "RSI_DIVERGENCE", RSIDivergenceAnalysis(
                         divergence_type="bullish",
                         price_current=recent_close.iloc[l2],
                         price_previous=recent_close.iloc[l1],
-                        rsi_current=recent_rsi.iloc[l2],
-                        rsi_previous=recent_rsi.iloc[l1]
+                        rsi_current=rsi_curr,
+                        rsi_previous=rsi_prev,
+                        trend=trend,
+                        trend_weakening=trend_weakening
                     ))
                     return True
 
@@ -755,6 +1014,9 @@ class TechnicalAnalyser(BaseAnalyzer):
         Stochastic Oscillator (%K / %D).
         Bullish: %K crosses above %D while in oversold zone (<=20).
         Bearish: %K crosses below %D while in overbought zone (>=80).
+        
+        Note: This strategy works best WITHOUT trend filter.
+        Stochastic is a mean reversion indicator that benefits from more signals.
         """
         try:
             logger.debug(f'Inside analyse_stochastic for stock {stock.stock_symbol}')
