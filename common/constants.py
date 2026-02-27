@@ -55,6 +55,9 @@ ANALYSIS_WEIGHTS = {
     "ATR": 8,                     # Volatility measure
     "VOLUME": 10,
     "Volume": 10,                 # Alternative key
+    "VOLUME_BREAKOUT": 12,        # Volume breakout with price confirmation
+    "OBV_DIVERGENCE": 16,         # OBV divergence - smart money signal
+    "VOLUME_CLIMAX": 15,          # Volume climax - exhaustion reversal
     "BUY_SELL": 10,               # Buy/Sell quantity imbalance
     "SUPERTREND": 15,             # Supertrend reversal signal
     "RSI_DIVERGENCE": 18,         # RSI divergence - high conviction reversal
@@ -98,9 +101,19 @@ ANALYSIS_WEIGHTS = {
     # Futures Analysis
     "FUTURES_PREMIUM": 12,
     "OI_BUILDUP": 14,             # OI buildup from per-strike OI chain data
-    "FUTURE_ACTION": 14,          # Futures OI + Price action
-    "FUTURE_BREAKOUT_PATTERN": 15,# ORB breakout with OI confirmation
-    "FUTURE_PVO_PATTERN": 10,     # Price/Volume/OI patterns
+    "FUTURE_ACTION": 14,          # Futures OI + Price action (base weight)
+    "FUTURE_ACTION_LONG_BUILDUP": 16,     # Strong bullish signal - new positions
+    "FUTURE_ACTION_SHORT_BUILDUP": 16,    # Strong bearish signal - new positions
+    "FUTURE_ACTION_SHORT_COVERING": 14,   # Bullish - shorts closing
+    "FUTURE_ACTION_LONG_UNWINDING": 14,   # Bearish - longs closing
+    "FUTURE_BREAKOUT_PATTERN": 15,        # ORB breakout with OI confirmation (base)
+    "FUTURE_BREAKOUT_CONFIRMED": 18,      # ORB breakout with all confirmations
+    "FUTURE_BREAKOUT_MTF_ALIGNED": 20,    # ORB breakout with multi-timeframe alignment
+    "FUTURE_PVO_PATTERN": 10,             # Price/Volume/OI patterns (base)
+    "FUTURE_PVO_BUILDUP": 12,             # PVO pattern with OI buildup
+    "FUTURE_SIGNAL_SCORE_HIGH": 20,       # High confidence futures signal (score >= 70)
+    "FUTURE_SIGNAL_SCORE_MEDIUM": 15,     # Medium confidence futures signal (score >= 50)
+    "FUTURE_SIGNAL_SCORE_LOW": 10,        # Low confidence futures signal (score >= 30)
     
     # OI Chain Analysis (per-strike data from Sensibull OI endpoint)
     "OI_SUPPORT_RESISTANCE": 14,  # OI-based support/resistance levels
@@ -162,14 +175,19 @@ OPTIONS_ANALYSES = {"MAX_PAIN", "MAX_PAIN_TREND", "MAX_PAIN_ALIGNMENT",
                     "IV_SPIKE", "IV_TREND",
                     "OI_BUILDUP", "OI_SUPPORT_RESISTANCE", "OI_WALL", "OI_SHIFT",
                     "OI_INTRADAY_TREND", "OI_SR_SHIFT"}
-FUTURES_ANALYSES = {"FUTURES_PREMIUM"}
+FUTURES_ANALYSES = {"FUTURES_PREMIUM", "FUTURE_ACTION", "FUTURE_ACTION_LONG_BUILDUP", 
+                     "FUTURE_ACTION_SHORT_BUILDUP", "FUTURE_ACTION_SHORT_COVERING", 
+                     "FUTURE_ACTION_LONG_UNWINDING", "FUTURE_BREAKOUT_PATTERN", 
+                     "FUTURE_BREAKOUT_CONFIRMED", "FUTURE_BREAKOUT_MTF_ALIGNED",
+                     "FUTURE_PVO_PATTERN", "FUTURE_PVO_BUILDUP",
+                     "FUTURE_SIGNAL_SCORE_HIGH", "FUTURE_SIGNAL_SCORE_MEDIUM", "FUTURE_SIGNAL_SCORE_LOW"}
 
 # NEUTRAL signals that should NOT contribute to score
 # These indicate uncertainty/mixed signals rather than actionable info
 NEUTRAL_EXCLUDE_FROM_SCORE = {
     "MAX_PAIN_ALIGNMENT",   # When DIVERGENT - conflicting signals
     "MAX_PAIN_TREND",       # When DIVERGING - price moving away from max pain
-    "PCR_DIVERGENCE",       # Term structure divergence - uncertainty
+    "PCR_DIVERGENCE",       # Term structure divergence - uncertainty (always NEUTRAL)
     "OI_SUPPORT_RESISTANCE",# When neutral - just informational S/R levels
     "OI_SR_SHIFT",          # When neutral - range squeeze/expand is informational
 }
