@@ -16,10 +16,10 @@ class IVAnalyser(BaseAnalyzer):
         IVAnalyser.IV_TREND_CONTINUATION_DAYS = 3
         if shared.app_ctx.mode.name == shared.Mode.INTRADAY.name:
             IVAnalyser.IV_PERCENTAGE_CHANGE = 5
-            IVAnalyser.IV_TREND_PERCENTAGE_CHANGE = 3  
+            IVAnalyser.IV_TREND_PERCENTAGE_CHANGE = 8   # raised from 3
         else:
             IVAnalyser.IV_PERCENTAGE_CHANGE = 20
-            IVAnalyser.IV_TREND_PERCENTAGE_CHANGE = 10 
+            IVAnalyser.IV_TREND_PERCENTAGE_CHANGE = 20  # raised from 10
 
         logger.debug(f"IVAnalyser constants reset for mode {shared.app_ctx.mode.name}")
         logger.debug(f"IV_PERCENTAGE_CHANGE = {IVAnalyser.IV_PERCENTAGE_CHANGE}")

@@ -187,7 +187,7 @@ FUTURES_ANALYSES = {"FUTURES_PREMIUM", "FUTURE_ACTION", "FUTURE_ACTION_LONG_BUIL
 NEUTRAL_EXCLUDE_FROM_SCORE = {
     "MAX_PAIN_ALIGNMENT",   # When DIVERGENT - conflicting signals
     "MAX_PAIN_TREND",       # When DIVERGING - price moving away from max pain
-    "PCR_DIVERGENCE",       # Term structure divergence - uncertainty
+    "PCR_DIVERGENCE",       # Term structure divergence - uncertainty (always NEUTRAL)
     "OI_SUPPORT_RESISTANCE",# When neutral - just informational S/R levels
     "OI_SR_SHIFT",          # When neutral - range squeeze/expand is informational
 }

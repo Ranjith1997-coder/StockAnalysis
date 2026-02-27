@@ -234,6 +234,13 @@ def should_notify(analysis: Dict, min_priority: NotificationPriority = Notificat
     if score_result.total_score < constants.MIN_NOTIFICATION_SCORE:
         return False, score_result
     
+    # Check alignment gate: dominant trend must have >= 65% confidence
+    # This filters coin-flip stocks where signals are nearly split 50/50
+    MIN_ALIGNMENT_PCT = 65.0
+    if score_result.confidence_pct < MIN_ALIGNMENT_PCT and score_result.dominant_sentiment != "NEUTRAL":
+        logger.debug(f"Suppressing alert: alignment {score_result.confidence_pct:.1f}% < {MIN_ALIGNMENT_PCT}% threshold")
+        return False, score_result
+    
     # Check priority threshold
     priority_order = [
         NotificationPriority.NONE,
