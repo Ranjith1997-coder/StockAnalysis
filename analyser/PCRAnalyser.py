@@ -27,12 +27,12 @@ class PCRAnalyser(BaseAnalyzer):
         """Reset constants based on mode"""
         if shared.app_ctx.mode.name == shared.Mode.INTRADAY.name:
             PCRAnalyser.PCR_BEARISH_THRESHOLD = 0.5
-            PCRAnalyser.PCR_BULLISH_THRESHOLD = 1.0
+            PCRAnalyser.PCR_BULLISH_THRESHOLD = 1.2
             PCRAnalyser.PCR_EXTREME_BEARISH = 0.3
             PCRAnalyser.PCR_EXTREME_BULLISH = 1.5
         else:
             PCRAnalyser.PCR_BEARISH_THRESHOLD = 0.5
-            PCRAnalyser.PCR_BULLISH_THRESHOLD = 1.0
+            PCRAnalyser.PCR_BULLISH_THRESHOLD = 1.2
             PCRAnalyser.PCR_EXTREME_BEARISH = 0.3
             PCRAnalyser.PCR_EXTREME_BULLISH = 1.5
         
@@ -245,10 +245,10 @@ class PCRAnalyser(BaseAnalyzer):
             if near_month_pcr is None or far_month_pcr is None:
                 return False
             
-            # Check for significant divergence
+            # Check for significant divergence — requires strong imbalance (diff >= 1.2)
             pcr_diff = abs(near_month_pcr - far_month_pcr)
             
-            if pcr_diff > 0.9:  # Significant divergence
+            if pcr_diff > 1.2:  # Tightened from 0.9 — only extreme divergences
                 PCR_DIVERGENCE = namedtuple("PCR_DIVERGENCE", [
                     "near_month_pcr", "far_month_pcr", "divergence", "signal"
                 ])

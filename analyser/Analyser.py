@@ -197,15 +197,60 @@ class AnalyserOrchestrator:
                     if analysis_type == 'Volume':
                         message_parts.append(f"  Volume {trend.lower()}: <code>{data.Volume_rate_percent:.2f}%</code>")
                         message_parts.append(f"  Price {trend.lower()}: <code>{data.price_change_percent:.2f}%</code>")
+                    elif analysis_type == 'VOLUME_BREAKOUT':
+                        vol_emoji = "\U0001F4C8" if trend == 'BULLISH' else "\U0001F4C9"
+                        message_parts.append(f"  {vol_emoji} Vol Breakout: Vol=<code>{data.volume:,.0f}</code> ({data.volume_ratio:.1f}x MA) Price=<code>{data.price_change_pct:+.2f}%</code>")
+                    elif analysis_type == 'OBV_DIVERGENCE':
+                        div_emoji = "\U0001F7E2" if trend == 'BULLISH' else "\U0001F534"
+                        message_parts.append(f"  {div_emoji} OBV Div: <b>{data.divergence_type}</b> Price=<code>{data.price_previous:.2f}\u2192{data.price_current:.2f}</code>")
+                        message_parts.append(f"    OBV trend=<code>{data.trend}</code> weakening=<code>{data.trend_weakening}</code>")
+                    elif analysis_type == 'VOLUME_CLIMAX':
+                        climax_emoji = "\U0001F6A8"  # Warning sign for climax
+                        message_parts.append(f"  {climax_emoji} Vol Climax: <b>{data.climax_type}</b> Vol=<code>{data.volume:,.0f}</code> ({data.volume_ratio:.1f}x MA)")
+                        message_parts.append(f"    Price trend=<code>{data.price_trend_pct:+.1f}%</code> close_pos=<code>{data.close_position:.2f}</code>")
                     elif analysis_type == 'RSI':
-                        message_parts.append(f"  RSI: <code>{data.value:.2f}</code>")
+                        # Enhanced RSI message with zone duration
+                        if hasattr(data, 'zone_candles'):
+                            zone_name = "Overbought" if trend == 'BEARISH' else "Oversold"
+                            zone_emoji = "\U0001F534" if trend == 'BEARISH' else "\U0001F7E2"
+                            message_parts.append(f"  {zone_emoji} RSI: <code>{data.value:.2f}</code> ({zone_name} {data.zone_candles}c)")
+                            if hasattr(data, 'price_trend'):
+                                message_parts.append(f"    Price trend: <code>{data.price_trend}</code>")
+                        else:
+                            message_parts.append(f"  RSI: <code>{data.value:.2f}</code>")
                     elif analysis_type == 'rsi_crossover':
                         message_parts.append(f"  RSI crossover: <code>{data.prev_value:.2f} \u2192 {data.curr_value:.2f}</code>")
                     elif analysis_type == 'BollingerBand':
-                        comparison = '&lt;' if trend == 'BULLISH' else '&gt;'
-                        band_type = 'Lower' if trend == 'BULLISH' else 'Upper'
-                        band_value = f"{data.lower_band:.2f}" if trend == 'BULLISH' else f"{data.upper_band:.2f}"
-                        message_parts.append(f"  BB: Price(<code>{data.close:.2f}</code>) {comparison} {band_type}(<code>{band_value}</code>)")
+                        # Momentum strategy: 
+                        # BULLISH = Price > Upper Band (breakout above)
+                        # BEARISH = Price < Lower Band (breakdown below)
+                        if hasattr(data, 'signal_type'):
+                            # Use signal_type to determine correct band
+                            if "above" in data.signal_type:
+                                # BULLISH: Price > Upper Band
+                                comparison = '&gt;'
+                                band_type = 'Upper'
+                                band_value = f"{data.upper_band:.2f}"
+                            else:
+                                # BEARISH: Price < Lower Band
+                                comparison = '&lt;'
+                                band_type = 'Lower'
+                                band_value = f"{data.lower_band:.2f}"
+                            
+                            signal_emoji = "\U0001F680" if "above" in data.signal_type else "\U0001F4C9"
+                            base_msg = f"  BB: {signal_emoji} Price(<code>{data.close:.2f}</code>) {comparison} {band_type}(<code>{band_value}</code>)"
+                            # Add trend and confirmation info
+                            if hasattr(data, 'trend') and hasattr(data, 'confirmation_candles'):
+                                base_msg += f" [{data.trend}, {data.confirmation_candles}c]"
+                            else:
+                                base_msg += f" [{data.signal_type}]"
+                            message_parts.append(base_msg)
+                        else:
+                            # Fallback for old format (shouldn't happen with new strategy)
+                            comparison = '&gt;' if trend == 'BULLISH' else '&lt;'
+                            band_type = 'Upper' if trend == 'BULLISH' else 'Lower'
+                            band_value = f"{data.upper_band:.2f}" if trend == 'BULLISH' else f"{data.lower_band:.2f}"
+                            message_parts.append(f"  BB: Price(<code>{data.close:.2f}</code>) {comparison} {band_type}(<code>{band_value}</code>)")
                     elif analysis_type == 'Single_candle_stick_pattern':
                         entries = data if isinstance(data, list) else [data]
                         for d in entries:
@@ -235,7 +280,17 @@ class AnalyserOrchestrator:
                         for d in entries:
                             message_parts.append(f"  Candle (3) Cont: <i>{d}</i>")
                     elif analysis_type == 'FUTURE_ACTION':
-                        message_parts.append(f"  Futures: <b>{data.action}</b> p%:<code>{data.price_percentage:.2f}</code> oi%:<code>{data.oi_percentage:.2f}</code>")
+                        # Enhanced futures action with score and confidence
+                        action_emoji = {"long_buildup": "\U0001F7E2", "short_buildup": "\U0001F534", 
+                                       "short_covering": "\U0001F7E2", "long_unwinding": "\U0001F534"}
+                        emoji = action_emoji.get(data.action, "")
+                        base_msg = f"  Futures: {emoji} <b>{data.action}</b> p%:<code>{data.price_percentage:.2f}</code> oi%:<code>{data.oi_percentage:.2f}</code>"
+                        # Add score and confidence if available (new enhanced format)
+                        if hasattr(data, 'score') and hasattr(data, 'confidence'):
+                            conf_emoji = {"HIGH": "\U0001F525", "MEDIUM": "\U0001F4C8", "LOW": "\U0001F4CA", "VERY_LOW": "\u26AA"}
+                            c_emoji = conf_emoji.get(data.confidence, "")
+                            base_msg += f" | {c_emoji} <code>{data.score}</code> ({data.confidence})"
+                        message_parts.append(base_msg)
                     elif analysis_type == 'vwap_deviation':
                         cmp = '&lt;' if trend == 'BULLISH' else '&gt;'
                         side = 'below' if trend == 'BULLISH' else 'above'
@@ -247,7 +302,28 @@ class AnalyserOrchestrator:
                         cmp = '&gt;' if trend == 'BULLISH' else '&lt;'
                         message_parts.append(f"  BuySell: Buy <code>{data.buy_quantity:.0f}</code> {cmp} Sell <code>{data.sell_quantity:.0f}</code>")
                     elif analysis_type == 'FUTURE_BREAKOUT_PATTERN':
-                        message_parts.append(f"  Futures Breakout: <b>{data.pattern}</b>")
+                        # Enhanced breakout pattern with score, confidence, and MTF alignment
+                        breakout_emoji = "\U0001F680" if "up" in data.pattern else "\U0001F4C9"
+                        base_msg = f"  Futures Breakout: {breakout_emoji} <b>{data.pattern}</b>"
+                        # Add ORB levels
+                        base_msg += f" ORB:[<code>{data.orb_low:.2f}-{data.orb_high:.2f}</code>]"
+                        # Add confirmations
+                        confirms = []
+                        if data.oi_confirm:
+                            confirms.append("OI\u2713")
+                        if data.vol_confirm:
+                            confirms.append("Vol\u2713")
+                        if confirms:
+                            base_msg += f" [{', '.join(confirms)}]"
+                        # Add score and confidence if available (new enhanced format)
+                        if hasattr(data, 'score') and hasattr(data, 'confidence'):
+                            conf_emoji = {"HIGH": "\U0001F525", "MEDIUM": "\U0001F4C8", "LOW": "\U0001F4CA", "VERY_LOW": "\u26AA"}
+                            c_emoji = conf_emoji.get(data.confidence, "")
+                            base_msg += f" | {c_emoji} <code>{data.score}</code> ({data.confidence})"
+                        # Add MTF alignment if available
+                        if hasattr(data, 'mtf_aligned') and data.mtf_aligned:
+                            base_msg += " \U0001F517MTF"
+                        message_parts.append(base_msg)
                     elif analysis_type == 'EMA_CROSSOVER':
                         cmp = '&gt;' if trend == 'BULLISH' else '&lt;'
                         message_parts.append(f"  EMA: <b>{data.direction}</b> fast:<code>{data.fast_ema:.2f}</code> {cmp} slow:<code>{data.slow_ema:.2f}</code>")
@@ -257,9 +333,15 @@ class AnalyserOrchestrator:
                     elif analysis_type == 'RSI_DIVERGENCE':
                         message_parts.append(f"  RSI Div: <b>{data.divergence_type}</b> P:<code>{data.price_previous:.2f}\u2192{data.price_current:.2f}</code> RSI:<code>{data.rsi_previous:.1f}\u2192{data.rsi_current:.1f}</code>")
                     elif analysis_type == 'STOCHASTIC':
-                        message_parts.append(f"  Stoch: %K=<code>{data.k_value:.1f}</code> %D=<code>{data.d_value:.1f}</code> | <i>{data.signal}</i>")
-                    elif analysis_type == 'OBV':
-                        message_parts.append(f"  OBV: <b>{data.divergence_type}</b> Price={data.price_trend} OBV={data.obv_trend}")
+                        # Enhanced Stochastic message with zone duration and signal strength
+                        if hasattr(data, 'zone_candles'):
+                            stoch_emoji = "\U0001F7E2" if trend == 'BULLISH' else "\U0001F534"
+                            strength_emoji = {"STRONG": "\U0001F525", "MODERATE": "\U0001F4C8", "WEAK": "\U0001F4CA"}
+                            s_emoji = strength_emoji.get(data.signal_strength, "")
+                            message_parts.append(f"  {stoch_emoji} Stoch: %K=<code>{data.k_value:.1f}</code> %D=<code>{data.d_value:.1f}</code> ({data.zone_candles}c in zone)")
+                            message_parts.append(f"    {s_emoji} {data.signal_strength} | {data.signal}")
+                        else:
+                            message_parts.append(f"  Stoch: %K=<code>{data.k_value:.1f}</code> %D=<code>{data.d_value:.1f}</code> | <i>{data.signal}</i>")
                     elif analysis_type == 'PIVOT_POINTS':
                         message_parts.append(f"  Pivot: <b>{data.signal}</b> Price=<code>{data.close:.2f}</code> {data.level_name}=<code>{data.level_value:.2f}</code> PP=<code>{data.pivot:.2f}</code>")
                     elif analysis_type == 'PCR_EXTREME':
@@ -326,9 +408,25 @@ class AnalyserOrchestrator:
                 elif analysis_type == 'FUTURE_PVO_PATTERN':
                     if isinstance(data, list):
                         for fut_data in data:
-                            message_parts.append(f"  PVO: <b>{fut_data.pattern}</b> p:<code>{fut_data.price_pct:.2f}%</code> v:<code>{fut_data.vol_pct:.2f}%</code> oi:<code>{fut_data.oi_pct:.2f}%</code>")
+                            base_msg = f"  PVO: <b>{fut_data.pattern}</b> p:<code>{fut_data.price_pct:.2f}%</code> v:<code>{fut_data.vol_pct:.2f}%</code> oi:<code>{fut_data.oi_pct:.2f}%</code>"
+                            # Add score and confidence if available (new enhanced format)
+                            if hasattr(fut_data, 'score') and hasattr(fut_data, 'confidence'):
+                                conf_emoji = {"HIGH": "\U0001F525", "MEDIUM": "\U0001F4C8", "LOW": "\U0001F4CA", "VERY_LOW": "\u26AA"}
+                                c_emoji = conf_emoji.get(fut_data.confidence, "")
+                                base_msg += f" | {c_emoji} <code>{fut_data.score}</code>"
+                            if hasattr(fut_data, 'mtf_aligned') and fut_data.mtf_aligned:
+                                base_msg += " \U0001F517MTF"
+                            message_parts.append(base_msg)
                     else:
-                        message_parts.append(f"  PVO: <b>{data.pattern}</b> p:<code>{data.price_pct:.2f}%</code> v:<code>{data.vol_pct:.2f}%</code> oi:<code>{data.oi_pct:.2f}%</code>")
+                        base_msg = f"  PVO: <b>{data.pattern}</b> p:<code>{data.price_pct:.2f}%</code> v:<code>{data.vol_pct:.2f}%</code> oi:<code>{data.oi_pct:.2f}%</code>"
+                        # Add score and confidence if available (new enhanced format)
+                        if hasattr(data, 'score') and hasattr(data, 'confidence'):
+                            conf_emoji = {"HIGH": "\U0001F525", "MEDIUM": "\U0001F4C8", "LOW": "\U0001F4CA", "VERY_LOW": "\u26AA"}
+                            c_emoji = conf_emoji.get(data.confidence, "")
+                            base_msg += f" | {c_emoji} <code>{data.score}</code>"
+                        if hasattr(data, 'mtf_aligned') and data.mtf_aligned:
+                            base_msg += " \U0001F517MTF"
+                        message_parts.append(base_msg)
                 elif analysis_type == 'PCR_DIVERGENCE':
                     message_parts.append(f"  PCR Div: Near=<code>{data.near_month_pcr:.3f}</code> Far=<code>{data.far_month_pcr:.3f}</code> Div=<code>{data.divergence:.3f}</code> - <i>{data.signal}</i>")
                 elif analysis_type == 'MAX_PAIN_TREND':
