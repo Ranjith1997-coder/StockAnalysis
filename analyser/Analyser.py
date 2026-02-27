@@ -342,8 +342,6 @@ class AnalyserOrchestrator:
                             message_parts.append(f"    {s_emoji} {data.signal_strength} | {data.signal}")
                         else:
                             message_parts.append(f"  Stoch: %K=<code>{data.k_value:.1f}</code> %D=<code>{data.d_value:.1f}</code> | <i>{data.signal}</i>")
-                    elif analysis_type == 'OBV':
-                        message_parts.append(f"  OBV: <b>{data.divergence_type}</b> Price={data.price_trend} OBV={data.obv_trend}")
                     elif analysis_type == 'PIVOT_POINTS':
                         message_parts.append(f"  Pivot: <b>{data.signal}</b> Price=<code>{data.close:.2f}</code> {data.level_name}=<code>{data.level_value:.2f}</code> PP=<code>{data.pivot:.2f}</code>")
                     elif analysis_type == 'PCR_EXTREME':

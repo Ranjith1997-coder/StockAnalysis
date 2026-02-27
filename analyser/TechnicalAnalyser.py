@@ -1079,84 +1079,6 @@ class TechnicalAnalyser(BaseAnalyzer):
 
     @BaseAnalyzer.both
     @BaseAnalyzer.index_both
-    def analyse_obv(self, stock: Stock):
-        """
-        On-Balance Volume (OBV) divergence detector.
-        Compares price trend vs OBV trend over the lookback window.
-        Bearish divergence: price rising but OBV falling  (distribution).
-        Bullish divergence: price falling but OBV rising  (accumulation).
-        """
-        try:
-            logger.debug(f'Inside analyse_obv for stock {stock.stock_symbol}')
-            price_data = stock.priceData
-            lookback = self.OBV_EMA_PERIOD
-
-            if len(price_data) < lookback + 5:
-                return False
-
-            close = price_data['Close']
-            volume = price_data['Volume']
-
-            # Vectorised OBV calculation
-            price_change = close.diff()
-            signed_volume = np.where(price_change > 0, volume,
-                                     np.where(price_change < 0, -volume, 0))
-            obv = pd.Series(signed_volume, index=close.index, dtype=float).cumsum()
-
-            # OBV EMA for trend smoothing
-            obv_ema = obv.ewm(span=lookback, adjust=False).mean()
-
-            # Split recent window into two halves and compare means
-            recent_close = close.iloc[-lookback:]
-            recent_obv = obv.iloc[-lookback:]
-            half = lookback // 2
-
-            price_first_half = recent_close.iloc[:half].mean()
-            price_second_half = recent_close.iloc[half:].mean()
-            obv_first_half = recent_obv.iloc[:half].mean()
-            obv_second_half = recent_obv.iloc[half:].mean()
-
-            # Require minimum 0.5 % price movement to filter noise
-            price_change_pct = ((price_second_half - price_first_half) / price_first_half) * 100
-            price_rising = price_change_pct > 0.5
-            price_falling = price_change_pct < -0.5
-            obv_rising = obv_second_half > obv_first_half
-            obv_falling = obv_second_half < obv_first_half
-
-            curr_obv = obv.iloc[-1]
-            curr_obv_ema = obv_ema.iloc[-1]
-
-            OBVAnalysis = namedtuple("OBVAnalysis", [
-                "obv_current", "obv_ema", "divergence_type",
-                "price_trend", "obv_trend"
-            ])
-
-            # Bearish divergence: price rising but OBV falling (distribution)
-            if price_rising and obv_falling:
-                stock.set_analysis("BEARISH", "OBV", OBVAnalysis(
-                    obv_current=curr_obv, obv_ema=curr_obv_ema,
-                    divergence_type="bearish_divergence",
-                    price_trend="rising", obv_trend="falling"
-                ))
-                return True
-
-            # Bullish divergence: price falling but OBV rising (accumulation)
-            elif price_falling and obv_rising:
-                stock.set_analysis("BULLISH", "OBV", OBVAnalysis(
-                    obv_current=curr_obv, obv_ema=curr_obv_ema,
-                    divergence_type="bullish_divergence",
-                    price_trend="falling", obv_trend="rising"
-                ))
-                return True
-
-            return False
-        except Exception as e:
-            logger.error(f"Error in analyse_obv for stock {stock.stock_symbol}: {str(e)}")
-            logger.error(f"Traceback: {traceback.format_exc()}")
-            return False
-
-    @BaseAnalyzer.both
-    @BaseAnalyzer.index_both
     def analyse_pivot_points(self, stock: Stock):
         """
         Classic Pivot Points (PP, R1-R3, S1-S3) from previous period OHLC.
@@ -1197,20 +1119,24 @@ class TechnicalAnalyser(BaseAnalyzer):
                 "close", "pivot", "level_name", "level_value", "signal"
             ])
 
+            # Minimum breakout magnitude: price must clear level by at least 0.3%
+            # Prevents trivial breakouts where price just barely touches the level
+            MIN_BREAKOUT_PCT = 0.003  # 0.3%
+
             # --- Bullish breakouts (price crossing UP through a level) ---
-            if prev_close_val < r2 and curr_close >= r2:
+            if prev_close_val < r2 and curr_close >= r2 and (curr_close - r2) / r2 >= MIN_BREAKOUT_PCT:
                 stock.set_analysis("BULLISH", "PIVOT_POINTS", PivotAnalysis(
                     close=curr_close, pivot=pp, level_name="R2",
                     level_value=r2, signal="R2_breakout"
                 ))
                 return True
-            elif prev_close_val < r1 and curr_close >= r1:
+            elif prev_close_val < r1 and curr_close >= r1 and (curr_close - r1) / r1 >= MIN_BREAKOUT_PCT:
                 stock.set_analysis("BULLISH", "PIVOT_POINTS", PivotAnalysis(
                     close=curr_close, pivot=pp, level_name="R1",
                     level_value=r1, signal="R1_breakout"
                 ))
                 return True
-            elif prev_close_val < pp and curr_close >= pp:
+            elif prev_close_val < pp and curr_close >= pp and (curr_close - pp) / pp >= MIN_BREAKOUT_PCT:
                 stock.set_analysis("BULLISH", "PIVOT_POINTS", PivotAnalysis(
                     close=curr_close, pivot=pp, level_name="PP",
                     level_value=pp, signal="PP_breakout"
@@ -1218,19 +1144,19 @@ class TechnicalAnalyser(BaseAnalyzer):
                 return True
 
             # --- Bearish breakdowns (price crossing DOWN through a level) ---
-            if prev_close_val > s2 and curr_close <= s2:
+            if prev_close_val > s2 and curr_close <= s2 and (s2 - curr_close) / s2 >= MIN_BREAKOUT_PCT:
                 stock.set_analysis("BEARISH", "PIVOT_POINTS", PivotAnalysis(
                     close=curr_close, pivot=pp, level_name="S2",
                     level_value=s2, signal="S2_breakdown"
                 ))
                 return True
-            elif prev_close_val > s1 and curr_close <= s1:
+            elif prev_close_val > s1 and curr_close <= s1 and (s1 - curr_close) / s1 >= MIN_BREAKOUT_PCT:
                 stock.set_analysis("BEARISH", "PIVOT_POINTS", PivotAnalysis(
                     close=curr_close, pivot=pp, level_name="S1",
                     level_value=s1, signal="S1_breakdown"
                 ))
                 return True
-            elif prev_close_val > pp and curr_close <= pp:
+            elif prev_close_val > pp and curr_close <= pp and (pp - curr_close) / pp >= MIN_BREAKOUT_PCT:
                 stock.set_analysis("BEARISH", "PIVOT_POINTS", PivotAnalysis(
                     close=curr_close, pivot=pp, level_name="PP",
                     level_value=pp, signal="PP_breakdown"

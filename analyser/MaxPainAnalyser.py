@@ -31,10 +31,10 @@ class MaxPainAnalyser(BaseAnalyzer):
     def reset_constants(self):
         """Reset constants based on mode"""
         if shared.app_ctx.mode.name == shared.Mode.INTRADAY.name:
-            MaxPainAnalyser.MAX_PAIN_DEVIATION_THRESHOLD = 1.5
-            MaxPainAnalyser.MAX_PAIN_STRONG_DEVIATION = 3.0
-        else:
             MaxPainAnalyser.MAX_PAIN_DEVIATION_THRESHOLD = 2.0
+            MaxPainAnalyser.MAX_PAIN_STRONG_DEVIATION = 4.0
+        else:
+            MaxPainAnalyser.MAX_PAIN_DEVIATION_THRESHOLD = 3.0
             MaxPainAnalyser.MAX_PAIN_STRONG_DEVIATION = 5.0
         
         logger.debug(f"MaxPainAnalyser constants reset for mode {shared.app_ctx.mode.name}")
@@ -80,6 +80,18 @@ class MaxPainAnalyser(BaseAnalyzer):
             if max_pain_strike is None:
                 logger.debug(f"No max pain strike for {stock.stock_symbol} current expiry {nearest_expiry}")
                 return False
+            
+            # ── Expiry proximity gate: Max Pain theory is only reliable near expiry ──
+            # Only fire in the last 12 calendar days before expiry
+            try:
+                from datetime import datetime, date
+                expiry_date = datetime.strptime(nearest_expiry, "%Y-%m-%d").date()
+                days_to_expiry = (expiry_date - date.today()).days
+                if days_to_expiry > 12:
+                    logger.debug(f"Max Pain skipped for {stock.stock_symbol}: {days_to_expiry} days to expiry (> 12 day gate)")
+                    return False
+            except Exception:
+                pass  # If date parsing fails, proceed without the gate
             
             # Calculate deviation from max pain
             deviation = ((current_price - max_pain_strike) / max_pain_strike) * 100
@@ -207,7 +219,7 @@ class MaxPainAnalyser(BaseAnalyzer):
             
             max_pain_shift = ((curr_max_pain - prev_max_pain) / prev_max_pain) * 100 if prev_max_pain else 0
             
-            if is_converging and abs(curr_deviation) > 1.0:
+            if is_converging and abs(curr_deviation) > 2.0:
                 # Price moving toward max pain - confirming max pain theory
                 trend = "CONVERGING"
                 sentiment = "BEARISH" if curr_deviation > 0 else "BULLISH"
