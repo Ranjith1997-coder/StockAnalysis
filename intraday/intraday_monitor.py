@@ -161,6 +161,10 @@ def update_zerodha_option_chain(stockName = None, indexName = None):
         stock_futures = stock_futures[['instrument_token', 'tradingsymbol', 'expiry', 'instrument_type']]
 
         expiry_dates = sorted(stock_options['expiry'].unique())
+        if not expiry_dates:
+            logger.warning(f"No expiry dates found for stock {stock.stock_symbol}")
+            continue
+
         zerodha_ctx["option_chain"]["current"] = stock_options[stock_options['expiry'] == expiry_dates[0]]
         zerodha_ctx["futures_mdata"]["current"] = stock_futures[stock_futures['expiry'] == expiry_dates[0]]
         if len(expiry_dates) > 1:
@@ -190,6 +194,10 @@ def update_zerodha_option_chain(stockName = None, indexName = None):
 
         expiry_dates = sorted(index_options['expiry'].unique())
 
+        if not expiry_dates:
+            logger.warning(f"No expiry dates found for index {index.stock_symbol}")
+            continue
+
         if "NIFTY" ==  index.stock_symbol:
             expiry_df = pd.DataFrame({'expiry': expiry_dates})
             expiry_df['year'] = expiry_df['expiry'].apply(lambda x: x.year)
@@ -200,6 +208,10 @@ def update_zerodha_option_chain(stockName = None, indexName = None):
 
             expiry_dates = monthly_expiry_dates
         
+        if not expiry_dates:
+            logger.warning(f"No monthly expiry dates found for index {index.stock_symbol}")
+            continue
+
         zerodha_ctx["option_chain"]["current"] = index_options[index_options['expiry'] == expiry_dates[0]]
         zerodha_ctx["futures_mdata"]["current"] = index_futures[index_futures['expiry'] == expiry_dates[0]]
         if len(expiry_dates) > 1:
