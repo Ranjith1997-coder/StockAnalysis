@@ -28,8 +28,15 @@ class TechnicalAnalyser(BaseAnalyzer):
 
     BUY_SELL_QUANTITY = 2
 
-    EMA_DIFF_THRESHOLD = 0      # minimum % separation after crossover
-    EMA_MIN_SLOPE = 0    
+    FAST_EMA_PERIOD: int = 9
+    SLOW_EMA_PERIOD: int = 21
+
+    EMA_DIFF_THRESHOLD = 0.3    # minimum % separation after crossover
+    EMA_MIN_SLOPE = 0
+
+    # ADX — trend strength gate for EMA crossover
+    ADX_PERIOD = 14
+    ADX_TREND_THRESHOLD = 20    # ADX >= 20 optimised (25 stocks, 2020-2026 daily)
 
     # Supertrend — optimised for positional (profit_factor=1.24, 18 stocks, 2020-2024 train)
     SUPERTREND_PERIOD = 14
@@ -79,9 +86,14 @@ class TechnicalAnalyser(BaseAnalyzer):
             TechnicalAnalyser.STOCHASTIC_D_PERIOD = 3
             TechnicalAnalyser.STOCHASTIC_UPPER = 80
             TechnicalAnalyser.STOCHASTIC_LOWER = 20
+            # Intraday EMA crossover — tighter diff, lower ADX bar (intraday trends develop faster)
+            TechnicalAnalyser.EMA_DIFF_THRESHOLD = 0.1
+            TechnicalAnalyser.ADX_TREND_THRESHOLD = 20
         else:
-            TechnicalAnalyser.FAST_EMA_PERIOD = 50
-            TechnicalAnalyser.SLOW_EMA_PERIOD = 200
+            # 20/50 optimised on 25 stocks 2020-2026 daily (PF 2.74 with ADX=20)
+            # 50/200 (Golden Cross) was too lagging — PF 0.52 in backtest
+            TechnicalAnalyser.FAST_EMA_PERIOD = 20
+            TechnicalAnalyser.SLOW_EMA_PERIOD = 50
             # Positional RSI — optimised (18 stocks, 2020-2024, profit_factor)
             TechnicalAnalyser.RSI_UPPER_THRESHOLD = 85
             TechnicalAnalyser.RSI_LOWER_THRESHOLD = 30
@@ -95,6 +107,10 @@ class TechnicalAnalyser(BaseAnalyzer):
             TechnicalAnalyser.STOCHASTIC_D_PERIOD = 5
             TechnicalAnalyser.STOCHASTIC_UPPER = 90
             TechnicalAnalyser.STOCHASTIC_LOWER = 30
+            # Positional EMA crossover — wider diff required
+            # ADX=20 optimised on 25 stocks 2020-2026 daily (PF 2.74, beats no-filter)
+            TechnicalAnalyser.EMA_DIFF_THRESHOLD = 0.3
+            TechnicalAnalyser.ADX_TREND_THRESHOLD = 20
         logger.debug(f"Technical Analyser constants reset for mode {shared.app_ctx.mode.name}")
         logger.debug(f"RSI_UPPER_THRESHOLD = {TechnicalAnalyser.RSI_UPPER_THRESHOLD} , RSI_LOWER_THRESHOLD = {TechnicalAnalyser.RSI_LOWER_THRESHOLD}, ATR_THRESHOLD = {TechnicalAnalyser.ATR_THRESHOLD}")
 
@@ -125,6 +141,46 @@ class TechnicalAnalyser(BaseAnalyzer):
         rsi = 100 - (100 / (1 + rs))
 
         return rsi
+
+    def _compute_adx(self, price_data: pd.DataFrame, period: int | None = None) -> pd.Series:
+        """
+        Compute ADX (Average Directional Index) using Wilder's smoothing.
+        ADX measures trend strength, not direction:
+          ADX < 20  → ranging / choppy market
+          ADX 20-25 → weak trend forming
+          ADX >= 25 → confirmed trend (reliable for EMA crossover signals)
+          ADX >= 40 → strong trend
+        """
+        if period is None:
+            period = self.ADX_PERIOD
+
+        high  = price_data['High']
+        low   = price_data['Low']
+        close = price_data['Close']
+
+        # True Range
+        tr = pd.concat([
+            high - low,
+            (high - close.shift(1)).abs(),
+            (low  - close.shift(1)).abs(),
+        ], axis=1).max(axis=1)
+
+        # Directional movement
+        up_move   = high.diff()
+        down_move = -low.diff()
+        plus_dm  = up_move.where((up_move > down_move) & (up_move > 0), 0.0)
+        minus_dm = down_move.where((down_move > up_move) & (down_move > 0), 0.0)
+
+        # Wilder smoothing (alpha = 1/period)
+        alpha = 1 / period
+        atr      = tr.ewm(alpha=alpha, adjust=False).mean()
+        plus_di  = 100 * plus_dm.ewm(alpha=alpha,  adjust=False).mean() / atr
+        minus_di = 100 * minus_dm.ewm(alpha=alpha, adjust=False).mean() / atr
+
+        dx  = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, np.nan)
+        adx = dx.ewm(alpha=alpha, adjust=False).mean()
+
+        return adx
 
     @BaseAnalyzer.both
     @BaseAnalyzer.index_both
@@ -715,11 +771,21 @@ class TechnicalAnalyser(BaseAnalyzer):
             fast_slope_prev = fast_prev - fast_prev2
             slow_slope_prev = slow_prev - slow_prev2
 
+            # ADX gate — only signal in confirmed trending markets
+            adx_series = self._compute_adx(stock.priceData)
+            adx_value = adx_series.iloc[-1]
+            if pd.isna(adx_value) or adx_value < self.ADX_TREND_THRESHOLD:
+                logger.debug(
+                    f"EMA crossover skipped for {stock.stock_symbol}: "
+                    f"ADX={adx_value:.1f} below threshold {self.ADX_TREND_THRESHOLD}"
+                )
+                return False
+
             EMACross = namedtuple("EMACross", [
                 "fast_ema", "slow_ema", "diff_pct",
                 "fast_slope", "slow_slope",
                 "fast_slope_prev", "slow_slope_prev",
-                "direction"
+                "adx", "direction"
             ])
 
             signal = None
@@ -749,6 +815,7 @@ class TechnicalAnalyser(BaseAnalyzer):
                     slow_slope=slow_slope,
                     fast_slope_prev=fast_slope_prev,
                     slow_slope_prev=slow_slope_prev,
+                    adx=adx_value,
                     direction=direction
                 )
             )
