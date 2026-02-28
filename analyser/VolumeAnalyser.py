@@ -160,17 +160,9 @@ class VolumeAnalyser(BaseAnalyzer):
         close = price_data['Close']
         volume = price_data['Volume']
         
-        obv = pd.Series(index=price_data.index, dtype=float)
-        obv.iloc[0] = volume.iloc[0]
-        
-        for i in range(1, len(close)):
-            if close.iloc[i] > close.iloc[i-1]:
-                obv.iloc[i] = obv.iloc[i-1] + volume.iloc[i]
-            elif close.iloc[i] < close.iloc[i-1]:
-                obv.iloc[i] = obv.iloc[i-1] - volume.iloc[i]
-            else:
-                obv.iloc[i] = obv.iloc[i-1]
-        
+        direction = np.sign(close.diff()).fillna(0)
+        obv = (volume * direction).cumsum()
+
         return obv
     
     @BaseAnalyzer.both

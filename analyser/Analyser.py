@@ -326,7 +326,9 @@ class AnalyserOrchestrator:
                         message_parts.append(base_msg)
                     elif analysis_type == 'EMA_CROSSOVER':
                         cmp = '&gt;' if trend == 'BULLISH' else '&lt;'
-                        message_parts.append(f"  EMA: <b>{data.direction}</b> fast:<code>{data.fast_ema:.2f}</code> {cmp} slow:<code>{data.slow_ema:.2f}</code>")
+                        adx_str = f" ADX:<code>{data.adx:.1f}</code>" if hasattr(data, 'adx') else ""
+                        diff_str = f" \u0394<code>{data.diff_pct:+.2f}%</code>" if hasattr(data, 'diff_pct') else ""
+                        message_parts.append(f"  EMA: <b>{data.direction}</b> fast:<code>{data.fast_ema:.2f}</code> {cmp} slow:<code>{data.slow_ema:.2f}</code>{diff_str}{adx_str}")
                     elif analysis_type == 'SUPERTREND':
                         arrow = '\u2191' if trend == 'BULLISH' else '\u2193'
                         message_parts.append(f"  Supertrend: {arrow} ST=<code>{data.supertrend_value:.2f}</code> Price=<code>{data.close:.2f}</code> | <i>{data.signal}</i>")
