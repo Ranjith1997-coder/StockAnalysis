@@ -909,44 +909,49 @@ class OIChainAnalyser(BaseAnalyzer):
             last_ltp = ltps[-1] if ltps[-1] else 0
             expiry = history[-1].get("expiry")
             
-            # ── Determine signal (stringent thresholds) ──
+            # ── Determine signal using change_pct (first→last across all snapshots) ──
+            # NOTE: trend direction labels (FLAT/RISING/FALLING) use recent 5 snaps for display.
+            # Signal logic intentionally uses change_pct to be consistent with displayed numbers.
             min_pcr_change = OIChainAnalyser.OI_TREND_MIN_PCR_CHANGE_PCT
             min_oi_change = OIChainAnalyser.OI_TREND_MIN_OI_CHANGE_PCT
-            
+
             signal_parts = []
             sentiment = None
-            
-            # Strong bearish: Call OI rising + PCR falling significantly
-            if call_rising and pcr_falling and abs(pcr_change_pct) > min_pcr_change:
+
+            # Strong bearish: significant call OI build-up + PCR declining
+            if call_oi_change_pct > min_oi_change and pcr_change_pct < -min_pcr_change:
                 sentiment = "BEARISH"
                 signal_parts.append(f"Call OI rising ({call_oi_change_pct:+.1f}%) + PCR falling ({pcr_change_pct:+.1f}%)")
-                signal_parts.append("→ Aggressive intraday call writing - Bearish")
-            
-            # Strong bullish: Put OI rising + PCR rising significantly
-            elif put_rising and pcr_rising and abs(pcr_change_pct) > min_pcr_change:
+                signal_parts.append("→ Aggressive call writing - Bearish")
+
+            # Strong bullish: significant put OI build-up + PCR increasing
+            elif put_oi_change_pct > min_oi_change and pcr_change_pct > min_pcr_change:
                 sentiment = "BULLISH"
                 signal_parts.append(f"Put OI rising ({put_oi_change_pct:+.1f}%) + PCR rising ({pcr_change_pct:+.1f}%)")
-                signal_parts.append("→ Aggressive intraday put writing - Bullish")
-            
-            # One-sided call writing: significant OI rise
-            elif call_rising and not put_rising and call_oi_change_pct > min_oi_change:
+                signal_parts.append("→ Aggressive put writing - Bullish")
+
+            # One-sided call writing: calls grew ≥2x more than puts
+            elif (call_oi_change_pct > min_oi_change and
+                  call_oi_change_pct >= put_oi_change_pct * 2 and
+                  call_oi_change_pct - put_oi_change_pct > min_oi_change):
                 sentiment = "BEARISH"
-                signal_parts.append(f"Call OI surging ({call_oi_change_pct:+.1f}%) while Put OI {put_trend.lower()}")
+                signal_parts.append(f"Call OI surging ({call_oi_change_pct:+.1f}%) while Put OI {put_trend.lower()} ({put_oi_change_pct:+.1f}%)")
                 signal_parts.append("→ One-sided call writing - Bearish pressure")
-            
-            # One-sided put writing: significant OI rise
-            elif put_rising and not call_rising and put_oi_change_pct > min_oi_change:
+
+            # One-sided put writing: puts grew ≥2x more than calls
+            elif (put_oi_change_pct > min_oi_change and
+                  put_oi_change_pct >= call_oi_change_pct * 2 and
+                  put_oi_change_pct - call_oi_change_pct > min_oi_change):
                 sentiment = "BULLISH"
-                signal_parts.append(f"Put OI surging ({put_oi_change_pct:+.1f}%) while Call OI {call_trend.lower()}")
+                signal_parts.append(f"Put OI surging ({put_oi_change_pct:+.1f}%) while Call OI {call_trend.lower()} ({call_oi_change_pct:+.1f}%)")
                 signal_parts.append("→ One-sided put writing - Bullish support")
-            
+
             # Both unwinding significantly
-            elif (call_falling and put_falling and 
-                  abs(call_oi_change_pct) > min_oi_change and abs(put_oi_change_pct) > min_oi_change):
+            elif (call_oi_change_pct < -min_oi_change and put_oi_change_pct < -min_oi_change):
                 sentiment = "NEUTRAL"
                 signal_parts.append(f"Both Call OI ({call_oi_change_pct:+.1f}%) and Put OI ({put_oi_change_pct:+.1f}%) declining sharply")
                 signal_parts.append("→ Mass position unwinding - potential breakout ahead")
-            
+
             else:
                 return False  # No abnormal intraday trend
             

@@ -1,4 +1,11 @@
+from __future__ import annotations
 from enum import Enum
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    from zerodha.zerodha_connect import KiteConnect
+    from zerodha.zerodha_analysis import ZerodhaTickerManager
+
 class Mode (Enum):
     INTRADAY = 1
     POSITIONAL = 2
@@ -15,9 +22,9 @@ class AppContext:
         self.commodity_list = []
         self.global_indices_list = []
         self.stockExpires = []
-        self.mode = None
-        self.zd_ticker_manager = None
-        self.zd_kc = None
+        self.mode: Optional[Mode] = None
+        self.zd_ticker_manager: Optional[ZerodhaTickerManager] = None
+        self.zd_kc: Optional[KiteConnect] = None
 
 app_ctx = AppContext()
 ticker_52_week_high_list = []
