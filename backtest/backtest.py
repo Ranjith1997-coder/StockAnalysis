@@ -284,7 +284,8 @@ class Backtester:
                 yf_symbol = stock_symbol + ".NS"
             
             # Download data with buffer for indicator calculation
-            buffer_days = 200  # Extra days for indicators
+            # 350 calendar days ≈ 245 trading days — enough to warm up a 200-period EMA
+            buffer_days = 350  # Extra days for indicators
             buffer_start = self.start_date - timedelta(days=buffer_days)
             
             data = yf.download(

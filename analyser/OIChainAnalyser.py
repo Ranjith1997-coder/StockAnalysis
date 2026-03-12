@@ -216,7 +216,35 @@ class OIChainAnalyser(BaseAnalyzer):
             
             if max_call_oi_strike is None or max_put_oi_strike is None:
                 return False
-            
+
+            # ── Guard: If support and resistance land on the same strike, use next-best ──
+            if max_call_oi_strike == max_put_oi_strike:
+                call_oi_list_sorted = sorted(call_oi_list, key=lambda x: x[1], reverse=True)
+                put_oi_list_sorted = sorted(put_oi_list, key=lambda x: x[1], reverse=True)
+
+                # Demote the side with lower OI to its second-best strike
+                if max_call_oi >= max_put_oi:
+                    # Call OI is stronger at this strike — find next-best put strike
+                    for strike, oi in put_oi_list_sorted:
+                        if strike != max_call_oi_strike:
+                            max_put_oi_strike = strike
+                            max_put_oi = oi
+                            break
+                    else:
+                        return False  # No alternative put strike
+                else:
+                    # Put OI is stronger at this strike — find next-best call strike
+                    for strike, oi in call_oi_list_sorted:
+                        if strike != max_put_oi_strike:
+                            max_call_oi_strike = strike
+                            max_call_oi = oi
+                            break
+                    else:
+                        return False  # No alternative call strike
+
+                logger.debug(f"OI S/R same-strike resolved for {stock.stock_symbol}: "
+                           f"S={max_put_oi_strike:.0f} R={max_call_oi_strike:.0f}")
+
             # ── Gate: S/R strikes must be dominant (OI >= dominance * avg) ──
             avg_call_oi = np.mean(all_call_ois) if all_call_ois else 0
             avg_put_oi = np.mean(all_put_ois) if all_put_ois else 0
@@ -405,11 +433,11 @@ class OIChainAnalyser(BaseAnalyzer):
                     else:
                         ratio_str = f"pure call writing (no put activity)"
                 else:
-                    ratio_str = f"{call_put_ratio:.1f}x put writing"
+                    ratio_str = f"{call_put_ratio:.1f}x call writing"
                 signal = (f"ABNORMAL {ratio_str}. "
                          f"Call OI {total_call_oi_change:+,.0f} vs Put OI {total_put_oi_change:+,.0f}. "
                          f"Key strikes: {key_strikes_str}")
-                
+
                 stock.set_analysis("BEARISH", "OI_BUILDUP", OIBuildup(
                     buildup_type="HEAVY_CALL_WRITING",
                     key_strikes=top_strikes,
@@ -434,11 +462,11 @@ class OIChainAnalyser(BaseAnalyzer):
                     else:
                         ratio_str = f"pure put writing (no call activity)"
                 else:
-                    ratio_str = f"{put_call_ratio:.1f}x call writing"
+                    ratio_str = f"{put_call_ratio:.1f}x put writing"
                 signal = (f"ABNORMAL {ratio_str}. "
                          f"Put OI {total_put_oi_change:+,.0f} vs Call OI {total_call_oi_change:+,.0f}. "
                          f"Key strikes: {key_strikes_str}")
-                
+
                 stock.set_analysis("BULLISH", "OI_BUILDUP", OIBuildup(
                     buildup_type="HEAVY_PUT_WRITING",
                     key_strikes=top_strikes,
@@ -901,19 +929,24 @@ class OIChainAnalyser(BaseAnalyzer):
                 "snapshots_used", "signal", "expiry"
             ])
             
-            call_trend = "RISING" if call_rising else ("FALLING" if call_falling else "FLAT")
-            put_trend = "RISING" if put_rising else ("FALLING" if put_falling else "FLAT")
-            pcr_trend_dir = "RISING" if pcr_rising else ("FALLING" if pcr_falling else "FLAT")
-            
+            # Trend labels for internal signal logic (recent monotonic direction)
+            call_trend_recent = "RISING" if call_rising else ("FALLING" if call_falling else "FLAT")
+            put_trend_recent = "RISING" if put_rising else ("FALLING" if put_falling else "FLAT")
+
             first_ltp = ltps[0] if ltps[0] else 0
             last_ltp = ltps[-1] if ltps[-1] else 0
             expiry = history[-1].get("expiry")
-            
-            # ── Determine signal using change_pct (first→last across all snapshots) ──
-            # NOTE: trend direction labels (FLAT/RISING/FALLING) use recent 5 snaps for display.
-            # Signal logic intentionally uses change_pct to be consistent with displayed numbers.
+
+            # Thresholds for trend classification and signal logic
             min_pcr_change = OIChainAnalyser.OI_TREND_MIN_PCR_CHANGE_PCT
             min_oi_change = OIChainAnalyser.OI_TREND_MIN_OI_CHANGE_PCT
+
+            # Display trend labels — derived from overall change_pct so they match displayed numbers
+            call_trend = "RISING" if call_oi_change_pct > min_oi_change else ("FALLING" if call_oi_change_pct < -min_oi_change else "FLAT")
+            put_trend = "RISING" if put_oi_change_pct > min_oi_change else ("FALLING" if put_oi_change_pct < -min_oi_change else "FLAT")
+            pcr_trend_dir = "RISING" if pcr_change_pct > min_pcr_change else ("FALLING" if pcr_change_pct < -min_pcr_change else "FLAT")
+
+            # ── Determine signal using change_pct (first→last across all snapshots) ──
 
             signal_parts = []
             sentiment = None
@@ -935,7 +968,7 @@ class OIChainAnalyser(BaseAnalyzer):
                   call_oi_change_pct >= put_oi_change_pct * 2 and
                   call_oi_change_pct - put_oi_change_pct > min_oi_change):
                 sentiment = "BEARISH"
-                signal_parts.append(f"Call OI surging ({call_oi_change_pct:+.1f}%) while Put OI {put_trend.lower()} ({put_oi_change_pct:+.1f}%)")
+                signal_parts.append(f"Call OI surging ({call_oi_change_pct:+.1f}%) while Put OI {put_trend_recent.lower()} ({put_oi_change_pct:+.1f}%)")
                 signal_parts.append("→ One-sided call writing - Bearish pressure")
 
             # One-sided put writing: puts grew ≥2x more than calls
@@ -943,7 +976,7 @@ class OIChainAnalyser(BaseAnalyzer):
                   put_oi_change_pct >= call_oi_change_pct * 2 and
                   put_oi_change_pct - call_oi_change_pct > min_oi_change):
                 sentiment = "BULLISH"
-                signal_parts.append(f"Put OI surging ({put_oi_change_pct:+.1f}%) while Call OI {call_trend.lower()} ({call_oi_change_pct:+.1f}%)")
+                signal_parts.append(f"Put OI surging ({put_oi_change_pct:+.1f}%) while Call OI {call_trend_recent.lower()} ({call_oi_change_pct:+.1f}%)")
                 signal_parts.append("→ One-sided put writing - Bullish support")
 
             # Both unwinding significantly
