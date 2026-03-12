@@ -9,7 +9,7 @@ from collections import namedtuple
 class IVAnalyser(BaseAnalyzer):
     IV_PERCENTAGE_CHANGE = 30
     def __init__(self) -> None:
-        self.analyserName = "Volume Analyser"
+        self.analyserName = "IV Analyser"
         super().__init__()
     
     def reset_constants(self):
