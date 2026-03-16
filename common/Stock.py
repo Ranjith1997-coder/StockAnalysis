@@ -114,6 +114,31 @@ class Stock:
             "oi_chain_history": []     # List of periodic OI chain snapshots (max 15 for intraday)
         }
 
+        # Live options tick data from WebSocket (keyed by strike -> CE/PE)
+        # { 24000: { "CE": {ltp, oi, prev_oi, volume, buy_qty, sell_qty, ...}, "PE": {...} } }
+        self.options_live: dict = {}
+
+        # Aggregated options metrics (recomputed periodically from options_live)
+        self.options_aggregate = {
+            "total_ce_oi": 0,
+            "total_pe_oi": 0,
+            "live_pcr": 0.0,
+            "atm_strike": None,
+            "atm_straddle_premium": 0.0,
+            "atm_iv_ce": 0.0,
+            "atm_iv_pe": 0.0,
+            "iv_skew": 0.0,
+            "max_oi_ce_strike": None,
+            "max_oi_pe_strike": None,
+            "net_ce_oi_change": 0,
+            "net_pe_oi_change": 0,
+            "last_updated": 0.0,
+        }
+
+        # Live futures tick data from WebSocket
+        # { "current": {ltp, oi, volume, buy_qty, sell_qty, ...}, "next": {...} }
+        self.futures_live: dict = {}
+
         self._zerodha_lock = threading.Lock()
         self.analysis = {"Timestamp" : None,
                         "BULLISH":{},
@@ -126,7 +151,10 @@ class Stock:
         self.prevDayOHLCV = {"OPEN":open, "HIGH":high, "LOW":low, "CLOSE":close, "VOLUME":volume}
     
     def update_latest_data(self):
-        current_close = self.priceData['Close'].iloc[-1]
+        valid_closes = self.priceData['Close'].dropna()
+        if valid_closes.empty:
+            return
+        current_close = valid_closes.iloc[-1]
         # previous_close = stock.priceData['Close'].iloc[-2]
         previous_close = self.prevDayOHLCV['CLOSE']
         change_percent = percentageChange(current_close, previous_close)
@@ -1079,23 +1107,132 @@ class Stock:
     
     def update_zerodha_data(self, ticker_data):
         """
-        Thread-safe update of the Zerodha data for total buy and sell quantities.
-
-        Args:
-            buy_quantity (int): The buy quantity to be added.
-            sell_quantity (int): The sell quantity to be added.
+        Thread-safe update of Zerodha tick data.
+        Handles both equity ticks (184-byte full mode with volume/depth)
+        and index ticks (28/32-byte quote/full mode with only OHLC).
         """
         with self._zerodha_lock:
-            self._zerodha_data["volume_traded"] = ticker_data["volume_traded"]
-            self._zerodha_data["last_price"] = ticker_data["last_price"]
-            self._zerodha_data["open"] = ticker_data["ohlc"]["open"]
-            self._zerodha_data["high"] = ticker_data["ohlc"]["high"]
-            self._zerodha_data["close"] = ticker_data["ohlc"]["close"]
-            self._zerodha_data["low"] = ticker_data["ohlc"]["low"] 
-            self._zerodha_data["change"] = ticker_data["change"]
-            self._zerodha_data["average_traded_price"] = ticker_data["average_traded_price"]  
-            self._zerodha_data["total_buy_quantity"] = ticker_data["total_buy_quantity"]
-            self._zerodha_data["total_sell_quantity"] = ticker_data["total_sell_quantity"]
+            self._zerodha_data["last_price"] = ticker_data.get("last_price", self._zerodha_data["last_price"])
+            self._zerodha_data["change"] = ticker_data.get("change", self._zerodha_data["change"])
+
+            ohlc = ticker_data.get("ohlc")
+            if ohlc:
+                self._zerodha_data["open"] = ohlc.get("open", self._zerodha_data["open"])
+                self._zerodha_data["high"] = ohlc.get("high", self._zerodha_data["high"])
+                self._zerodha_data["close"] = ohlc.get("close", self._zerodha_data["close"])
+                self._zerodha_data["low"] = ohlc.get("low", self._zerodha_data["low"])
+
+            # These fields are only present in equity/option ticks (44 or 184 bytes), not index ticks (28/32 bytes)
+            if "volume_traded" in ticker_data:
+                self._zerodha_data["volume_traded"] = ticker_data["volume_traded"]
+            if "average_traded_price" in ticker_data:
+                self._zerodha_data["average_traded_price"] = ticker_data["average_traded_price"]
+            if "total_buy_quantity" in ticker_data:
+                self._zerodha_data["total_buy_quantity"] = ticker_data["total_buy_quantity"]
+            if "total_sell_quantity" in ticker_data:
+                self._zerodha_data["total_sell_quantity"] = ticker_data["total_sell_quantity"]
+
+    def update_option_tick(self, strike: float, option_type: str, tick: dict):
+        """Update live option data from a WebSocket tick."""
+        with self._zerodha_lock:
+            if strike not in self.options_live:
+                self.options_live[strike] = {}
+
+            entry = self.options_live[strike].get(option_type, {})
+            entry["prev_oi"] = entry.get("oi", 0)
+            entry["ltp"] = tick.get("last_price", 0)
+            entry["oi"] = tick.get("oi", 0)
+            entry["volume"] = tick.get("volume_traded", 0)
+            entry["buy_qty"] = tick.get("total_buy_quantity", 0)
+            entry["sell_qty"] = tick.get("total_sell_quantity", 0)
+            entry["timestamp"] = tick.get("exchange_timestamp")
+
+            if "ohlc" in tick:
+                entry["open"] = tick["ohlc"].get("open", 0)
+                entry["high"] = tick["ohlc"].get("high", 0)
+                entry["low"] = tick["ohlc"].get("low", 0)
+                entry["close"] = tick["ohlc"].get("close", 0)
+
+            if "depth" in tick:
+                entry["depth"] = tick["depth"]
+
+            self.options_live[strike][option_type] = entry
+
+    def update_futures_tick(self, expiry_key: str, tick: dict):
+        """Update live futures data from a WebSocket tick."""
+        with self._zerodha_lock:
+            entry = self.futures_live.get(expiry_key, {})
+            entry["prev_oi"] = entry.get("oi", 0)
+            entry["ltp"] = tick.get("last_price", 0)
+            entry["oi"] = tick.get("oi", 0)
+            entry["volume"] = tick.get("volume_traded", 0)
+            entry["buy_qty"] = tick.get("total_buy_quantity", 0)
+            entry["sell_qty"] = tick.get("total_sell_quantity", 0)
+            entry["change"] = tick.get("change", 0)
+            entry["timestamp"] = tick.get("exchange_timestamp")
+
+            if "ohlc" in tick:
+                entry["open"] = tick["ohlc"].get("open", 0)
+                entry["high"] = tick["ohlc"].get("high", 0)
+                entry["low"] = tick["ohlc"].get("low", 0)
+                entry["close"] = tick["ohlc"].get("close", 0)
+
+            self.futures_live[expiry_key] = entry
+
+    def recompute_options_aggregate(self, spot_price: float = None):
+        """Recompute aggregate metrics from options_live data."""
+        with self._zerodha_lock:
+            if not self.options_live:
+                return
+
+            total_ce_oi = 0
+            total_pe_oi = 0
+            net_ce_oi_change = 0
+            net_pe_oi_change = 0
+            max_ce_oi = 0
+            max_pe_oi = 0
+            max_ce_strike = None
+            max_pe_strike = None
+
+            for strike, data in self.options_live.items():
+                ce = data.get("CE", {})
+                pe = data.get("PE", {})
+
+                ce_oi = ce.get("oi", 0)
+                pe_oi = pe.get("oi", 0)
+                total_ce_oi += ce_oi
+                total_pe_oi += pe_oi
+
+                net_ce_oi_change += ce_oi - ce.get("prev_oi", 0)
+                net_pe_oi_change += pe_oi - pe.get("prev_oi", 0)
+
+                if ce_oi > max_ce_oi:
+                    max_ce_oi = ce_oi
+                    max_ce_strike = strike
+                if pe_oi > max_pe_oi:
+                    max_pe_oi = pe_oi
+                    max_pe_strike = strike
+
+            agg = self.options_aggregate
+            agg["total_ce_oi"] = total_ce_oi
+            agg["total_pe_oi"] = total_pe_oi
+            agg["live_pcr"] = total_pe_oi / total_ce_oi if total_ce_oi > 0 else 0.0
+            agg["max_oi_ce_strike"] = max_ce_strike
+            agg["max_oi_pe_strike"] = max_pe_strike
+            agg["net_ce_oi_change"] = net_ce_oi_change
+            agg["net_pe_oi_change"] = net_pe_oi_change
+
+            # ATM straddle premium
+            if spot_price and self.options_live:
+                closest_strike = min(self.options_live.keys(), key=lambda s: abs(s - spot_price))
+                agg["atm_strike"] = closest_strike
+                atm_data = self.options_live.get(closest_strike, {})
+                ce_ltp = atm_data.get("CE", {}).get("ltp", 0)
+                pe_ltp = atm_data.get("PE", {}).get("ltp", 0)
+                agg["atm_straddle_premium"] = ce_ltp + pe_ltp
+
+            import time as _time
+            agg["last_updated"] = _time.time()
 
     @property
     def priceData(self):
