@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Optional
 if TYPE_CHECKING:
     from zerodha.zerodha_connect import KiteConnect
     from zerodha.zerodha_analysis import ZerodhaTickerManager
+    from common.token_registry import TokenRegistry
 
 class Mode (Enum):
     INTRADAY = 1
@@ -25,6 +26,7 @@ class AppContext:
         self.mode: Optional[Mode] = None
         self.zd_ticker_manager: Optional[ZerodhaTickerManager] = None
         self.zd_kc: Optional[KiteConnect] = None
+        self.token_registry: Optional[TokenRegistry] = None
 
 app_ctx = AppContext()
 ticker_52_week_high_list = []

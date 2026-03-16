@@ -69,6 +69,37 @@ async def update_enctoken(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(chat_id=update.effective_chat.id, text="Connected to Zerodha Ticker")
         update_enctoken_in_env(decoded_enctoken)
 
+        # Subscribe to option tokens for indices that have them registered
+        _subscribe_registered_options(zerodha_ticker_manager)
+
+
+def _subscribe_registered_options(ticker_manager):
+    """After WebSocket connects, subscribe to option tokens for all registered indices."""
+    registry = shared.app_ctx.token_registry
+    if registry is None:
+        return
+
+    from common.token_registry import TokenType
+    import time
+
+    # Wait briefly for the first index ticks to arrive with spot prices
+    time.sleep(2)
+
+    for token, index_obj in shared.app_ctx.index_token_obj_dict.items():
+        symbol = index_obj.stock_symbol
+        option_tokens = registry.get_tokens_by_type(symbol, TokenType.OPTION)
+        if not option_tokens:
+            continue
+
+        # Get spot price from zerodha_data or ltp
+        spot = index_obj.zerodha_data.get("last_price") or index_obj.ltp
+        if not spot or spot <= 0:
+            logger.warning(f"No spot price for {symbol}, skipping option subscription")
+            continue
+
+        ticker_manager.subscribe_options_for_symbol(symbol, spot)
+        logger.info(f"Option subscription initiated for {symbol} at spot {spot}")
+
 
 def init_telegram_bot():
     logger.info("Initializing Telegram Bot...")
