@@ -7,6 +7,13 @@ ENV_ENABLE_ZERODHA_DERIVATIVES = "ENABLE_ZERODHA_DERIVATIVES"
 ENV_ENABLE_ZERODHA_API = "ENABLE_ZERODHA_API"
 ENV_ENABLE_TELEGRAM_BOT = "ENABLE_TELEGRAM_BOT"
 ENV_ENABLE_POST_MARKET = "ENABLE_POST_MARKET"
+ENV_ENABLE_LIVE_OPTIONS = "ENABLE_LIVE_OPTIONS"   # Toggle real-time options analysis + alerts
+ENV_LIVE_OPTIONS_ONLY   = "LIVE_OPTIONS_ONLY"     # Skip all regular analysis; run live options engine only
+
+# Indices for which live option chains are subscribed via WebSocket.
+# Only weekly-traded, high-liquidity indices. Keeping this small avoids the 500-token limit.
+# FINNIFTY/NIFTYNXT50/SENSEX/INDIA_VIX are excluded — low retail relevance for options scalping.
+LIVE_OPTIONS_INDICES = ["NIFTY", "BANKNIFTY"]
 
 
 #DEV ENVIRONMENTS
@@ -30,6 +37,11 @@ TELEGRAM_INTRADAY_CHAT_ID = "1462841143"
 
 TELEGRAM_POSITIONAL_TOKEN = "8418083942:AAGvrdcJWYncYYMiQaZlw2R0gJtGgnFCCbc"
 TELEGRAM_POSITIONAL_CHAT_ID = "1462841143"
+
+# Dedicated channel for real-time options alerts (LiveOIAnalyser + LiveStraddleAnalyser)
+# Create a new Telegram bot via @BotFather and a new group/channel, then fill these in.
+TELEGRAM_LIVE_OPTIONS_TOKEN = "8711635739:AAEqLGXMu19_81ZRyx9TlBAWZ60EQwQKhjc"       # e.g. "7123456789:AAB..."
+TELEGRAM_LIVE_OPTIONS_CHAT_ID = "1462841143"    # e.g. "-1001234567890" for a group
 
 TELEGRAM_URL = 'https://api.telegram.org/bot'
 

@@ -24,6 +24,7 @@ from typing import List, Tuple, Optional
 from enum import Enum
 import yfinance as yf
 from zerodha.zerodha_analysis import ZerodhaTickerManager
+from zerodha.live_options_engine import LiveOptionsEngine
 from dotenv import load_dotenv
 from notification.bot_listener import init_telegram_bot
 import threading
@@ -31,6 +32,7 @@ from zerodha.zerodha_connect import KiteConnect
 from post_market_analysis.runner import run_and_summarize
 from premarket.premarket_report import run_global_cues_report, run_preopen_report
 from urllib.parse import quote
+from common.token_registry import TokenRegistry, TokenInfo, TokenType
 
 class Trend (Enum):
     BULLISH = "BULLISH"
@@ -47,6 +49,8 @@ ENABLE_ZERODHA_DERIVATIVES = False
 ENABLE_ZERODHA_API = False
 ENABLE_TELEGRAM_BOT = False
 ENABLE_POST_MARKET = False
+ENABLE_LIVE_OPTIONS = False
+LIVE_OPTIONS_ONLY   = False   # When True: skip all regular analysis, run live options engine only
 
 class MonitorResult(Enum):
     SUCCESS = 0
@@ -140,8 +144,85 @@ def process_monitor_results(results):
         elif trend_found:
             logger.info(f"Trend found: \n{message}")
 
+def _register_base_tokens():
+    """Register all equity, index, commodity, and global index tokens in the token registry."""
+    registry = shared.app_ctx.token_registry
+    if registry is None:
+        return
+
+    for token, stock in shared.app_ctx.stock_token_obj_dict.items():
+        registry.register(TokenInfo(
+            token=token, token_type=TokenType.EQUITY,
+            parent_symbol=stock.stock_symbol, tradingsymbol=stock.stock_symbol
+        ))
+        registry.set_parent_object(stock.stock_symbol, stock)
+
+    for token, index in shared.app_ctx.index_token_obj_dict.items():
+        registry.register(TokenInfo(
+            token=token, token_type=TokenType.INDEX,
+            parent_symbol=index.stock_symbol, tradingsymbol=index.stock_symbol
+        ))
+        registry.set_parent_object(index.stock_symbol, index)
+
+    for token, commodity in shared.app_ctx.commodity_token_obj_dict.items():
+        registry.register(TokenInfo(
+            token=token, token_type=TokenType.COMMODITY,
+            parent_symbol=commodity.stock_symbol, tradingsymbol=commodity.stock_symbol
+        ))
+        registry.set_parent_object(commodity.stock_symbol, commodity)
+
+    for token, gi in shared.app_ctx.global_indices_token_obj_dict.items():
+        registry.register(TokenInfo(
+            token=token, token_type=TokenType.GLOBAL_INDEX,
+            parent_symbol=gi.stock_symbol, tradingsymbol=gi.stock_symbol
+        ))
+        registry.set_parent_object(gi.stock_symbol, gi)
+
+    stats = registry.get_stats()
+    logger.info(f"Token registry initialized: {stats}")
+
+
+def _register_option_and_future_tokens(parent_symbol, options_df, futures_df, token_type_parent=TokenType.EQUITY):
+    """Register option and futures instrument tokens for a symbol in the token registry."""
+    registry = shared.app_ctx.token_registry
+    if registry is None:
+        return
+
+    # Register option tokens
+    if options_df is not None and not options_df.empty:
+        for _, row in options_df.iterrows():
+            registry.register(TokenInfo(
+                token=int(row['instrument_token']),
+                token_type=TokenType.OPTION,
+                parent_symbol=parent_symbol,
+                tradingsymbol=row['tradingsymbol'],
+                strike=float(row['strike']),
+                option_type=row['instrument_type'],  # CE or PE
+                expiry=row['expiry'],
+            ))
+
+    # Register futures tokens
+    if futures_df is not None and not futures_df.empty:
+        for _, row in futures_df.iterrows():
+            registry.register(TokenInfo(
+                token=int(row['instrument_token']),
+                token_type=TokenType.FUTURE,
+                parent_symbol=parent_symbol,
+                tradingsymbol=row['tradingsymbol'],
+                expiry=row['expiry'],
+            ))
+
+    # Auto-detect strike gap for options
+    if options_df is not None and not options_df.empty:
+        strikes = sorted(options_df['strike'].unique())
+        if len(strikes) >= 2:
+            gap = strikes[1] - strikes[0]
+            registry.set_strike_gap(parent_symbol, gap)
+            logger.info(f"Strike gap for {parent_symbol}: {gap}")
+
+
 def update_zerodha_option_chain(stockName = None, indexName = None):
-    
+
     kc = KiteConnect(constant.DUMMY_API_KEY_ZERODHA)
     all_instruments_df = pd.DataFrame(kc.instruments())
     all_options_df= all_instruments_df[(all_instruments_df['segment'] == 'NFO-OPT')]
@@ -168,22 +249,27 @@ def update_zerodha_option_chain(stockName = None, indexName = None):
         zerodha_ctx["option_chain"]["current"] = stock_options[stock_options['expiry'] == expiry_dates[0]]
         zerodha_ctx["futures_mdata"]["current"] = stock_futures[stock_futures['expiry'] == expiry_dates[0]]
         if len(expiry_dates) > 1:
-            zerodha_ctx["option_chain"]["next"] = stock_options[stock_options['expiry'] == expiry_dates[1]] 
+            zerodha_ctx["option_chain"]["next"] = stock_options[stock_options['expiry'] == expiry_dates[1]]
             zerodha_ctx["futures_mdata"]["next"] = stock_futures[stock_futures['expiry'] == expiry_dates[1]]
         else:
             logger.info(f"stock {stock.stock_symbol} next expiry not available")
             zerodha_ctx["option_chain"]["next"] = pd.DataFrame()
-        
+
+        # Register option and futures tokens in the registry (current expiry only for live ticks)
+        current_options = stock_options[stock_options['expiry'] == expiry_dates[0]]
+        current_futures = stock_futures[stock_futures['expiry'] == expiry_dates[0]]
+        _register_option_and_future_tokens(stock.stock_symbol, current_options, current_futures)
+
         logger.info(f"stock {stock.stock_symbol} zerodha_ctx updated")
         count += 1
-    
+
     count = 0
     for index in  shared.app_ctx.index_token_obj_dict.values():
         if not PRODUCTION and constant.NO_OF_INDEX != -1 and count >= constant.NO_OF_INDEX:
             break
         if (index.stock_symbol == "INDIA_VIX") or  (indexName and index.stock_symbol != indexName) :
             continue
-        
+
         zerodha_ctx = index.zerodha_ctx
         # Fetch options data for the index
         index_options = all_options_df[all_options_df['name'] == index.stock_symbol]
@@ -198,19 +284,13 @@ def update_zerodha_option_chain(stockName = None, indexName = None):
             logger.warning(f"No expiry dates found for index {index.stock_symbol}")
             continue
 
-        if "NIFTY" ==  index.stock_symbol:
-            expiry_df = pd.DataFrame({'expiry': expiry_dates})
-            expiry_df['year'] = expiry_df['expiry'].apply(lambda x: x.year)
-            expiry_df['month'] = expiry_df['expiry'].apply(lambda x: x.month)
+        # expiry_dates is already sorted; [0] = nearest weekly, [1] = next weekly
+        # Previously this filtered to monthly only — now we keep weekly expiries
+        # since weekly options have the highest liquidity and OI for intraday trading
 
-            # Only keep the last expiry for each month (monthly expiry)
-            monthly_expiry_dates = expiry_df.groupby(['year', 'month'])['expiry'].max().sort_values().tolist()
-
-            expiry_dates = monthly_expiry_dates
-        
-        if not expiry_dates:
-            logger.warning(f"No monthly expiry dates found for index {index.stock_symbol}")
-            continue
+        logger.info(f"Index {index.stock_symbol} available expiries: {expiry_dates}")
+        logger.info(f"Index {index.stock_symbol} selected current expiry: {expiry_dates[0]}, "
+                     f"options count: {len(index_options[index_options['expiry'] == expiry_dates[0]])}")
 
         zerodha_ctx["option_chain"]["current"] = index_options[index_options['expiry'] == expiry_dates[0]]
         zerodha_ctx["futures_mdata"]["current"] = index_futures[index_futures['expiry'] == expiry_dates[0]]
@@ -220,8 +300,18 @@ def update_zerodha_option_chain(stockName = None, indexName = None):
         else:
             logger.info(f"Index {index.stock_symbol} next expiry not available")
             zerodha_ctx["option_chain"]["next"] = pd.DataFrame()
-        
+
+        # Register option and futures tokens in the registry (current expiry only for live ticks)
+        current_options = index_options[index_options['expiry'] == expiry_dates[0]]
+        current_futures = index_futures[index_futures['expiry'] == expiry_dates[0]]
+        _register_option_and_future_tokens(index.stock_symbol, current_options, current_futures, TokenType.INDEX)
+
         logger.info(f"Index {index.stock_symbol} zerodha_ctx updated")
+
+    # Log final registry stats
+    if shared.app_ctx.token_registry:
+        stats = shared.app_ctx.token_registry.get_stats()
+        logger.info(f"Token registry after option chain update: {stats}")
 
 
 def create_stock_and_index_objects(stockName = None, indexName = None, commodityName = None, globalIndexName = None):
@@ -803,6 +893,48 @@ def report_52_week_high_low(max_items: int = 40, clear_after: bool = False):
         shared.ticker_52_week_high_list.clear()
         shared.ticker_52_week_low_list.clear()
 
+def live_options_analysis():
+    """
+    Live options only mode — WebSocket + LiveOptionsEngine, no regular analysis.
+    Auto-connects WebSocket using the encToken already in the environment.
+    Runs until market close (or indefinitely in dev mode).
+    """
+    from notification.Notification import TELEGRAM_NOTIFICATIONS as TG
+    from urllib.parse import quote as _quote
+
+    tm = shared.app_ctx.zd_ticker_manager
+    if tm is None:
+        logger.error("ZerodhaTickerManager not initialised — cannot start live options analysis")
+        return
+
+    # Auto-connect if not already connected
+    if not tm.connected:
+        enc_raw = os.getenv(constant.ENV_ZERODHA_ENC_TOKEN, "")
+        if enc_raw:
+            tm.update_enctoken(_quote(enc_raw, safe=""))
+            if tm.connect():
+                logger.info("Live options WebSocket connected")
+                from notification.bot_listener import _subscribe_registered_options
+                from time import sleep as _sleep
+                _sleep(3)   # wait for first index ticks
+                _subscribe_registered_options(tm)
+            else:
+                logger.error("WebSocket connect failed — live options analysis aborted")
+                return
+        else:
+            logger.error("ZERODHA_ENC_TOKEN not set — cannot auto-connect")
+            return
+
+    TG.send_live_options_notification("🟢 <b>Live Options Tracking Started</b>")
+    logger.info("Live options analysis running — WebSocket handling alerts")
+
+    while isNowInTimePeriod(time(9, 15), time(15, 30), datetime.now().time()) or not PRODUCTION:
+        sleep(30)
+
+    TG.send_live_options_notification("🔴 <b>Live Options Tracking Stopped — Market Closed</b>")
+    logger.info("Live options analysis stopped — market closed")
+
+
 def intraday_analysis(loop = True, loop_wait_time = 30):
     shared.app_ctx.mode = shared.Mode.INTRADAY
 
@@ -901,7 +1033,9 @@ def init():
     global ENABLE_ZERODHA_API
     global ENABLE_TELEGRAM_BOT
     global ENABLE_POST_MARKET
-    
+    global ENABLE_LIVE_OPTIONS
+    global LIVE_OPTIONS_ONLY
+
 
     if os.getenv(constant.ENV_PRODUCTION, "0") == "1":
         logger.info("Running in production mode")
@@ -951,6 +1085,20 @@ def init():
     else:
         logger.info(" Post market analysis disabled")
         ENABLE_POST_MARKET = False
+
+    if os.getenv(constant.ENV_ENABLE_LIVE_OPTIONS, "0") == "1":
+        logger.info("Live options real-time analysis enabled")
+        ENABLE_LIVE_OPTIONS = True
+    else:
+        logger.info("Live options real-time analysis disabled")
+        ENABLE_LIVE_OPTIONS = False
+
+    if os.getenv(constant.ENV_LIVE_OPTIONS_ONLY, "0") == "1":
+        logger.info("LIVE OPTIONS ONLY mode — all regular analysis disabled")
+        LIVE_OPTIONS_ONLY   = True
+        ENABLE_LIVE_OPTIONS = True   # implies live options engine must be active
+    else:
+        LIVE_OPTIONS_ONLY = False
     
     if PRODUCTION:
         if datetime.now().time() < time(9,15) or isNowInTimePeriod(time(9,15), time(15,30), datetime.now().time()):
@@ -972,19 +1120,27 @@ def init():
         TELEGRAM_NOTIFICATIONS.is_intraday = False
 
     args = parse_arguments()
-    
+
+    # Initialize token registry
+    shared.app_ctx.token_registry = TokenRegistry()
+
     create_stock_and_index_objects(args.stock, args.index)
-    if ENABLE_ZERODHA_DERIVATIVES:
+
+    # Register equity and index tokens in the registry
+    _register_base_tokens()
+
+    if ENABLE_ZERODHA_DERIVATIVES or LIVE_OPTIONS_ONLY:
         update_zerodha_option_chain(args.stock, args.index)
     orchestrator = AnalyserOrchestrator()
-    orchestrator.register(VolumeAnalyser())
-    orchestrator.register(TechnicalAnalyser())
-    orchestrator.register(CandleStickAnalyser())
-    orchestrator.register(IVAnalyser())
-    orchestrator.register(FuturesAnalyser())
-    orchestrator.register(PCRAnalyser())
-    orchestrator.register(MaxPainAnalyser())
-    orchestrator.register(OIChainAnalyser())
+    if not LIVE_OPTIONS_ONLY:
+        orchestrator.register(VolumeAnalyser())
+        orchestrator.register(TechnicalAnalyser())
+        orchestrator.register(CandleStickAnalyser())
+        orchestrator.register(IVAnalyser())
+        orchestrator.register(FuturesAnalyser())
+        orchestrator.register(PCRAnalyser())
+        orchestrator.register(MaxPainAnalyser())
+        orchestrator.register(OIChainAnalyser())
     if ENABLE_NSE_DERIVATIVES:
         shared.app_ctx.stockExpires = NSE_DATA_CLASS.expiry_dates_future()        
     
@@ -998,6 +1154,14 @@ def init():
         encToken_for_manager = quote(encToken_raw or "", safe="")
         shared.app_ctx.zd_ticker_manager = ZerodhaTickerManager(userName, password, encToken_for_manager)
         shared.app_ctx.zd_kc = KiteConnect(constant.DUMMY_API_KEY_ZERODHA, root="https://kite.zerodha.com/", enctoken=encToken_raw)
+
+        if ENABLE_LIVE_OPTIONS:
+            shared.app_ctx.zd_ticker_manager.live_options_engine = LiveOptionsEngine()
+            logger.info("LiveOptionsEngine attached to ZerodhaTickerManager")
+
+        if LIVE_OPTIONS_ONLY:
+            shared.app_ctx.zd_ticker_manager.index_only_mode = True
+            logger.info("index_only_mode enabled — equity stocks excluded from WebSocket")
 
 
 def parse_arguments():
@@ -1052,7 +1216,9 @@ def start_stock_analysis():
                 sleep(sleep_until_open)
 
         is_in_time_period = isNowInTimePeriod(time(9,15), time(15,30), datetime.now().time())
-        if is_in_time_period:
+        if LIVE_OPTIONS_ONLY:
+            live_options_analysis()
+        elif is_in_time_period:
             intraday_analysis()
         else:
             positional_analysis()
@@ -1066,9 +1232,11 @@ def start_stock_analysis():
     else:
         logger.info("Running in development mode. No shutdown operation.")
         
-        if shared.app_ctx.mode.name == shared.Mode.INTRADAY.name:
+        if LIVE_OPTIONS_ONLY:
+            live_options_analysis()
+        elif shared.app_ctx.mode and shared.app_ctx.mode.name == shared.Mode.INTRADAY.name:
             intraday_analysis()
-        if shared.app_ctx.mode.name == shared.Mode.POSITIONAL.name:
+        elif shared.app_ctx.mode and shared.app_ctx.mode.name == shared.Mode.POSITIONAL.name:
             positional_analysis()
 
 if __name__ =="__main__":

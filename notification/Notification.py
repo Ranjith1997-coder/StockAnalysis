@@ -8,6 +8,8 @@ from common.constants import (
     TELEGRAM_INTRADAY_TOKEN,
     TELEGRAM_POSITIONAL_CHAT_ID,
     TELEGRAM_POSITIONAL_TOKEN,
+    TELEGRAM_LIVE_OPTIONS_TOKEN,
+    TELEGRAM_LIVE_OPTIONS_CHAT_ID,
     TELEGRAM_URL,
     ENV_PRODUCTION,
 )
@@ -80,4 +82,29 @@ class TELEGRAM_NOTIFICATIONS:
             return False
         except Exception as e:
             logger.error(f"Telegram send failed: {e}")
+            return False
+
+    @classmethod
+    def send_live_options_notification(cls, message, parse_mode="HTML"):
+        """Send a real-time options alert to the dedicated live options Telegram channel."""
+        if not cls.is_production:
+            return
+        if not TELEGRAM_LIVE_OPTIONS_TOKEN or not TELEGRAM_LIVE_OPTIONS_CHAT_ID:
+            logger.debug("TELEGRAM_LIVE_OPTIONS_TOKEN/CHAT_ID not configured — skipping live options alert")
+            return False
+        msg = {"chat_id": TELEGRAM_LIVE_OPTIONS_CHAT_ID, "text": message}
+        if parse_mode:
+            msg["parse_mode"] = parse_mode
+        try:
+            resp = requests.post(
+                TELEGRAM_URL + TELEGRAM_LIVE_OPTIONS_TOKEN + "/sendMessage",
+                json=msg,
+                timeout=10
+            )
+            if resp.status_code != 200:
+                logger.error(f"Live options Telegram send failed: {resp.status_code}: {resp.text}")
+                return False
+            return True
+        except Exception as e:
+            logger.error(f"Live options Telegram send failed: {e}")
             return False
