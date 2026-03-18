@@ -10,6 +10,11 @@ ENV_ENABLE_POST_MARKET = "ENABLE_POST_MARKET"
 ENV_ENABLE_LIVE_OPTIONS = "ENABLE_LIVE_OPTIONS"   # Toggle real-time options analysis + alerts
 ENV_LIVE_OPTIONS_ONLY   = "LIVE_OPTIONS_ONLY"     # Skip all regular analysis; run live options engine only
 
+# Indices for which live option chains are subscribed via WebSocket.
+# Only weekly-traded, high-liquidity indices. Keeping this small avoids the 500-token limit.
+# FINNIFTY/NIFTYNXT50/SENSEX/INDIA_VIX are excluded — low retail relevance for options scalping.
+LIVE_OPTIONS_INDICES = ["NIFTY", "BANKNIFTY"]
+
 
 #DEV ENVIRONMENTS
 ENV_DEV_INTRADAY = "DEV_INTRADAY"
