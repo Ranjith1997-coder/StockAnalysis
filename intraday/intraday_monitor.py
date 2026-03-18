@@ -267,7 +267,7 @@ def update_zerodha_option_chain(stockName = None, indexName = None):
     for index in  shared.app_ctx.index_token_obj_dict.values():
         if not PRODUCTION and constant.NO_OF_INDEX != -1 and count >= constant.NO_OF_INDEX:
             break
-        if (index.stock_symbol == "INDIA_VIX") or  (indexName and index.stock_symbol != indexName) :
+        if (index.stock_symbol in ("INDIA_VIX", "SENSEX")) or (indexName and index.stock_symbol != indexName):
             continue
 
         zerodha_ctx = index.zerodha_ctx

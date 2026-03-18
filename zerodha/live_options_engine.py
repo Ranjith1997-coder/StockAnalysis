@@ -17,6 +17,7 @@ from analyser.LiveOIAnalyser import LiveOIAnalyser
 from analyser.LiveStraddleAnalyser import LiveStraddleAnalyser
 from analyser.LiveOptionsHistory import LiveOptionsHistory
 from notification.Notification import TELEGRAM_NOTIFICATIONS
+from common.constants import LIVE_OPTIONS_INDICES
 
 
 class LiveOptionsEngine:
@@ -70,7 +71,9 @@ class LiveOptionsEngine:
         if spot <= 0:
             return
 
-        symbol      = stock.stock_symbol
+        symbol = stock.stock_symbol
+        if symbol not in LIVE_OPTIONS_INDICES:
+            return
         agg         = stock.options_aggregate
         options_live = stock.options_live
 
