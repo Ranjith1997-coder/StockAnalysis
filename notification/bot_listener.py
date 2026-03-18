@@ -74,19 +74,29 @@ async def update_enctoken(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def _subscribe_registered_options(ticker_manager):
-    """After WebSocket connects, subscribe to option tokens for all registered indices."""
+    """After WebSocket connects, subscribe to option tokens for LIVE_OPTIONS_INDICES only."""
     registry = shared.app_ctx.token_registry
     if registry is None:
         return
 
-    from common.token_registry import TokenType
+    from common.token_registry import TokenType, OptionZone
+    from common.constants import LIVE_OPTIONS_INDICES
+    from notification.Notification import TELEGRAM_NOTIFICATIONS
     import time
 
     # Wait briefly for the first index ticks to arrive with spot prices
     time.sleep(2)
 
+    total_option_tokens = 0
+    option_lines = []
+
     for token, index_obj in shared.app_ctx.index_token_obj_dict.items():
         symbol = index_obj.stock_symbol
+
+        # Only subscribe options for high-liquidity indices (NIFTY, BANKNIFTY)
+        if symbol not in LIVE_OPTIONS_INDICES:
+            continue
+
         option_tokens = registry.get_tokens_by_type(symbol, TokenType.OPTION)
         if not option_tokens:
             continue
@@ -99,6 +109,32 @@ def _subscribe_registered_options(ticker_manager):
 
         ticker_manager.subscribe_options_for_symbol(symbol, spot)
         logger.info(f"Option subscription initiated for {symbol} at spot {spot}")
+
+        # Count only actually-subscribed tokens (zone-filtered ≤5% of spot)
+        subscribed_count = sum(
+            len(registry.get_option_tokens_by_zone(symbol, zone))
+            for zone in OptionZone
+        )
+        total_option_tokens += subscribed_count
+        option_lines.append(f"  {symbol}: {subscribed_count} tokens (spot {spot:.0f})")
+
+    # Send subscription summary to Telegram
+    index_count = len(shared.app_ctx.index_token_obj_dict)
+    equity_count = len(shared.app_ctx.stock_token_obj_dict)
+    base_count = index_count + (0 if ticker_manager.index_only_mode else equity_count)
+    total = base_count + total_option_tokens
+
+    mode_note = "index-only" if ticker_manager.index_only_mode else f"{equity_count} equity + {index_count} index"
+    lines = [
+        "WebSocket connected",
+        f"Base: {base_count} ({mode_note})",
+        f"Options: {total_option_tokens}",
+    ]
+    lines.extend(option_lines)
+    lines.append(f"Total: {total} / 500")
+
+    TELEGRAM_NOTIFICATIONS.send_notification("\n".join(lines))
+    logger.info(f"WebSocket subscription summary — total {total} tokens")
 
 
 def init_telegram_bot():
