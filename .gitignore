@@ -17,6 +17,7 @@ __pycache__/
 # Environment variables
 .env
 .env.*
+!.env.template
 
 # Distribution / packaging
 dist/
