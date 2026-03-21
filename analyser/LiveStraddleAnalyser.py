@@ -28,6 +28,9 @@ class LiveStraddleAnalyser:
     SPOT_FLAT_PCT          = 0.001   # Spot must move < 0.1% to attribute change to IV
     RANGE_USED_PCT         = 0.75    # Alert when ≥ 75% of expected range is consumed
     SKEW_FLIP_BUFFER       = 0.05    # CE/PE ratio needs >1.05 / <0.95 before a flip counts
+    # Minimum straddle as % of spot — rejects partial ticks where only CE or PE has arrived.
+    # A real ATM straddle is typically 0.5-3% of spot. Below 0.3% means one leg is missing.
+    MIN_STRADDLE_SPOT_PCT  = 0.003
 
     def __init__(self, symbol: str):
         self.symbol = symbol
@@ -45,14 +48,23 @@ class LiveStraddleAnalyser:
 
     # ── helpers ───────────────────────────────────────────────────────────────
 
+    def _is_valid_straddle(self, straddle: float, spot: float) -> bool:
+        """Reject partial straddle values where only one leg (CE or PE) has arrived."""
+        if straddle <= 0 or spot <= 0:
+            return False
+        return (straddle / spot) >= self.MIN_STRADDLE_SPOT_PCT
+
     def _record_snapshot(self, straddle: float, spot: float):
         """Internal fallback — only used when no history object is passed."""
+        if not self._is_valid_straddle(straddle, spot):
+            return
+
         now = time.time()
         if now - self._last_snapshot_ts >= self.SNAPSHOT_INTERVAL_SEC:
             self._snapshots.append((now, straddle, spot))
             self._last_snapshot_ts = now
 
-        if self._open_straddle == 0.0 and straddle > 0 and spot > 0:
+        if self._open_straddle == 0.0:
             self._open_straddle = straddle
             self._open_spot = spot
 
@@ -86,6 +98,8 @@ class LiveStraddleAnalyser:
         atm      = agg.get("atm_strike", "N/A")
         if straddle <= 0 or spot <= 0:
             return None
+        if not self._is_valid_straddle(straddle, spot):
+            return None
 
         if history and history.minutes_of_data() >= 6:
             return self._iv_change_from_history(history, straddle, atm, spot)
@@ -113,6 +127,9 @@ class LiveStraddleAnalyser:
         self, straddle, old_straddle, spot, old_spot, elapsed_sec, atm
     ) -> tuple[str, str] | None:
         if old_straddle <= 0 or elapsed_sec < 30:
+            return None
+        # Reject if either straddle looks like a partial tick (one leg missing)
+        if not self._is_valid_straddle(straddle, spot) or not self._is_valid_straddle(old_straddle, old_spot):
             return None
         straddle_chg_pct = (straddle - old_straddle) / old_straddle
         spot_chg_pct     = abs((spot - old_spot) / old_spot) if old_spot > 0 else 0

@@ -5,6 +5,7 @@ from common.scoring import (
     NotificationPriority, ScoreResult
 )
 from analyser.MessageFormatter import MessageFormatter
+from intelligence.signal import Signal, Direction, Layer, SignalStrength, weight_to_strength
 
 class BaseAnalyzer():
     def __init__(self) -> None:
@@ -97,6 +98,27 @@ class AnalyserOrchestrator:
         for analyser in self.analysers:
             analyser.reset_constants()
 
+    @staticmethod
+    def _emit_signals(stock, layer: Layer):
+        """Extract signals from stock.analysis and emit to SignalBus."""
+        import common.shared as shared
+        bus = shared.app_ctx.signal_bus
+        if not bus:
+            return
+        for sentiment in ("BULLISH", "BEARISH"):
+            direction = Direction[sentiment]
+            for analysis_type in stock.analysis.get(sentiment, {}):
+                weight = constant.ANALYSIS_WEIGHTS.get(
+                    analysis_type, constant.ANALYSIS_WEIGHTS.get("DEFAULT", 10)
+                )
+                bus.emit(Signal(
+                    symbol=stock.stock_symbol,
+                    direction=direction,
+                    source=analysis_type.lower(),
+                    layer=layer,
+                    strength=weight_to_strength(weight),
+                ))
+
     def run_all_intraday(self, stock, index = False, use_scoring = True, min_priority = NotificationPriority.LOW):
         """
         Run all intraday analyses for a stock.
@@ -122,12 +144,13 @@ class AnalyserOrchestrator:
             should_send, score_result = should_notify(stock.analysis, min_priority)
             stock.analysis["ScoreResult"] = score_result
             logger.debug(f"Score for {stock.stock_symbol}: {score_result.total_score} ({score_result.priority.value})")
+            self._emit_signals(stock, Layer.INTRADAY)
             return should_send, score_result
         else:
             # Legacy behavior
             found_trend = stock.analysis["NoOfTrends"] >= constant.REQUIRED_TRENDS
             return found_trend, None
-    
+
     def run_all_positional(self, stock, index = False, use_scoring = True, min_priority = NotificationPriority.LOW):
         """
         Run all positional analyses for a stock.
@@ -153,12 +176,13 @@ class AnalyserOrchestrator:
             should_send, score_result = should_notify(stock.analysis, min_priority)
             stock.analysis["ScoreResult"] = score_result
             logger.debug(f"Score for {stock.stock_symbol}: {score_result.total_score} ({score_result.priority.value})")
+            self._emit_signals(stock, Layer.POSITIONAL)
             return should_send, score_result
         else:
             # Legacy behavior
             found_trend = stock.analysis["NoOfTrends"] >= constant.REQUIRED_TRENDS
             return found_trend, None
-    
+
     def generate_analysis_message(self, stock, include_score=True):
         """Generate an HTML-formatted analysis message for Telegram."""
         score_result = stock.analysis.get("ScoreResult")

@@ -18,6 +18,7 @@ from analyser.LiveStraddleAnalyser import LiveStraddleAnalyser
 from analyser.LiveOptionsHistory import LiveOptionsHistory
 from notification.Notification import TELEGRAM_NOTIFICATIONS
 from common.constants import LIVE_OPTIONS_INDICES
+from intelligence.signal import Signal, Direction, Layer, SignalStrength
 
 
 class LiveOptionsEngine:
@@ -112,10 +113,36 @@ class LiveOptionsEngine:
         last     = self._last_alert.get((symbol, alert_type), 0.0)
         return (time.time() - last) < cooldown
 
+    # Map live options alert types to directional signals for the correlator
+    ALERT_DIRECTION: dict[str, Direction] = {
+        "PCR_CROSSOVER_BULLISH": Direction.BULLISH,
+        "PCR_CROSSOVER_BEARISH": Direction.BEARISH,
+        "PCR_EXTREME_PE":        Direction.BULLISH,    # contrarian: excess puts = bounce
+        "PCR_EXTREME_CE":        Direction.BEARISH,    # contrarian: excess calls = drop
+        "PCR_SUSTAINED_BULLISH": Direction.BULLISH,
+        "PCR_SUSTAINED_BEARISH": Direction.BEARISH,
+        "SKEW_FLIP_BULLISH":     Direction.BULLISH,
+        "SKEW_FLIP_BEARISH":     Direction.BEARISH,
+    }
+
     def _fire(self, symbol: str, alert_type: str, msg: str):
         self._last_alert[(symbol, alert_type)] = time.time()
         TELEGRAM_NOTIFICATIONS.send_live_options_notification(msg)
         logger.info(f"[LiveOptions] {symbol} {alert_type}: {msg[:60]}…")
+
+        # Emit to SignalBus for cross-layer correlation
+        import common.shared as _shared
+        bus = _shared.app_ctx.signal_bus
+        if bus:
+            direction = self.ALERT_DIRECTION.get(alert_type, Direction.NEUTRAL)
+            bus.emit(Signal(
+                symbol=symbol,
+                direction=direction,
+                source=alert_type.lower(),
+                layer=Layer.LIVE,
+                strength=SignalStrength.MODERATE,
+                context={"alert_type": alert_type},
+            ))
 
     def _get_strike_gap(self, symbol: str) -> float:
         """Resolve strike gap from token registry if available, else default."""

@@ -46,6 +46,9 @@ class ZerodhaTickerManager:
         # Real-time options analysis engine (injected by intraday_monitor when enabled)
         self.live_options_engine = None
 
+        # Live stock analysis engine (injected by intraday_monitor when signal_bus exists)
+        self.live_stock_engine: object | None = None
+
         # When True: on_connect subscribes only index tokens (skips 206 equity stocks).
         # Set to True in LIVE_OPTIONS_ONLY mode to stay within the 500-token limit.
         self.index_only_mode = False
@@ -201,6 +204,10 @@ class ZerodhaTickerManager:
         if parent is None:
             return
         parent.update_zerodha_data(tick)
+
+        # Live stock analysis (VWAP cross, bid/ask imbalance, ORB, etc.)
+        if self.live_stock_engine and info.token_type in (TokenType.EQUITY, TokenType.INDEX):
+            self.live_stock_engine.on_tick(parent)
 
         # For index ticks, check if option re-centering is needed
         if info.token_type == TokenType.INDEX:

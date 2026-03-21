@@ -1289,19 +1289,29 @@ class Stock:
             return 0
     @property
     def current_equity_data(self):
+        if self.priceData is None:
+            return None
         if shared.app_ctx.mode.name == shared.Mode.INTRADAY.name:
-            curr_data = self.priceData.iloc[-2]
+            if len(self.priceData) < 2:
+                return None
+            return self.priceData.iloc[-2]
         else:
-            curr_data = self.priceData.iloc[-1]
-        return curr_data
-    
+            if len(self.priceData) < 1:
+                return None
+            return self.priceData.iloc[-1]
+
     @property
     def previous_equity_data(self):
+        if self.priceData is None:
+            return None
         if shared.app_ctx.mode.name == shared.Mode.INTRADAY.name:
-            prev_data = self.priceData.iloc[-3]
+            if len(self.priceData) < 3:
+                return None
+            return self.priceData.iloc[-3]
         else:
-            prev_data = self.priceData.iloc[-2]
-        return prev_data
+            if len(self.priceData) < 2:
+                return None
+            return self.priceData.iloc[-2]
     
     @property
     def previous_previous_equity_data(self):
