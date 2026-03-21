@@ -43,6 +43,9 @@ Thumbs.db
 ml_pipeline/__pycache__/
 ml_pipeline/**/__pycache__/
 
+# Logs
+logs/
+
 # Generated data
 data/backtest_results/
 data/indices/

@@ -6,6 +6,8 @@ if TYPE_CHECKING:
     from zerodha.zerodha_connect import KiteConnect
     from zerodha.zerodha_analysis import ZerodhaTickerManager
     from common.token_registry import TokenRegistry
+    from intelligence.signal_bus import SignalBus
+    from intelligence.correlator import SignalCorrelator
 
 class Mode (Enum):
     INTRADAY = 1
@@ -27,6 +29,8 @@ class AppContext:
         self.zd_ticker_manager: Optional[ZerodhaTickerManager] = None
         self.zd_kc: Optional[KiteConnect] = None
         self.token_registry: Optional[TokenRegistry] = None
+        self.signal_bus: Optional[SignalBus] = None
+        self.correlator: Optional[SignalCorrelator] = None
 
 app_ctx = AppContext()
 ticker_52_week_high_list = []

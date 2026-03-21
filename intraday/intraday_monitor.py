@@ -33,6 +33,11 @@ from post_market_analysis.runner import run_and_summarize
 from premarket.premarket_report import run_global_cues_report, run_preopen_report
 from urllib.parse import quote
 from common.token_registry import TokenRegistry, TokenInfo, TokenType
+from intelligence.signal_bus import SignalBus
+from intelligence.correlator import SignalCorrelator, Confluence
+from intelligence.signal import Signal, Direction, Layer, SignalStrength, weight_to_strength
+from intelligence import signal_store
+from zerodha.live_stock_engine import LiveStockEngine
 
 class Trend (Enum):
     BULLISH = "BULLISH"
@@ -337,23 +342,33 @@ def create_stock_and_index_objects(stockName = None, indexName = None, commodity
         count += 1
 
     if yfinanceIndexSymbols:
-        prevDayIndexData = yf.download(yfinanceIndexSymbols, period="2D", interval="1d", group_by='ticker')
-        logger.debug(f"Price data fetched to update previous OHLCV for indices")
+        # Intraday: fetch 1y daily data so morning bias can run RSI/MACD/EMA on it
+        # Positional: only need a few days for prev_day_ohlcv (full 2y loaded later in fetch_price_data)
+        is_intraday = shared.app_ctx.mode and shared.app_ctx.mode.name == shared.Mode.INTRADAY.name
+        index_period = "1y" if is_intraday else "5D"
+        prevDayIndexData = yf.download(yfinanceIndexSymbols, period=index_period, interval="1d", group_by='ticker', auto_adjust=True)
         for index in  shared.app_ctx.index_token_obj_dict.values():
-            if shared.app_ctx.mode.name == shared.Mode.INTRADAY.name:
-                if is_before_market_open():
-                    stock_prev_OHLCV_df = prevDayIndexData[index.stockSymbolYFinance].iloc[-1]
-                    logger.debug(f"Using second-to-last day's data for {index.stock_symbol} (before market open)")
-                else:
-                    stock_prev_OHLCV_df = prevDayIndexData[index.stockSymbolYFinance].iloc[-2]
-                    logger.debug(f"Using last day's data for {index.stock_symbol} (after market open)")
-            else:
-                stock_prev_OHLCV_df = prevDayIndexData[index.stockSymbolYFinance].iloc[-2]
-                logger.debug(f"Using second-to-last day's data for {index.stock_symbol}")
+            try:
+                idx_data = prevDayIndexData[index.stockSymbolYFinance]
+                if idx_data.empty or len(idx_data) < 2:
+                    logger.warning(f"Insufficient yfinance data for {index.stock_symbol} ({index.stockSymbolYFinance}), skipping prev day OHLCV")
+                    continue
 
-            index.set_prev_day_ohlcv(stock_prev_OHLCV_df["Open"], stock_prev_OHLCV_df["Close"], 
-                                        stock_prev_OHLCV_df["High"], stock_prev_OHLCV_df["Low"], 
-                                        stock_prev_OHLCV_df["Volume"])
+                if is_intraday:
+                    ohlcv_row = idx_data.iloc[-1] if is_before_market_open() else idx_data.iloc[-2]
+                else:
+                    ohlcv_row = idx_data.iloc[-2]
+
+                index.set_prev_day_ohlcv(ohlcv_row["Open"], ohlcv_row["Close"],
+                                            ohlcv_row["High"], ohlcv_row["Low"],
+                                            ohlcv_row["Volume"])
+
+                # Store daily data as priceData for morning bias (overwritten by 5m data in intraday loop)
+                if is_intraday:
+                    idx_data.index = idx_data.index.tz_localize('UTC').tz_convert('Asia/Kolkata') if idx_data.index.tz is None else idx_data.index.tz_convert('Asia/Kolkata')
+                    index.priceData = idx_data.dropna(how='all')
+            except (KeyError, IndexError) as e:
+                logger.warning(f"Failed to get prev day data for {index.stock_symbol}: {e}")
         
 
     count = 0
@@ -370,23 +385,30 @@ def create_stock_and_index_objects(stockName = None, indexName = None, commodity
         count += 1
     
     if yfinanceSymbols:
-        prevDaydata = yf.download(yfinanceSymbols, period="2D", interval="1d", group_by='ticker')
-        logger.debug(f"Price data fetched to update previous OHLCV for stocks")
+        stock_period = "1y" if is_intraday else "5D"
+        prevDaydata = yf.download(yfinanceSymbols, period=stock_period, interval="1d", group_by='ticker', auto_adjust=True)
         for stock in shared.app_ctx.stock_token_obj_dict.values():
-            if shared.app_ctx.mode.name == shared.Mode.INTRADAY.name:
-                if is_before_market_open():
-                    stock_prev_OHLCV_df = prevDaydata[stock.stockSymbolYFinance].iloc[-1]
-                    logger.debug(f"Using second-to-last day's data for {stock.stock_symbol} (before market open)")
-                else:
-                    stock_prev_OHLCV_df = prevDaydata[stock.stockSymbolYFinance].iloc[-2]
-                    logger.debug(f"Using last day's data for {stock.stock_symbol} (after market open)")
-            else:
-                stock_prev_OHLCV_df = prevDaydata[stock.stockSymbolYFinance].iloc[-2]
-                logger.debug(f"Using second-to-last day's data for {stock.stock_symbol}")
+            try:
+                stk_data = prevDaydata[stock.stockSymbolYFinance]
+                if stk_data.empty or len(stk_data) < 2:
+                    logger.warning(f"Insufficient yfinance data for {stock.stock_symbol}, skipping prev day OHLCV")
+                    continue
 
-            stock.set_prev_day_ohlcv(stock_prev_OHLCV_df["Open"], stock_prev_OHLCV_df["Close"], 
-                                        stock_prev_OHLCV_df["High"], stock_prev_OHLCV_df["Low"], 
-                                        stock_prev_OHLCV_df["Volume"])
+                if is_intraday:
+                    ohlcv_row = stk_data.iloc[-1] if is_before_market_open() else stk_data.iloc[-2]
+                else:
+                    ohlcv_row = stk_data.iloc[-2]
+
+                stock.set_prev_day_ohlcv(ohlcv_row["Open"], ohlcv_row["Close"],
+                                            ohlcv_row["High"], ohlcv_row["Low"],
+                                            ohlcv_row["Volume"])
+
+                # Store daily data as priceData for morning bias (overwritten by 5m data in intraday loop)
+                if is_intraday:
+                    stk_data.index = stk_data.index.tz_localize('UTC').tz_convert('Asia/Kolkata') if stk_data.index.tz is None else stk_data.index.tz_convert('Asia/Kolkata')
+                    stock.priceData = stk_data.dropna(how='all')
+            except (KeyError, IndexError) as e:
+                logger.warning(f"Failed to get prev day data for {stock.stock_symbol}: {e}")
     
     # Create commodity objects
     count = 0
@@ -462,9 +484,19 @@ def fetch_price_data(stock_objs, index_objs, commodity_objs=None, global_indices
             else:
                 data.index = data.index.tz_convert('Asia/Kolkata')
 
+            # Drop rows where all OHLCV values are NaN (artifact of multi-symbol bulk download alignment)
+            data = data.dropna(how='all')
+
+            # Validate expected OHLCV columns exist
+            expected_cols = {'Open', 'High', 'Low', 'Close', 'Volume'}
+            actual_cols = set(data.columns.tolist())
+            if not expected_cols.issubset(actual_cols):
+                logger.warning(f"{ticker.stock_symbol}: unexpected columns {data.columns.tolist()}, expected {expected_cols}")
+                return
+
             ticker.priceData = data
             ticker.last_price_update = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            logger.debug(f"Price data fetched successfully for {ticker.stockName}")
+            logger.debug(f"Price data updated for {ticker.stock_symbol} ({len(data)} rows)")
         except Exception as e:
             logger.error(f"Error fetching price data for {ticker.stockName}: {e}")
     
@@ -477,16 +509,22 @@ def fetch_price_data(stock_objs, index_objs, commodity_objs=None, global_indices
     interval = "1d" if shared.app_ctx.mode.name == shared.Mode.POSITIONAL.name else "5m"
 
     if stockSymbols:
-        stockData = yf.download(stockSymbols, period=period, interval=interval, group_by='ticker')
+        stockData = yf.download(stockSymbols, period=period, interval=interval, group_by='ticker', auto_adjust=True)
         for stock in stock_objs:
-            stock_data = stockData[stock.stockSymbolYFinance]
-            update_price_data(stock, stock_data)
-    
+            try:
+                stock_data = stockData[stock.stockSymbolYFinance]
+                update_price_data(stock, stock_data)
+            except KeyError:
+                logger.warning(f"{stock.stock_symbol}: symbol '{stock.stockSymbolYFinance}' not found in yfinance download")
+
     if indexSymbols:
-        indexData = yf.download(indexSymbols, period=period, interval=interval, group_by='ticker')
+        indexData = yf.download(indexSymbols, period=period, interval=interval, group_by='ticker', auto_adjust=True)
         for index in index_objs:
-            index_data = indexData[index.stockSymbolYFinance]
-            update_price_data(index, index_data)
+            try:
+                index_data = indexData[index.stockSymbolYFinance]
+                update_price_data(index, index_data)
+            except KeyError:
+                logger.warning(f"{index.stock_symbol}: symbol '{index.stockSymbolYFinance}' not found in yfinance download")
     
     if commoditySymbols:
         commodityData = yf.download(commoditySymbols, period=period, interval=interval, group_by='ticker')
@@ -518,6 +556,11 @@ def fetch_futures_data(stock):
 
 
 def process_stock(stock: Stock) -> Tuple[MonitorResult, bool, Optional[str]]:
+    mode = shared.app_ctx.mode
+    min_rows = 3 if mode is not None and mode.name == shared.Mode.INTRADAY.name else 2
+    if stock.priceData is None or len(stock.priceData) < min_rows:
+        logger.debug(f"Skipping {stock.stock_symbol}: insufficient price data ({len(stock.priceData) if stock.priceData is not None else 0} rows, need {min_rows})")
+        return MonitorResult.NO_DATA, False, None
     try:
         return monitor(stock)
     except Exception as exc:
@@ -893,6 +936,120 @@ def report_52_week_high_low(max_items: int = 40, clear_after: bool = False):
         shared.ticker_52_week_high_list.clear()
         shared.ticker_52_week_low_list.clear()
 
+def _handle_confluence(confluence: Confluence):
+    """Format and send a confluence alert to the live options Telegram channel."""
+    layers_str = " + ".join(
+        l.value.upper() for l in sorted(confluence.layers_involved, key=lambda l: l.value)
+    )
+    sources = "\n".join(
+        f"  - {s.layer.value}: {s.source} ({s.strength.name})"
+        for s in sorted(confluence.signals, key=lambda s: s.timestamp)
+    )
+
+    level = confluence.level
+    caution = "\n  CAUTION: contradicting signals from other layers" if confluence.has_contradiction else ""
+
+    msg = (
+        f"{'[HIGH]' if level == 'HIGH' else '[MODERATE]'} "
+        f"<b>{confluence.symbol} — {level} CONFLUENCE {confluence.direction.value}</b>\n\n"
+        f"Layers: {layers_str}\n"
+        f"Score: {confluence.score:.0f}\n\n"
+        f"Signals:\n{sources}{caution}"
+    )
+
+    TELEGRAM_NOTIFICATIONS.send_live_options_notification(msg, parse_mode="HTML")
+    logger.info(f"[Confluence] {confluence.symbol} {confluence.direction.value} "
+                f"{level} ({confluence.layer_count} layers, score={confluence.score:.0f})")
+
+
+def _init_signal_intelligence():
+    """Set up the SignalBus, Correlator, and load cached morning bias."""
+    bus = SignalBus()
+    correlator = SignalCorrelator(on_confluence=_handle_confluence)
+    bus.subscribe(correlator.on_signal)
+
+    shared.app_ctx.signal_bus = bus
+    shared.app_ctx.correlator = correlator
+
+    # Load cached positional signals from previous evening / morning bias
+    cached = signal_store.load_signals()
+    for sig in cached:
+        bus.emit(sig)
+
+    logger.info(f"Signal intelligence initialised (bus + correlator, {len(cached)} cached signals loaded)")
+
+
+_morning_bias_done = False
+
+def compute_morning_bias():
+    """
+    Run positional analysers on daily data loaded by create_stock_and_index_objects().
+    Emit results as POSITIONAL signals valid for the entire trading day.
+    Only runs in INTRADAY mode — positional (8 PM) doesn't need morning bias.
+    """
+    global _morning_bias_done
+    if _morning_bias_done:
+        return
+    _morning_bias_done = True
+
+    # Skip for positional mode — no need for morning bias in the evening run
+    if shared.app_ctx.mode and shared.app_ctx.mode.name == shared.Mode.POSITIONAL.name:
+        logger.info("Morning bias skipped — positional mode")
+        return
+
+    bus = shared.app_ctx.signal_bus
+    if not bus:
+        return
+
+    # Temporarily switch to POSITIONAL so analysers apply daily-data thresholds
+    shared.app_ctx.mode = shared.Mode.POSITIONAL
+    signals_emitted = []
+
+    try:
+        # Indices
+        for index in shared.app_ctx.index_token_obj_dict.values():
+            if index.stock_symbol in ("INDIA_VIX", "SENSEX"):
+                continue
+            orchestrator.run_all_positional(index, index=True)
+            for sentiment in ("BULLISH", "BEARISH"):
+                for analysis_type in index.analysis.get(sentiment, {}):
+                    weight = constant.ANALYSIS_WEIGHTS.get(
+                        analysis_type, constant.ANALYSIS_WEIGHTS.get("DEFAULT", 10)
+                    )
+                    signals_emitted.append(Signal(
+                        symbol=index.stock_symbol,
+                        direction=Direction[sentiment],
+                        source=analysis_type.lower(),
+                        layer=Layer.POSITIONAL,
+                        strength=weight_to_strength(weight),
+                    ))
+            index.reset_analysis()
+
+        # Equities
+        for stock in shared.app_ctx.stock_token_obj_dict.values():
+            orchestrator.run_all_positional(stock, index=False)
+            for sentiment in ("BULLISH", "BEARISH"):
+                for analysis_type in stock.analysis.get(sentiment, {}):
+                    weight = constant.ANALYSIS_WEIGHTS.get(
+                        analysis_type, constant.ANALYSIS_WEIGHTS.get("DEFAULT", 10)
+                    )
+                    signals_emitted.append(Signal(
+                        symbol=stock.stock_symbol,
+                        direction=Direction[sentiment],
+                        source=analysis_type.lower(),
+                        layer=Layer.POSITIONAL,
+                        strength=weight_to_strength(weight),
+                    ))
+            stock.reset_analysis()
+    finally:
+        # Always restore INTRADAY mode
+        shared.app_ctx.mode = shared.Mode.INTRADAY
+
+    # Persist for crash recovery
+    signal_store.save_signals(signals_emitted)
+    logger.info(f"Morning bias computed: {len(signals_emitted)} positional signals emitted")
+
+
 def live_options_analysis():
     """
     Live options only mode — WebSocket + LiveOptionsEngine, no regular analysis.
@@ -1124,6 +1281,9 @@ def init():
     # Initialize token registry
     shared.app_ctx.token_registry = TokenRegistry()
 
+    # Initialize intelligence layer (SignalBus + Correlator)
+    _init_signal_intelligence()
+
     create_stock_and_index_objects(args.stock, args.index)
 
     # Register equity and index tokens in the registry
@@ -1158,6 +1318,11 @@ def init():
         if ENABLE_LIVE_OPTIONS:
             shared.app_ctx.zd_ticker_manager.live_options_engine = LiveOptionsEngine()
             logger.info("LiveOptionsEngine attached to ZerodhaTickerManager")
+
+        # Attach LiveStockEngine for per-tick equity analysis (VWAP cross, ORB, etc.)
+        if shared.app_ctx.signal_bus:
+            shared.app_ctx.zd_ticker_manager.live_stock_engine = LiveStockEngine(shared.app_ctx.signal_bus)
+            logger.info("LiveStockEngine attached to ZerodhaTickerManager")
 
         if LIVE_OPTIONS_ONLY:
             shared.app_ctx.zd_ticker_manager.index_only_mode = True
@@ -1215,6 +1380,12 @@ def start_stock_analysis():
                 logger.info(f"Sleeping for {sleep_until_open:.0f}s until 9:15 AM market open")
                 sleep(sleep_until_open)
 
+        # Compute morning bias — run positional on yesterday's data, emit to SignalBus
+        try:
+            compute_morning_bias()
+        except Exception as e:
+            logger.error(f"Morning bias computation failed: {e}")
+
         is_in_time_period = isNowInTimePeriod(time(9,15), time(15,30), datetime.now().time())
         if LIVE_OPTIONS_ONLY:
             live_options_analysis()
@@ -1231,7 +1402,12 @@ def start_stock_analysis():
             run(["/sbin/shutdown", "-h", "now"])
     else:
         logger.info("Running in development mode. No shutdown operation.")
-        
+
+        try:
+            compute_morning_bias()
+        except Exception as e:
+            logger.error(f"Morning bias computation failed: {e}")
+
         if LIVE_OPTIONS_ONLY:
             live_options_analysis()
         elif shared.app_ctx.mode and shared.app_ctx.mode.name == shared.Mode.INTRADAY.name:
