@@ -13,6 +13,7 @@ ENV_ENABLE_TELEGRAM_BOT = "ENABLE_TELEGRAM_BOT"
 ENV_ENABLE_POST_MARKET = "ENABLE_POST_MARKET"
 ENV_ENABLE_LIVE_OPTIONS = "ENABLE_LIVE_OPTIONS"   # Toggle real-time options analysis + alerts
 ENV_LIVE_OPTIONS_ONLY   = "LIVE_OPTIONS_ONLY"     # Skip all regular analysis; run live options engine only
+ENV_ENABLE_INTELLIGENCE = "ENABLE_INTELLIGENCE"   # Toggle SignalBus + Correlator + morning bias
 
 # Indices for which live option chains are subscribed via WebSocket.
 # Only weekly-traded, high-liquidity indices. Keeping this small avoids the 500-token limit.

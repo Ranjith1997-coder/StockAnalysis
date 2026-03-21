@@ -56,6 +56,7 @@ ENABLE_TELEGRAM_BOT = False
 ENABLE_POST_MARKET = False
 ENABLE_LIVE_OPTIONS = False
 LIVE_OPTIONS_ONLY   = False   # When True: skip all regular analysis, run live options engine only
+ENABLE_INTELLIGENCE = False   # When True: SignalBus + Correlator + morning bias + LiveStockEngine
 
 class MonitorResult(Enum):
     SUCCESS = 0
@@ -1192,6 +1193,7 @@ def init():
     global ENABLE_POST_MARKET
     global ENABLE_LIVE_OPTIONS
     global LIVE_OPTIONS_ONLY
+    global ENABLE_INTELLIGENCE
 
 
     if os.getenv(constant.ENV_PRODUCTION, "0") == "1":
@@ -1256,7 +1258,14 @@ def init():
         ENABLE_LIVE_OPTIONS = True   # implies live options engine must be active
     else:
         LIVE_OPTIONS_ONLY = False
-    
+
+    if os.getenv(constant.ENV_ENABLE_INTELLIGENCE, "0") == "1":
+        logger.info("Intelligence layer enabled (SignalBus + Correlator + morning bias)")
+        ENABLE_INTELLIGENCE = True
+    else:
+        logger.info("Intelligence layer disabled")
+        ENABLE_INTELLIGENCE = False
+
     if PRODUCTION:
         if datetime.now().time() < time(9,15) or isNowInTimePeriod(time(9,15), time(15,30), datetime.now().time()):
             shared.app_ctx.mode = shared.Mode.INTRADAY
@@ -1282,7 +1291,8 @@ def init():
     shared.app_ctx.token_registry = TokenRegistry()
 
     # Initialize intelligence layer (SignalBus + Correlator)
-    _init_signal_intelligence()
+    if ENABLE_INTELLIGENCE:
+        _init_signal_intelligence()
 
     create_stock_and_index_objects(args.stock, args.index)
 
@@ -1320,7 +1330,7 @@ def init():
             logger.info("LiveOptionsEngine attached to ZerodhaTickerManager")
 
         # Attach LiveStockEngine for per-tick equity analysis (VWAP cross, ORB, etc.)
-        if shared.app_ctx.signal_bus:
+        if ENABLE_INTELLIGENCE and shared.app_ctx.signal_bus:
             shared.app_ctx.zd_ticker_manager.live_stock_engine = LiveStockEngine(shared.app_ctx.signal_bus)
             logger.info("LiveStockEngine attached to ZerodhaTickerManager")
 
@@ -1381,10 +1391,11 @@ def start_stock_analysis():
                 sleep(sleep_until_open)
 
         # Compute morning bias — run positional on yesterday's data, emit to SignalBus
-        try:
-            compute_morning_bias()
-        except Exception as e:
-            logger.error(f"Morning bias computation failed: {e}")
+        if ENABLE_INTELLIGENCE:
+            try:
+                compute_morning_bias()
+            except Exception as e:
+                logger.error(f"Morning bias computation failed: {e}")
 
         is_in_time_period = isNowInTimePeriod(time(9,15), time(15,30), datetime.now().time())
         if LIVE_OPTIONS_ONLY:
@@ -1393,7 +1404,7 @@ def start_stock_analysis():
             intraday_analysis()
         else:
             positional_analysis()
-        
+
         logger.info("shutting down the system.")
         TELEGRAM_NOTIFICATIONS.send_notification("\U0001F6D1 <b>System Shutdown</b> \U0001F6D1", parse_mode="HTML")
         # Shutdown system
@@ -1403,10 +1414,11 @@ def start_stock_analysis():
     else:
         logger.info("Running in development mode. No shutdown operation.")
 
-        try:
-            compute_morning_bias()
-        except Exception as e:
-            logger.error(f"Morning bias computation failed: {e}")
+        if ENABLE_INTELLIGENCE:
+            try:
+                compute_morning_bias()
+            except Exception as e:
+                logger.error(f"Morning bias computation failed: {e}")
 
         if LIVE_OPTIONS_ONLY:
             live_options_analysis()
