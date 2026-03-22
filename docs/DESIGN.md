@@ -20,13 +20,14 @@
 11. [Post-Market Analysis](#11-post-market-analysis)
 12. [Zerodha Integration](#12-zerodha-integration)
 13. [Live Options Tracking](#13-live-options-tracking)
-14. [Backtesting Framework](#14-backtesting-framework)
-15. [Sentiment Analysis](#15-sentiment-analysis)
-16. [Notification & Telegram](#16-notification--telegram)
-17. [ML Pipeline](#17-ml-pipeline)
-18. [Configuration & Constants](#18-configuration--constants)
-19. [Key Design Patterns](#19-key-design-patterns)
-20. [Data Flow Diagrams](#20-data-flow-diagrams)
+14. [Intelligence Layer](#14-intelligence-layer)
+15. [Backtesting Framework](#15-backtesting-framework)
+16. [Sentiment Analysis](#16-sentiment-analysis)
+17. [Notification & Telegram](#17-notification--telegram)
+18. [ML Pipeline](#18-ml-pipeline)
+19. [Configuration & Constants](#19-configuration--constants)
+20. [Key Design Patterns](#20-key-design-patterns)
+21. [Data Flow Diagrams](#21-data-flow-diagrams)
 
 ---
 
@@ -41,6 +42,8 @@ An automated stock market analysis system for the Indian market (NSE) that:
 - Runs **2 live options analyzers** (LiveOIAnalyser, LiveStraddleAnalyser) on real-time option ticks
 - Scores signals with a **weighted scoring engine** and sends alerts to **Telegram channels**
 - Generates **pre-market** and **post-market** summary reports
+- Detects **cross-layer signal confluence** (live + intraday + positional alignment) via SignalCorrelator
+- Generates **LLM-powered trade narratives** and EOD market briefings via Google Gemini Flash
 - Supports **backtesting** with Optuna-based parameter optimization
 - Includes **sentiment analysis** via FinBERT on news headlines
 
@@ -78,6 +81,14 @@ StockAnalysis/
 |   |-- LiveOIAnalyser.py            # NEW: Real-time OI wall breach, PCR crossover, live max pain
 |   |-- LiveStraddleAnalyser.py      # NEW: Straddle decay, IV skew flip, implied move boundary
 |
+|-- intelligence/
+|   |-- signal.py                    # Signal dataclass, Direction, Layer, SignalStrength enums
+|   |-- signal_bus.py                # Thread-safe pub/sub event bus for cross-layer signals
+|   |-- correlator.py                # SignalCorrelator — time-windowed cross-layer confluence
+|   |-- context_builder.py           # ContextBuilder — gathers live market data for LLM prompts
+|   |-- narrator.py                  # MarketNarrator — LLM-powered trade thesis & EOD briefing
+|   |-- llm_client.py                # GeminiClient — Google Gemini Flash API wrapper
+|
 |-- common/
 |   |-- Stock.py                     # Core Stock data model (~68KB)
 |   |-- shared.py                    # AppContext singleton, Mode enum, global state
@@ -85,7 +96,7 @@ StockAnalysis/
 |   |-- scoring.py                   # Score calculation, alignment bonus, should_notify()
 |   |-- helperFunctions.py           # Utilities (percentage change, JSON I/O, time checks)
 |   |-- logging_util.py              # Logger configuration
-|   |-- token_registry.py            # NEW: TokenRegistry — O(1) tick routing, zone management
+|   |-- token_registry.py            # TokenRegistry — O(1) tick routing, zone management
 |
 |-- notification/
 |   |-- Notification.py              # Telegram message sender
@@ -221,7 +232,10 @@ class AppContext:
     mode: Mode                    # Current operating mode
     zd_ticker_manager             # ZerodhaTickerManager reference
     zd_kc                         # KiteConnect instance
-    token_registry: TokenRegistry # NEW: Central token registry for O(1) tick routing
+    token_registry: TokenRegistry # Central token registry for O(1) tick routing
+    signal_bus: SignalBus         # Cross-layer signal event bus (when ENABLE_INTELLIGENCE=1)
+    correlator: SignalCorrelator  # Cross-layer confluence detector (when ENABLE_INTELLIGENCE=1)
+    narrator: MarketNarrator      # LLM narrative generator (when ENABLE_NARRATOR=1)
 
 # Global singleton
 app_ctx = AppContext()
@@ -889,7 +903,238 @@ Live options alerts go to a **dedicated channel** (`LIVE_OPTIONS_CHAT_ID`) separ
 
 ---
 
-## 14. Backtesting Framework
+## 14. Intelligence Layer
+
+The intelligence layer adds cross-layer signal correlation and LLM-powered trade narrative generation on top of the existing analysis pipeline. It is fully opt-in via environment variables.
+
+### Architecture Overview
+
+```
+intelligence/
+|-- signal.py           # Signal, Direction, Layer, SignalStrength
+|-- signal_bus.py       # SignalBus (pub/sub)
+|-- correlator.py       # SignalCorrelator + Confluence
+|-- context_builder.py  # ContextBuilder + MarketContext
+|-- narrator.py         # MarketNarrator (LLM trade thesis)
+|-- llm_client.py       # GeminiClient (Gemini Flash API)
+```
+
+### Phase 1: Signal Correlation (`ENABLE_INTELLIGENCE=1`)
+
+#### Signal — Standard Format
+
+Every analyser (live, intraday, positional) emits `Signal` objects through the `SignalBus`:
+
+```python
+@dataclass(frozen=True)
+class Signal:
+    symbol: str                  # "NIFTY", "RELIANCE"
+    direction: Direction         # BULLISH / BEARISH / NEUTRAL
+    source: str                  # "rsi_divergence", "pcr_crossover"
+    layer: Layer                 # LIVE / INTRADAY / POSITIONAL
+    strength: SignalStrength     # WEAK / MODERATE / STRONG
+    timestamp: float
+    context: dict                # Extra metadata (RSI value, PCR level, etc.)
+```
+
+**Direction**: `BULLISH`, `BEARISH`, `NEUTRAL`
+**Layer**: `LIVE` (per-tick), `INTRADAY` (5-min), `POSITIONAL` (daily/morning bias)
+**SignalStrength**: Derived from analysis weight — `WEAK` (<10), `MODERATE` (10-15), `STRONG` (>=16)
+
+#### SignalBus — Thread-Safe Event Bus
+
+Synchronous pub/sub bus. All analysers call `bus.emit(signal)` and the correlator subscribes:
+
+```python
+bus = SignalBus()
+bus.subscribe(correlator.on_signal)
+bus.emit(Signal(...))
+```
+
+Thread-safe via `threading.Lock`. Tracks `total_emitted` count for monitoring.
+
+#### SignalCorrelator — Cross-Layer Confluence
+
+Buffers signals per symbol. When a new signal arrives, checks whether signals from OTHER layers align in the same direction within configurable time windows:
+
+| Layer | Window | Rationale |
+|-------|--------|-----------|
+| LIVE | 5 min | Per-tick signals expire quickly |
+| INTRADAY | 15 min | 5-min cycle signals stay relevant for ~3 cycles |
+| POSITIONAL | 6 hours | Morning bias covers the full trading day |
+
+**Confluence levels:**
+- **MODERATE**: 2 layers aligned (e.g., LIVE + INTRADAY)
+- **HIGH**: 3 layers aligned (LIVE + INTRADAY + POSITIONAL)
+- **CAUTION flag**: Added when opposing signals exist from other layers
+
+**Scoring:**
+```
+base = sum(signal.strength.value)   # 1/2/3 per signal
++ (layers - 1) × 5                  # layer bonus
++ 3 if LIVE layer present           # timeliness bonus
+- 3 if contradicting signals exist  # dampener
+```
+
+**Cooldown:** 10 minutes between firing the same confluence for a symbol+direction.
+
+#### Morning Bias Flow
+
+At startup (before the intraday loop), the system runs positional analysers on daily data to establish directional context:
+
+```
+System startup
+    |
+    v
+create_stock_and_index_objects()  [downloads period="1y" daily data]
+    |
+    v
+compute_morning_bias()
+    |-- Temporarily sets mode = POSITIONAL
+    |-- Runs all positional analysers on each stock/index
+    |-- Emits positional signals to SignalBus
+    |-- Restores mode = INTRADAY
+    |
+    v
+Intraday loop begins (positional signals remain in correlator buffer for 6 hours)
+```
+
+Morning bias is skipped in POSITIONAL mode (EOD analysis already runs positional analysers).
+
+#### Signal Emission Points
+
+| Layer | Source | When |
+|-------|--------|------|
+| POSITIONAL | `intraday_monitor.compute_morning_bias()` | Once at startup |
+| INTRADAY | `intraday_monitor.process_stock()` | Every 5-min cycle, per stock |
+| LIVE | `LiveOptionsEngine.on_option_tick()` | Per tick (via LiveOI/LiveStraddle analysers) |
+
+### Phase 2: Market Narrative Generator (`ENABLE_NARRATOR=1`)
+
+Adds LLM-powered trade thesis generation using Google Gemini Flash. Requires `GEMINI_API_KEY`.
+
+#### GeminiClient (`intelligence/llm_client.py`)
+
+```python
+class GeminiClient(LLMClient):
+    MODEL = "gemini-2.5-flash"
+    ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models"
+    TIMEOUT = 15          # seconds
+    MAX_OUTPUT_TOKENS = 6000
+    DAILY_TOKEN_LIMIT = 900_000   # 10% buffer from 1M free tier
+```
+
+Features:
+- Daily token tracking with midnight reset (thread-safe)
+- Automatic daily limit enforcement (skips calls when budget exhausted)
+- Logs finish reason (`STOP` vs `MAX_TOKENS`) and token usage per call
+- Typical usage: ~20-30 calls/day x 1.3K tokens = ~35K tokens (3.5% of daily budget)
+
+#### ContextBuilder (`intelligence/context_builder.py`)
+
+Gathers real-time market data from Stock objects for LLM prompts:
+
+```python
+@dataclass
+class MarketContext:
+    symbol, spot, day_high, day_low, day_open, prev_close, change_pct, vwap
+    pcr, max_pain, ce_oi_wall, pe_oi_wall, atm_strike, atm_straddle
+    total_ce_oi, total_pe_oi
+    vix, expiry, minutes_to_close
+```
+
+`to_prompt_block()` formats the context as readable text for the LLM prompt.
+
+#### MarketNarrator (`intelligence/narrator.py`)
+
+Two operating modes:
+
+**1. Real-Time Confluence Narrative** (`narrate_async(confluence)`)
+- Triggered when SignalCorrelator detects a cross-layer confluence
+- Runs in a background `ThreadPoolExecutor(max_workers=1)` — non-blocking
+- Builds a prompt with confluence signals + live market context
+- Sends LLM response to the Live Options Telegram channel
+
+System prompt focuses on:
+- Weekly options on NIFTY/BANKNIFTY
+- Specific strike, entry, SL, target recommendations
+- VIX-aware strategy (VIX > 18: sell premium, VIX < 13: buy OTM)
+- Time decay awareness (avoid new positions < 60 min to close)
+- Response capped at 200 words
+
+**2. Positional EOD Briefing** (`narrate_positional(report_data)`)
+- Called after all positional analysis completes (~4 PM)
+- Receives all report data: index, global, commodities, FII/DII, sectors, 52W, stock alerts, movers
+- Strips HTML tags from Telegram messages before sending to LLM
+- Sends LLM response to the Positional Telegram channel
+
+System prompt requires:
+- **Primary trade**: Always NIFTY/BANKNIFTY weekly options (specific strike, entry, SL, target, expiry)
+- OI walls determine strikes: call walls = resistance, put walls = support
+- FII/DII flow interpretation
+- VIX regime-based strategy selection
+
+Response template structure:
+```
+MARKET OVERVIEW:         [4-5 lines: direction, global, FII/DII, VIX, bias]
+SECTOR THEMES:           [strong/weak sectors linked to stock alerts]
+INDEX OPTIONS TRADE:     [primary NIFTY/BANKNIFTY weekly options trade]
+STOCK SETUPS:            [2 equity trade ideas from alerts]
+52-WEEK LOW WATCHLIST:   [capitulation vs value trap analysis]
+RISKS & CONTRADICTIONS:  [mixed signals, key levels, event risk]
+```
+
+### Intelligence Data Flow
+
+```
+                    ┌─────────────────────┐
+                    │   POSITIONAL Layer   │
+                    │  (morning bias, EOD) │
+                    └──────────┬──────────┘
+                               │ Signal
+    ┌──────────────────┐       │       ┌──────────────┐
+    │   INTRADAY Layer │       │       │   LIVE Layer  │
+    │  (5-min cycle)   │       │       │  (per tick)   │
+    └────────┬─────────┘       │       └──────┬───────┘
+             │ Signal          │              │ Signal
+             v                 v              v
+         ┌───────────────────────────────────────┐
+         │              SignalBus                 │
+         │         (thread-safe pub/sub)          │
+         └───────────────────┬───────────────────┘
+                             │
+                             v
+         ┌───────────────────────────────────────┐
+         │          SignalCorrelator              │
+         │  (time-windowed cross-layer check)    │
+         └───────────────────┬───────────────────┘
+                             │ Confluence detected
+                             v
+         ┌───────────────────────────────────────┐
+         │          MarketNarrator               │
+         │  (LLM trade thesis via Gemini Flash)  │
+         └───────────────────┬───────────────────┘
+                             │
+                             v
+         ┌───────────────────────────────────────┐
+         │        Telegram Notification          │
+         │   (Live Options / Positional channel) │
+         └───────────────────────────────────────┘
+```
+
+### Environment Variables
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `ENABLE_INTELLIGENCE` | `0` | Toggle SignalBus + Correlator + morning bias |
+| `ENABLE_NARRATOR` | `0` | Toggle LLM narratives (requires `GEMINI_API_KEY`) |
+| `GEMINI_API_KEY` | (empty) | Google AI Studio API key for Gemini Flash |
+
+Both features are fully opt-in. When disabled, the system operates exactly as before.
+
+---
+
+## 15. Backtesting Framework
 
 ### `backtest/backtest.py`
 
@@ -960,7 +1205,7 @@ Multi-stock aggregation: optimizes parameters across multiple stocks simultaneou
 
 ---
 
-## 14. Sentiment Analysis
+## 16. Sentiment Analysis
 
 ### `sentiment/news_sentiment_manager.py`
 
@@ -991,7 +1236,7 @@ class NewsSentimentManager:
 
 ---
 
-## 15. Notification & Telegram
+## 17. Notification & Telegram
 
 ### `notification/Notification.py`
 
@@ -1033,7 +1278,7 @@ HTML-formatted Telegram message with:
 
 ---
 
-## 16. ML Pipeline
+## 18. ML Pipeline
 
 ### `ml_pipeline/`
 
@@ -1048,7 +1293,7 @@ A full ML prediction pipeline (separate from the main analysis system):
 
 ---
 
-## 17. Configuration & Constants
+## 19. Configuration & Constants
 
 ### `common/constants.py`
 
@@ -1063,7 +1308,10 @@ All sensitive config via env vars:
   - Runs `LiveOIAnalyser` + `LiveStraddleAnalyser` on every option tick
   - Sends alerts to `LIVE_OPTIONS_CHAT_ID`
   - Skips commodity token subscriptions (index-only WebSocket mode)
-- `LIVE_OPTIONS_ONLY` — set to `1` alongside `ENABLE_LIVE_OPTIONS` to disable all regular intraday/positional analysers and run WebSocket-only (NEW)
+- `LIVE_OPTIONS_ONLY` — set to `1` alongside `ENABLE_LIVE_OPTIONS` to disable all regular intraday/positional analysers and run WebSocket-only
+- `ENABLE_INTELLIGENCE` — set to `1` to activate SignalBus, SignalCorrelator, morning bias, and LiveStockEngine
+- `ENABLE_NARRATOR` — set to `1` to activate LLM-powered trade narratives (requires `GEMINI_API_KEY`)
+- `GEMINI_API_KEY` — Google AI Studio API key for Gemini Flash model
 
 #### Key Constants
 
@@ -1092,7 +1340,7 @@ DUPLICATE_SIGNAL_DECAY = 0.30  # 30% per additional same-type signal
 
 ---
 
-## 18. Key Design Patterns
+## 20. Key Design Patterns
 
 ### 1. Decorator-Based Method Registration
 Analyzers use decorators (`@intraday`, `@both`, `@index_both`) to self-register methods. The orchestrator discovers them automatically at init time. This makes adding new analysis methods trivial - just decorate and implement.
@@ -1127,9 +1375,15 @@ Instead of subscribing all 514 NIFTY option tokens, only 94 tokens in 3 zones ar
 ### 11. Cooldown Gate (Live Options)
 `LiveOptionsEngine` maintains a `_last_alert` dict keyed by `(symbol, alert_type)`. Each alert type has a configurable cooldown (10–30 min). This prevents alert flooding in choppy markets while ensuring signals are not missed — the first occurrence always fires.
 
+### 12. Cross-Layer Signal Correlation (Intelligence)
+The `SignalBus` + `SignalCorrelator` pattern decouples signal producers (analysers) from consumers (correlator, narrator). Analysers emit standardized `Signal` objects without knowing what will consume them. The correlator buffers signals with per-layer time windows and detects alignment across 2+ layers as a `Confluence`. This pub/sub design makes it trivial to add new signal sources or consumers.
+
+### 13. Background Narrative Generation (Intelligence)
+`MarketNarrator` uses a single-worker `ThreadPoolExecutor` to run LLM calls off the hot path. The raw alert fires instantly via Telegram; the LLM-generated narrative follows 1-3 seconds later without blocking the analysis pipeline. This pattern ensures the core system latency is unaffected by LLM response time.
+
 ---
 
-## 19. Data Flow Diagrams
+## 21. Data Flow Diagrams
 
 ### Intraday Analysis Flow
 
@@ -1352,5 +1606,5 @@ ANALYSIS_WEIGHTS["MY_SIGNAL"] = 12  # weight
 | `twisted` / `autobahn` | WebSocket client for Zerodha |
 | `pandas_market_calendars` | NSE market calendar |
 | `python-telegram-bot` | Telegram bot + notifications |
-| `requests` | HTTP calls to NSE, StockEdge, Sensibull |
+| `requests` | HTTP calls to NSE, StockEdge, Sensibull, Gemini API |
 | `feedparser` | Google News RSS parsing |
