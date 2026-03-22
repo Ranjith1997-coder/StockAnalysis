@@ -8,6 +8,7 @@ if TYPE_CHECKING:
     from common.token_registry import TokenRegistry
     from intelligence.signal_bus import SignalBus
     from intelligence.correlator import SignalCorrelator
+    from intelligence.narrator import MarketNarrator
 
 class Mode (Enum):
     INTRADAY = 1
@@ -31,6 +32,7 @@ class AppContext:
         self.token_registry: Optional[TokenRegistry] = None
         self.signal_bus: Optional[SignalBus] = None
         self.correlator: Optional[SignalCorrelator] = None
+        self.narrator: Optional[MarketNarrator] = None
 
 app_ctx = AppContext()
 ticker_52_week_high_list = []

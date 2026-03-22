@@ -36,7 +36,6 @@ from common.token_registry import TokenRegistry, TokenInfo, TokenType
 from intelligence.signal_bus import SignalBus
 from intelligence.correlator import SignalCorrelator, Confluence
 from intelligence.signal import Signal, Direction, Layer, SignalStrength, weight_to_strength
-from intelligence import signal_store
 from zerodha.live_stock_engine import LiveStockEngine
 
 class Trend (Enum):
@@ -700,6 +699,7 @@ def report_top_gainers_and_losers():
     report = generate_top_gainers_and_losers_report(top_gainers, top_losers)
     TELEGRAM_NOTIFICATIONS.send_notification(report, parse_mode="HTML")
     logger.info(f"EOD Report\n {report}")
+    return report
 
 def report_index_data():
     logger.info("Reporting index data")
@@ -719,6 +719,7 @@ def report_index_data():
             logger.error(f"Error while getting index data for {index.stock_symbol}: {e}")
     TELEGRAM_NOTIFICATIONS.send_notification(report, parse_mode="HTML")
     logger.info(f"Index Report\n {report}")
+    return report
 
 def report_commodity_data():
     logger.info("Reporting commodity data")
@@ -765,6 +766,7 @@ def report_commodity_data():
     
     TELEGRAM_NOTIFICATIONS.send_notification(report, parse_mode="HTML")
     logger.info(f"Commodity Report\n {report}")
+    return report
 
 def report_global_indices_data():
     logger.info("Reporting global indices data")
@@ -839,6 +841,7 @@ def report_global_indices_data():
     
     TELEGRAM_NOTIFICATIONS.send_notification(report, parse_mode="HTML")
     logger.info(f"Global Indices Report\n {report}")
+    return report
 
 def report_52_week_high_low(max_items: int = 40, clear_after: bool = False):
     """
@@ -937,6 +940,8 @@ def report_52_week_high_low(max_items: int = 40, clear_after: bool = False):
         shared.ticker_52_week_high_list.clear()
         shared.ticker_52_week_low_list.clear()
 
+    return msg
+
 def _handle_confluence(confluence: Confluence):
     """Format and send a confluence alert to the live options Telegram channel."""
     layers_str = " + ".join(
@@ -962,9 +967,13 @@ def _handle_confluence(confluence: Confluence):
     logger.info(f"[Confluence] {confluence.symbol} {confluence.direction.value} "
                 f"{level} ({confluence.layer_count} layers, score={confluence.score:.0f})")
 
+    # Phase 2: async LLM narrative (follows the raw alert 1-3s later)
+    if shared.app_ctx.narrator:
+        shared.app_ctx.narrator.narrate_async(confluence)
+
 
 def _init_signal_intelligence():
-    """Set up the SignalBus, Correlator, and load cached morning bias."""
+    """Set up the SignalBus and Correlator."""
     bus = SignalBus()
     correlator = SignalCorrelator(on_confluence=_handle_confluence)
     bus.subscribe(correlator.on_signal)
@@ -972,12 +981,7 @@ def _init_signal_intelligence():
     shared.app_ctx.signal_bus = bus
     shared.app_ctx.correlator = correlator
 
-    # Load cached positional signals from previous evening / morning bias
-    cached = signal_store.load_signals()
-    for sig in cached:
-        bus.emit(sig)
-
-    logger.info(f"Signal intelligence initialised (bus + correlator, {len(cached)} cached signals loaded)")
+    logger.info("Signal intelligence initialised (bus + correlator)")
 
 
 _morning_bias_done = False
@@ -1046,8 +1050,6 @@ def compute_morning_bias():
         # Always restore INTRADAY mode
         shared.app_ctx.mode = shared.Mode.INTRADAY
 
-    # Persist for crash recovery
-    signal_store.save_signals(signals_emitted)
     logger.info(f"Morning bias computed: {len(signals_emitted)} positional signals emitted")
 
 
@@ -1152,28 +1154,57 @@ def positional_analysis():
     logger.info("EOD analysis Started")
     TELEGRAM_NOTIFICATIONS.send_notification("\U0001F4CA <b>EOD Analysis Started</b> \U0001F4CA", parse_mode="HTML")
     orchestrator.reset_all_constants()
+    stock_alerts = []
     try:
         results = fetch_and_analyze_stocks()
         process_monitor_results(results)
+        # Collect alert messages for narrator
+        for _, trend_found, message in results:
+            if trend_found and message:
+                stock_alerts.append(message)
     except Exception as e:
         logger.error(f"Critical error in stock analysis: {e}")
 
-    report_top_gainers_and_losers()
-    report_index_data()
-    report_commodity_data()
-    report_global_indices_data()
-    report_52_week_high_low()
+    movers_report = report_top_gainers_and_losers()
+    index_report = report_index_data()
+    commodity_report = report_commodity_data()
+    global_report = report_global_indices_data()
+    week52_report = report_52_week_high_low()
 
-    # Post-market flows
+    # Post-market flows (sector, FII/DII)
+    post_market_msgs = []
     if ENABLE_POST_MARKET:
         try:
-            post_market_msg_list = run_and_summarize()
-            if post_market_msg_list:
-                for msg in post_market_msg_list:
-                    TELEGRAM_NOTIFICATIONS.send_notification(msg, parse_mode="HTML")
-                    logger.info(msg)
+            post_market_msgs = run_and_summarize() or []
+            for msg in post_market_msgs:
+                TELEGRAM_NOTIFICATIONS.send_notification(msg, parse_mode="HTML")
+                logger.info(msg)
         except Exception as e:
             logger.error(f"Post-market pipeline failed: {e}")
+
+    # LLM-powered EOD market briefing
+    if shared.app_ctx.narrator:
+        try:
+            sector_report = ""
+            fii_dii_report = ""
+            for msg in post_market_msgs:
+                if "FII" in msg or "DII" in msg or "Participant" in msg:
+                    fii_dii_report += msg + "\n"
+                else:
+                    sector_report += msg + "\n"
+
+            shared.app_ctx.narrator.narrate_positional({
+                "stock_alerts": "\n\n".join(stock_alerts),
+                "index_report": index_report or "",
+                "commodity_report": commodity_report or "",
+                "global_report": global_report or "",
+                "week52_report": week52_report or "",
+                "movers_summary": movers_report or "",
+                "sector_report": sector_report,
+                "fii_dii_report": fii_dii_report,
+            })
+        except Exception as e:
+            logger.error(f"EOD narrative failed: {e}")
 
     for stock in shared.app_ctx.stock_token_obj_dict:
         shared.app_ctx.stock_token_obj_dict[stock].reset_price_data()
@@ -1293,6 +1324,19 @@ def init():
     # Initialize intelligence layer (SignalBus + Correlator)
     if ENABLE_INTELLIGENCE:
         _init_signal_intelligence()
+
+        # Initialize LLM narrator (requires ENABLE_NARRATOR=1 + GEMINI_API_KEY)
+        if os.getenv(constant.ENV_ENABLE_NARRATOR, "0") == "1":
+            from intelligence.llm_client import GeminiClient
+            from intelligence.context_builder import ContextBuilder
+            from intelligence.narrator import MarketNarrator
+
+            gemini = GeminiClient()
+            if gemini.available:
+                shared.app_ctx.narrator = MarketNarrator(gemini, ContextBuilder())
+                logger.info("MarketNarrator initialised (Gemini Flash)")
+            else:
+                logger.warning("ENABLE_NARRATOR=1 but GEMINI_API_KEY not set — narrator disabled")
 
     create_stock_and_index_objects(args.stock, args.index)
 
