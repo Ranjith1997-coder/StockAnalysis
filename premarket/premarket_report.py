@@ -24,6 +24,7 @@ Scheduling:
 """
 
 import requests
+import sys
 import yfinance as yf
 import pandas as pd
 import traceback
@@ -155,6 +156,8 @@ class PreMarketReport:
 
         These are available 24/7 and can be sent immediately at startup.
         yfinance data is fetched in ONE call; FII/DII runs in parallel.
+        Also prepends a high-visibility holiday warning if any NSE holidays
+        fall within the next 7 days (Theta decay alert).
         """
         logger.info("Starting global cues report generation...")
 
@@ -182,7 +185,10 @@ class PreMarketReport:
         self._parse_commodities_currencies()
         self._parse_india_vix()
 
+        holiday_banner = self._build_holiday_warning_banner()
         report = self._format_global_report()
+        if holiday_banner:
+            report = holiday_banner + "\n\n" + report
         logger.info("Global cues report generation completed.")
         return report
 
@@ -532,6 +538,52 @@ class PreMarketReport:
     # Report Formatting
     # ═══════════════════════════════════════════════════════════════════════════
 
+    # ═══════════════════════════════════════════════════════════════════════════
+    # Holiday Warning Banner
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    def _build_holiday_warning_banner(self) -> str:
+        """
+        Check for NSE holidays in the next 7 days via MarketCalendar.
+
+        Returns an HTML warning banner string if holidays are found, or an
+        empty string if there are no holidays this week.  The banner warns
+        about accelerated Theta decay for options positions held over the
+        holiday closure.
+        """
+        try:
+            from common.market_calendar import get_upcoming_holidays
+            holidays = get_upcoming_holidays(days_ahead=7)
+        except Exception as exc:
+            logger.warning("Could not fetch upcoming holidays for warning banner: %s", exc)
+            return ""
+
+        if not holidays:
+            return ""
+
+        # Format holiday dates as human-readable strings
+        holiday_lines = ""
+        for h in holidays:
+            day_name = h.strftime("%A")
+            date_str = h.strftime("%d %b %Y")
+            holiday_lines += f"\n  \u26A0\uFE0F  <b>{day_name}, {date_str}</b>"
+
+        plural = "holiday" if len(holidays) == 1 else "holidays"
+        banner = (
+            "\U0001F6A8\U0001F6A8\U0001F6A8 "
+            "<b>NSE MARKET HOLIDAY ALERT — THETA DECAY WARNING</b> "
+            "\U0001F6A8\U0001F6A8\U0001F6A8\n"
+            f"\U0001F4C5 <b>{len(holidays)} upcoming NSE {plural} in the next 7 days:</b>"
+            f"{holiday_lines}\n\n"
+            "\u23F3 <b>Options traders: accelerated Theta (\u0398) decay risk!</b>\n"
+            "  \U0001F534 Long options positions lose time-value faster over\n"
+            "     a holiday weekend — consider closing or hedging before close.\n"
+            "  \U0001F7E2 Short sellers (writers) benefit from extra decay —\n"
+            "     calendar spreads and iron condors may be advantageous.\n"
+            "\u2796\u2796\u2796\u2796\u2796\u2796\u2796\u2796\u2796\u2796\u2796\u2796\u2796\u2796\u2796\u2796\u2796\u2796\u2796\u2796"
+        )
+        return banner
+
     def _format_global_report(self):
         """Format global cues, bond yields, commodities, FII/DII, India VIX (HTML)."""
         now = datetime.now()
@@ -859,8 +911,22 @@ def run_global_cues_report():
     """
     Generate and send the global cues report (global indices, bond yields,
     commodities, FII/DII, India VIX).  Available 24/7 — send at startup.
+
+    Gatekeeper: exits immediately (sys.exit(0)) in PRODUCTION mode if today is
+    not an NSE trading day, preventing wasted API calls and compute on holidays.
     Returns the report string.
     """
+    import os
+    if os.getenv("PRODUCTION", "0") == "1":
+        from common.market_calendar import is_trading_day
+        from datetime import datetime
+        if not is_trading_day():
+            logger.info(
+                "run_global_cues_report: today (%s) is not an NSE trading day — skipping.",
+                datetime.now().date().isoformat(),
+            )
+            sys.exit(0)
+
     try:
         report_gen = PreMarketReport()
         report = report_gen.generate_global_report()
