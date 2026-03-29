@@ -59,30 +59,40 @@ class TELEGRAM_NOTIFICATIONS:
         if parse_mode:
             msg["parse_mode"] = parse_mode
         resp = None
-        try:
-            resp = requests.post(
-                TELEGRAM_URL + TELEGRAM_TOKEN + "/sendMessage",
-                json=msg,
-                timeout=10
-            )
-            
-            if resp.status_code != 200:
-                logger.error(f"Telegram send failed with status {resp.status_code}: {resp.text}")
+        for attempt in range(1, 4):  # up to 3 attempts
+            try:
+                resp = requests.post(
+                    TELEGRAM_URL + TELEGRAM_TOKEN + "/sendMessage",
+                    json=msg,
+                    timeout=15,
+                )
+                
+                if resp.status_code != 200:
+                    logger.error(f"Telegram send failed (attempt {attempt}) with status {resp.status_code}: {resp.text}")
+                    if attempt < 3:
+                        from time import sleep as _sleep
+                        _sleep(2 ** attempt)  # 2s, 4s back-off
+                    continue
+                
+                logger.info("Message sent successfully")
+                logger.debug(f"Message: {message}")
+                return True
+                
+            except requests.Timeout:
+                logger.error(f"Telegram send timeout (attempt {attempt})")
+                if attempt < 3:
+                    from time import sleep as _sleep
+                    _sleep(2 ** attempt)
+            except requests.ConnectionError:
+                logger.error(f"Telegram connection error (attempt {attempt})")
+                if attempt < 3:
+                    from time import sleep as _sleep
+                    _sleep(2 ** attempt)
+            except Exception as e:
+                logger.error(f"Telegram send failed: {e}")
                 return False
-            
-            logger.info("Message sent successfully")
-            logger.debug(f"Message: {message}")
-            return True
-            
-        except requests.Timeout:
-            logger.error("Telegram send timeout")
-            return False
-        except requests.ConnectionError:
-            logger.error("Telegram connection error")
-            return False
-        except Exception as e:
-            logger.error(f"Telegram send failed: {e}")
-            return False
+
+        return False
 
     @classmethod
     def send_live_options_notification(cls, message, parse_mode="HTML"):
