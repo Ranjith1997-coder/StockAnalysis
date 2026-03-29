@@ -101,7 +101,7 @@ StockAnalysis/
 |
 |-- notification/
 |   |-- Notification.py              # Telegram message sender
-|   |-- bot_listener.py              # Telegram bot for /enctoken command
+|   |-- bot_listener.py              # Telegram bot with interactive commands (/help, /status, /ltp, /gainers, /losers, /watchlist, /holidays, /enctoken)
 |
 |-- nse/
 |   |-- nse_derivative_data.py       # NSE API wrappers (futures, options, bhav copy, etc.)
@@ -1262,6 +1262,8 @@ class TELEGRAM_NOTIFICATIONS:
         #   INTRADAY  -> INTRADAY_CHAT_ID
         #   POSITIONAL -> POSITIONAL_CHAT_ID
         # Only sends when is_production=True
+        # Retries up to 3 times with exponential backoff (2s, 4s) on HTTP error,
+        # Timeout, or ConnectionError. Timeout per attempt: 15s.
 
     def send_live_options_notification(message, parse_mode="HTML"):
         # Always routes to LIVE_OPTIONS_CHAT_ID (dedicated real-time channel)
@@ -1278,9 +1280,30 @@ class TELEGRAM_NOTIFICATIONS:
 
 ### `notification/bot_listener.py`
 
-Telegram bot with interactive commands:
-- `/start`: Welcome message
-- `/enctoken <token>`: Updates Zerodha enctoken in `.env` file and triggers WebSocket reconnection
+Telegram bot with interactive commands. Runs in a background thread via `init_telegram_bot()` using `python-telegram-bot` polling.
+
+#### Commands
+
+| Command | Description | Data source |
+|---------|-------------|-------------|
+| `/help` | List all available commands | Static |
+| `/status` | System health snapshot: mode, WebSocket state, stock/index count, production flag, trading day | `shared.app_ctx`, `market_calendar` |
+| `/ltp <SYMBOL>` | Last traded price + % change + previous close for any symbol (case-insensitive, searches indices, stocks, commodities, global indices) | `stock_token_obj_dict` |
+| `/gainers` | Top 5 stocks by positive % change since previous close | `stock_token_obj_dict` |
+| `/losers` | Top 5 stocks by negative % change since previous close | `stock_token_obj_dict` |
+| `/watchlist` | Full subscription overview: indices, F&O stocks (with preview), commodities, global indices, Zerodha WebSocket status and token counts, options registry stats per index (zone breakdown + spot price), live futures LTP/OI, current & next expiry | `shared.app_ctx`, `token_registry`, `zerodha_ctx` |
+| `/holidays` | Today's trading status + upcoming NSE holidays in the next 30 days | `market_calendar` |
+| `/enctoken <token>` | Updates Zerodha enctoken in `.env`, reconnects WebSocket, subscribes options | `.env`, `ZerodhaTickerManager` |
+
+#### Key helpers
+
+```python
+_find_stock_by_symbol(symbol)   # O(n) search across all 4 tracked dicts
+_build_gainers_losers()         # Returns ([top5 gainers], [top5 losers]) sorted by % change
+```
+
+#### Telegram message size handling
+`/watchlist` automatically splits messages that exceed Telegram's 4096-character limit into multiple sequential messages.
 
 ### Message Format (from `AnalyserOrchestrator.generate_analysis_message()`)
 
