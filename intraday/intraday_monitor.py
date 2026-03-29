@@ -1,7 +1,8 @@
 import os
-import argparse 
+import sys
+import argparse
 from notification.Notification import TELEGRAM_NOTIFICATIONS
-from datetime import datetime, time 
+from datetime import datetime, time
 import concurrent.futures
 import common.constants as constant
 import common.shared as shared
@@ -1387,6 +1388,11 @@ def parse_arguments():
     parser = argparse.ArgumentParser(description="Stock Analysis Tool")
     parser.add_argument("--stock", type=str, help="Name of the stock to analyze (optional)")
     parser.add_argument("--index", type=str, help="Name of the index to analyze (optional)")
+    parser.add_argument(
+        "--premarket",
+        action="store_true",
+        help="Dev mode only: run the pre-market report (global cues + pre-open) and exit.",
+    )
     return parser.parse_args()
 
 def start_stock_analysis():
@@ -1472,6 +1478,51 @@ def start_stock_analysis():
             positional_analysis()
 
 if __name__ =="__main__":
+
+    # ── Market Holiday Gatekeeper ─────────────────────────────────────────────
+    # Check before any heavy initialisation (yfinance, Zerodha, orchestrators).
+    # In production mode only — dev mode always runs so engineers can test freely.
+    if os.getenv("PRODUCTION", "0") == "1":
+        from common.market_calendar import is_trading_day
+        if not is_trading_day():
+            today_str = datetime.now().date().strftime("%A, %d %b %Y")
+            logger.info("Today (%s) is not an NSE trading day. Sending Telegram notification and exiting.", today_str)
+
+            # Send holiday notification via the positional channel (same as pre-market reports)
+            TELEGRAM_NOTIFICATIONS.is_production = True
+            TELEGRAM_NOTIFICATIONS.is_intraday = False
+            TELEGRAM_NOTIFICATIONS.send_notification(
+                f"\U0001F4C5 <b>Market Holiday — System Not Started</b>\n\n"
+                f"Today is <b>{today_str}</b> and NSE is <b>closed</b>.\n"
+                f"No intraday analysis will run. Have a good holiday! \U0001F3D6\uFE0F",
+                parse_mode="HTML",
+            )
+
+            if os.getenv(constant.ENV_SHUTDOWN, "0") == "1":
+                logger.info("SHUTDOWN_SYSTEM enabled — shutting down machine.")
+                from subprocess import run as _run
+                _run(["/sbin/shutdown", "-h", "now"])
+
+            sys.exit(0)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    # ── Dev-mode premarket-only shortcut ─────────────────────────────────────
+    # Run with: python3 intraday_monitor.py --premarket
+    # Skips all heavy init (yfinance bulk download, Zerodha, orchestrators).
+    # Works without PRODUCTION=1 — useful for testing the report locally.
+    _pre_args = argparse.ArgumentParser(add_help=False)
+    _pre_args.add_argument("--premarket", action="store_true")
+    _known, _ = _pre_args.parse_known_args()
+    if _known.premarket:
+        load_dotenv()
+        logger.info("--premarket flag detected: running pre-market report only.")
+        TELEGRAM_NOTIFICATIONS.is_production = os.getenv(constant.ENV_PRODUCTION, "0") == "1"
+        TELEGRAM_NOTIFICATIONS.is_intraday = False
+        run_global_cues_report()
+        run_preopen_report()
+        logger.info("Pre-market report complete. Exiting.")
+        sys.exit(0)
+    # ─────────────────────────────────────────────────────────────────────────
 
     init()
     if ENABLE_TELEGRAM_BOT:
