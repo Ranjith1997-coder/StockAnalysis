@@ -9,6 +9,7 @@ and the narrative follows 1-3 seconds later without blocking the pipeline.
 """
 
 from __future__ import annotations
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 from intelligence.correlator import Confluence
@@ -156,13 +157,34 @@ class MarketNarrator:
         narrator.narrate_async(confluence)  # non-blocking
     """
 
+    # Minimum seconds between LLM narratives for the same symbol (any direction).
+    # Prevents re-flooding when the same stock keeps firing confluences.
+    NARRATE_SYMBOL_COOLDOWN = 1800  # 30 min
+
     def __init__(self, llm: LLMClient, context_builder: ContextBuilder):
         self._llm = llm
         self._ctx = context_builder
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="narrator")
+        self._last_narrated: dict[str, float] = {}  # symbol -> last narration epoch
 
     def narrate_async(self, confluence: Confluence):
-        """Submit narrative generation to background thread. Non-blocking."""
+        """Submit narrative generation to background thread. Non-blocking.
+
+        Guards:
+        - Only HIGH confluences should reach here (gated in _handle_confluence).
+        - Per-symbol cooldown: same symbol is not narrated more than once per
+          NARRATE_SYMBOL_COOLDOWN seconds, regardless of direction.
+        """
+        now = time.time()
+        last = self._last_narrated.get(confluence.symbol, 0.0)
+        if now - last < self.NARRATE_SYMBOL_COOLDOWN:
+            remaining = int(self.NARRATE_SYMBOL_COOLDOWN - (now - last))
+            logger.debug(
+                f"[Narrator] Skipping {confluence.symbol} — cooldown active "
+                f"({remaining}s remaining)"
+            )
+            return
+        self._last_narrated[confluence.symbol] = now
         self._executor.submit(self._narrate, confluence)
 
     def _narrate(self, confluence: Confluence):
