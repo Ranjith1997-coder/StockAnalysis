@@ -1,5 +1,7 @@
 import os
 import sys
+import traceback
+import html
 import argparse
 from notification.Notification import TELEGRAM_NOTIFICATIONS
 from datetime import datetime, time
@@ -38,6 +40,137 @@ from intelligence.signal_bus import SignalBus
 from intelligence.correlator import SignalCorrelator, Confluence
 from intelligence.signal import Signal, Direction, Layer, SignalStrength, weight_to_strength
 from zerodha.live_stock_engine import LiveStockEngine
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Layer 1: Global Exception Catcher — sends fatal tracebacks to Telegram
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _crash_handler(exc_type, exc_value, exc_tb):
+    """Last-resort handler for uncaught exceptions.
+
+    Formats the traceback and fires a high-priority Telegram alert so the
+    on-call engineer knows the process died, even at 2 AM.
+    """
+    if issubclass(exc_type, KeyboardInterrupt):
+        sys.__excepthook__(exc_type, exc_value, exc_tb)
+        return
+
+    tb_text = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
+    # Truncate to fit Telegram's 4096-char limit with room for the wrapper
+    max_tb = 3500
+    if len(tb_text) > max_tb:
+        tb_text = tb_text[:max_tb] + "\n… (truncated)"
+
+    # Also cap the one-liner summary (exc_value can be huge)
+    exc_summary = f"{exc_type.__name__}: {exc_value}"
+    if len(exc_summary) > 200:
+        exc_summary = exc_summary[:200] + "…"
+
+    # HTML-escape so repr strings like <urllib3.HTTPSConnection object> don't
+    # break Telegram's HTML parser (status 400 "Unsupported start tag").
+    message = (
+        "🚨 <b>FATAL CRASH — Process Died</b>\n\n"
+        f"<b>Exception:</b> <code>{html.escape(exc_summary)}</code>\n\n"
+        f"<pre>{html.escape(tb_text)}</pre>"
+    )
+
+    try:
+        TELEGRAM_NOTIFICATIONS.send_notification(message, parse_mode="HTML")
+    except Exception:
+        pass  # absolutely must not raise here
+
+    logger.critical("Uncaught exception — crash handler fired", exc_info=(exc_type, exc_value, exc_tb))
+
+sys.excepthook = _crash_handler
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Layer 2: Heartbeat — pings healthchecks.io at end of each analysis cycle
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _ping_healthcheck():
+    """Ping an external dead-man's switch (healthchecks.io) to signal liveness.
+
+    Reads the URL from the HEALTHCHECK_URL env var.  If the variable is
+    unset or the request fails, the trading loop is *never* disrupted.
+    """
+    url = os.getenv("HEALTHCHECK_URL")
+    if not url:
+        return
+    try:
+        import requests
+        requests.get(url, timeout=5)
+    except Exception:
+        logger.debug("Healthcheck ping failed (non-fatal)")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Layer 3: Zombie Data Watchdog — detects stale live-options data
+# ═══════════════════════════════════════════════════════════════════════════
+
+_stale_alerts_sent = set()  # tracks symbols already alerted this session
+
+def check_data_freshness(stock, stale_threshold_sec=120):
+    """Check that live options data has been updated recently.
+
+    Only fires during market hours on trading days.  If
+    ``stock.options_aggregate['last_updated']`` is older than
+    *stale_threshold_sec* seconds, sends a one-time Telegram warning.
+
+    Returns:
+        True  — data is fresh or check was skipped (outside market hours)
+        False — stale data detected and alert sent
+    """
+    now = datetime.now()
+
+    # Gate 1: only during market hours
+    if not isNowInTimePeriod(time(9, 15), time(15, 30), now.time()):
+        return True
+
+    # Gate 2: only on trading days
+    try:
+        from common.market_calendar import is_trading_day
+        if not is_trading_day(now.date()):
+            return True
+    except Exception:
+        pass  # fail-open — assume trading day
+
+    # Gate 3: check the timestamp
+    options_agg = getattr(stock, "options_aggregate", None)
+    if not options_agg:
+        return True  # no options tracking for this stock — nothing to check
+
+    last_updated = options_agg.get("last_updated")
+    if last_updated is None:
+        return True  # field not populated yet
+
+    if isinstance(last_updated, (int, float)):
+        age = now.timestamp() - last_updated
+    elif hasattr(last_updated, "timestamp"):
+        # datetime-like object
+        age = now.timestamp() - last_updated.timestamp()
+    else:
+        return True  # unknown format — skip
+
+    if age > stale_threshold_sec:
+        symbol = getattr(stock, "stock_symbol", "UNKNOWN")
+        if symbol not in _stale_alerts_sent:
+            _stale_alerts_sent.add(symbol)
+            msg = (
+                f"⚠️ <b>STALE DATA — {symbol}</b>\n\n"
+                f"options_aggregate last updated <b>{int(age)}s ago</b> "
+                f"(threshold: {stale_threshold_sec}s).\n"
+                f"WebSocket may have dropped silently."
+            )
+            try:
+                TELEGRAM_NOTIFICATIONS.send_notification(msg, parse_mode="HTML")
+            except Exception:
+                pass
+            logger.warning(f"Stale data detected for {symbol}: {int(age)}s old")
+        return False
+
+    return True
 
 class Trend (Enum):
     BULLISH = "BULLISH"
@@ -968,8 +1101,10 @@ def _handle_confluence(confluence: Confluence):
     logger.info(f"[Confluence] {confluence.symbol} {confluence.direction.value} "
                 f"{level} ({confluence.layer_count} layers, score={confluence.score:.0f})")
 
-    # Phase 2: async LLM narrative (follows the raw alert 1-3s later)
-    if shared.app_ctx.narrator:
+    # Phase 2: async LLM narrative — HIGH confluences only (3+ layers aligned).
+    # MODERATE (2-layer) confluences get the raw alert above but no LLM call,
+    # which eliminates the bulk of morning-open notification flooding.
+    if shared.app_ctx.narrator and confluence.level == "HIGH":
         shared.app_ctx.narrator.narrate_async(confluence)
 
 
@@ -1120,8 +1255,16 @@ def intraday_analysis(loop = True, loop_wait_time = 30):
         report_commodity_data()
         report_global_indices_data()
 
+        # Layer 3: Zombie data watchdog — check live options freshness
+        if ENABLE_LIVE_OPTIONS:
+            for idx_obj in shared.app_ctx.index_token_obj_dict.values():
+                check_data_freshness(idx_obj)
+
         for stock in shared.app_ctx.stock_token_obj_dict:
             shared.app_ctx.stock_token_obj_dict[stock].reset_price_data()
+
+        # Layer 2: Heartbeat — signal liveness to healthchecks.io
+        _ping_healthcheck()
 
         if PRODUCTION:
             sleeptime = (constant.INTRADAY_SLEEP_TIME) - (datetime.now().second + ((datetime.now().minute % 5) * 60))
