@@ -113,6 +113,8 @@ ANALYSIS_WEIGHTS = {
     "PCR_DIVERGENCE": 14,
     "IV_SPIKE": 12,
     "IV_TREND": 10,
+    "IV_RANK": 15,           # IV rank (percentile) — high/low signals option selling/buying edge
+    "IV_RANK_EXTREME": 18,   # IV percentile at extremes (< 10 or > 85) — very high conviction
     
     # Futures Analysis
     "FUTURES_PREMIUM": 12,
@@ -188,7 +190,7 @@ TECHNICAL_ANALYSES = {"RSI", "MACD", "EMA_CROSSOVER",
                       "SUPERTREND", "RSI_DIVERGENCE", "STOCHASTIC", "OBV", "PIVOT_POINTS"}
 OPTIONS_ANALYSES = {"MAX_PAIN", "MAX_PAIN_TREND", "MAX_PAIN_ALIGNMENT", 
                     "PCR_EXTREME", "PCR_BIAS", "PCR_TREND", "PCR_REVERSAL", "PCR_DIVERGENCE",
-                    "IV_SPIKE", "IV_TREND",
+                    "IV_SPIKE", "IV_TREND", "IV_RANK", "IV_RANK_EXTREME",
                     "OI_BUILDUP", "OI_SUPPORT_RESISTANCE", "OI_WALL", "OI_SHIFT",
                     "OI_INTRADAY_TREND", "OI_SR_SHIFT"}
 FUTURES_ANALYSES = {"FUTURES_PREMIUM", "FUTURE_ACTION", "FUTURE_ACTION_LONG_BUILDUP", 

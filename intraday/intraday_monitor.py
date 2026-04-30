@@ -219,12 +219,11 @@ def monitor(stock: Stock) -> Tuple[MonitorResult, bool, Optional[str]]:
         
         if ENABLE_ZERODHA_DERIVATIVES:
             try:
-                # Fetch zerodha derivatives data
-                stock.get_atm_data_for_stock(mode=analysis_type)
+                # Fetch futures data only (ATM IV now sourced from Sensibull)
                 stock.get_futures_data_for_stock(mode=analysis_type)
-                logger.debug(f"Zerodha derivatives data fetched successfully for {stock.stockName}")
+                logger.debug(f"Zerodha futures data fetched successfully for {stock.stockName}")
             except Exception as e:
-                logger.error(f"Error fetching zerodha derivatives data for {stock.stockName}: {e}")
+                logger.error(f"Error fetching zerodha futures data for {stock.stockName}: {e}")
         else:
             logger.debug("Zerodha derivatives data not enabled for {stock.stockName}")
         
