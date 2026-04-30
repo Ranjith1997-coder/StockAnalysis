@@ -226,13 +226,6 @@ DUMMY_API_KEY_ZERODHA = "dummy_api_key"
 
 NseOptionChainURL = "https://www.nseindia.com/option-chain"
 
-# Opstra Data Collection Constants
-OpstraURLs = {"TickerURL" : "https://opstra.definedge.com/api/tickers",
-            "MonthlyExpiryURL" : "https://opstra.definedge.com/api/monthlies",
-            "WeeklyExpiryURL" : "https://opstra.definedge.com/api/weeklies",
-            "IVChartURL": "https://opstra.definedge.com/api/ivcharts/{}",
-            "FII_DII_DATA_URL": "https://opstra.definedge.com/api/fiidiidata"}
-
 # ---------- column lists-----------------
 
 
