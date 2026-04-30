@@ -49,21 +49,13 @@ def addHeaderToExcel(workSheet,expiry):
 
 def computeSTDandAddtoExcel(stock, data ,No_of_days_to_Expire, workSheet, sNo):
 
-    # print(data.iloc[-1], data.__class__)
-    # print(data[-9:])
-
     dailyReturns = Series(getReturnsForData(data))
 
-    # print(dailyReturns,len(dailyReturns ) ,end='\n')
     mean = dailyReturns.mean()
     standardDeviation = dailyReturns.std()
-    # print(mean)
-    # print(standardDeviation)
 
     mean_at_expiry = mean * No_of_days_to_Expire
     std_at_expiry = standardDeviation * (pow(No_of_days_to_Expire,0.5))
-    # print(mean_at_expiry)
-    # print(std_at_expiry)
 
     lowerLimit_1SD = (exp((mean_at_expiry - std_at_expiry)/100)) * data.iloc[-1]
     upperLimit_1SD = (exp((mean_at_expiry + std_at_expiry)/100)) * data.iloc[-1]
@@ -82,15 +74,6 @@ def computeSTDandAddtoExcel(stock, data ,No_of_days_to_Expire, workSheet, sNo):
                       upperLimit_1SD,
                       lowerLimit_2SD,
                       upperLimit_2SD])
-
-    # fp.write("******************************************************\n")
-    # fp.write("Stock Name       : {}\n".format(stock))
-    # fp.write("Current Price    : {}\n".format(data.iloc[-1]))
-    # fp.write("Daily Volatility : {}\n".format(standardDeviation))
-    # fp.write("Volatily after {} days: {}\n".format(No_of_days_to_Expire,std_at_expiry))
-    # fp.write("Range for 1SD    : {} - {}\n".format(lowerLimit_1SD,upperLimit_1SD))
-    # fp.write("Range for 2SD    : {} - {}\n".format(lowerLimit_2SD,upperLimit_2SD))
-    # fp.write("******************************************************\n")
 
 if __name__ == "__main__":
 

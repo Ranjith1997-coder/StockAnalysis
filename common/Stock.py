@@ -5,7 +5,6 @@ sys.path.append(os.getcwd())
 import pandas as pd
 import common.constants as constant
 from common.helperFunctions import percentageChange
-import pandas as pd
 import threading
 import  common.shared as shared
 from common.logging_util import logger

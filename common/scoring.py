@@ -256,20 +256,6 @@ def should_notify(analysis: Dict, min_priority: NotificationPriority = Notificat
     return False, score_result
 
 
-def should_notify_legacy(analysis: Dict) -> bool:
-    """
-    Legacy notification check using REQUIRED_TRENDS.
-    Maintained for backward compatibility.
-    
-    Args:
-        analysis: Stock analysis dictionary
-    
-    Returns:
-        True if NoOfTrends >= REQUIRED_TRENDS
-    """
-    return analysis.get("NoOfTrends", 0) >= constants.REQUIRED_TRENDS
-
-
 def format_score_message(stock_symbol: str, score_result: ScoreResult) -> str:
     """
     Format a score-based notification message.

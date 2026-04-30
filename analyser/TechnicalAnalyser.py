@@ -656,13 +656,6 @@ class TechnicalAnalyser(BaseAnalyzer):
             # Check for high volatility
             is_high_volatility = atr_percentage > self.ATR_THRESHOLD
             
-            # Check for price breakout
-            # upper_band = stock.priceData['Close'].rolling(self.ATR_TREND_PERIODS).mean() + (self.ATR_THRESHOLD * atr)
-            # lower_band = stock.priceData['Close'].rolling(self.ATR_TREND_PERIODS).mean() - (self.ATR_THRESHOLD * atr)
-            
-            # is_upward_breakout = all(stock.priceData['Close'].iloc[-self.ATR_TREND_PERIODS:] > upper_band.iloc[-self.ATR_TREND_PERIODS:])
-            # is_downward_breakout = all(stock.priceData['Close'].iloc[-self.ATR_TREND_PERIODS:] < lower_band.iloc[-self.ATR_TREND_PERIODS:])
-            
             # Check for ATR expansion
             is_atr_expanding = all(atr.diff().iloc[-self.ATR_TREND_PERIODS:] > 0)
             
@@ -676,23 +669,6 @@ class TechnicalAnalyser(BaseAnalyzer):
                     breakout="Upward"
                 ))
                 return True
-            
-            # if is_high_volatility  and is_atr_expanding:
-            #     stock.set_analysis("BULLISH", "ATR", ATRAnalysis(
-            #         atr_value=latest_atr,
-            #         atr_percentage=atr_percentage,
-            #         volatility="High",
-            #         breakout="Upward"
-            #     ))
-            #     return True
-            # elif is_high_volatility  and is_atr_expanding:
-            #     stock.set_analysis("BEARISH", "ATR", ATRAnalysis(
-            #         atr_value=latest_atr,
-            #         atr_percentage=atr_percentage,
-            #         volatility="High",
-            #         breakout="Downward"
-            #     ))
-            #     return True
             
             return False
         except Exception as e:
