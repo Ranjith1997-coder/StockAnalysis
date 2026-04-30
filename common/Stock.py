@@ -7,7 +7,6 @@ import common.constants as constant
 from common.helperFunctions import percentageChange
 import pandas as pd
 import threading
-from nse.nse_derivative_data import NSE_DATA_CLASS
 import  common.shared as shared
 from common.logging_util import logger
 import numpy as np
@@ -19,45 +18,6 @@ import requests
 
 
 pd.options.mode.chained_assignment = None
-
-def get_futures_and_options_data_from_nse_intraday(stock):
-        currexpiry = shared.app_ctx.stockExpires[0]
-        nextexpiry = shared.app_ctx.stockExpires[1]
-        try :
-            data = NSE_DATA_CLASS.get_live_futures_and_options_data_intraday(stock.stock_symbol, currexpiry, nextexpiry)
-        except Exception:
-            logger.error("Error while getting the futures and options data")
-            raise Exception()
-        
-        if stock.derivativesData["futuresData"]["currExpiry"] is None:
-            stock.derivativesData["futuresData"]["currExpiry"] = data["futuresData"]["currExpiry"]
-        else:
-            stock.derivativesData["futuresData"]["currExpiry"]  = pd.concat([stock.derivativesData["futuresData"]["currExpiry"], data["futuresData"]["currExpiry"]], ignore_index=True)
-            if len(stock.derivativesData["futuresData"]["currExpiry"]) > Stock.DERIVATIVE_DATA_LENGTH:
-                stock.derivativesData["futuresData"]["currExpiry"] = stock.derivativesData["futuresData"]["currExpiry"].tail(Stock.DERIVATIVE_DATA_LENGTH) 
-        
-        if stock.derivativesData["futuresData"]["nextExpiry"] is None:
-            stock.derivativesData["futuresData"]["nextExpiry"] = data["futuresData"]["nextExpiry"]
-        else:
-            stock.derivativesData["futuresData"]["nextExpiry"]  = pd.concat([stock.derivativesData["futuresData"]["nextExpiry"], data["futuresData"]["nextExpiry"]], ignore_index=True)
-            if len(stock.derivativesData["futuresData"]["nextExpiry"]) > Stock.DERIVATIVE_DATA_LENGTH:
-                stock.derivativesData["futuresData"]["nextExpiry"] = stock.derivativesData["futuresData"]["nextExpiry"].tail(Stock.DERIVATIVE_DATA_LENGTH) 
-        
-        return stock.derivativesData
-
-def get_futures_and_options_data_from_nse_positional(self):
-    currexpiry = shared.app_ctx.stockExpires[0]
-    nextexpiry = shared.app_ctx.stockExpires[1]
-    try :
-        data = NSE_DATA_CLASS.get_future_price_volume_data_positional(self.stock_symbol,"FUTSTK", None, None, '1W', currexpiry, nextexpiry)
-    except Exception:
-        logger.error("Error while getting the futures and options data")
-        raise Exception()
-    
-    self.derivativesData["futuresData"]["currExpiry"] = data["futuresData"]["currExpiry"]
-    self.derivativesData["futuresData"]["nextExpiry"] = data["futuresData"]["nextExpiry"]
-
-    return self.derivativesData
 
 class Stock:
     def __init__(self, stockName : str , stockSymbol : str, yfinanceSymbol = None, is_index = False):

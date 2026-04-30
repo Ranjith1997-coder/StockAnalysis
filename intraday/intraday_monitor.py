@@ -12,7 +12,6 @@ from common.Stock import Stock
 from common.helperFunctions import *
 from enum import Enum
 from time import sleep
-from nse.nse_derivative_data import NSE_DATA_CLASS
 from analyser.Analyser import AnalyserOrchestrator
 from analyser.Futures_Analyser import FuturesAnalyser
 from analyser.VolumeAnalyser import VolumeAnalyser
@@ -182,7 +181,6 @@ thread_pool = None
 orchestrator : AnalyserOrchestrator =  None
 PRODUCTION = False
 SHUTDOWN_SYSTEM = False
-ENABLE_NSE_DERIVATIVES = False
 ENABLE_ZERODHA_DERIVATIVES = False
 ENABLE_ZERODHA_API = False
 ENABLE_TELEGRAM_BOT = False
@@ -445,6 +443,12 @@ def update_zerodha_option_chain(stockName = None, indexName = None):
         current_futures = index_futures[index_futures['expiry'] == expiry_dates[0]]
         _register_option_and_future_tokens(index.stock_symbol, current_options, current_futures, TokenType.INDEX)
 
+        # Populate stockExpires from the first index that has valid expiry dates.
+        # This seeds _get_current_expiry() used by futures tick routing.
+        if not shared.app_ctx.stockExpires and expiry_dates:
+            shared.app_ctx.stockExpires = [str(e) for e in expiry_dates]
+            logger.info(f"stockExpires seeded from {index.stock_symbol}: {shared.app_ctx.stockExpires[:2]}")
+
         logger.info(f"Index {index.stock_symbol} zerodha_ctx updated")
 
     # Log final registry stats
@@ -678,17 +682,6 @@ def fetch_price_data(stock_objs, index_objs, commodity_objs=None, global_indices
                 global_index_data = globalIndicesData[global_index.stockSymbolYFinance]
             update_price_data(global_index, global_index_data)
 
-def fetch_futures_data(stock):
-    try:
-        if shared.app_ctx.mode.name == shared.Mode.POSITIONAL.name:
-            stock.get_futures_and_options_data_from_nse_positional()
-        else:
-            stock.get_futures_and_options_data_from_nse_intraday()
-        logger.debug(f"Futures data fetched successfully for {stock.stockName}")
-    except Exception as e:
-        logger.error(f"Error fetching futures data for {stock.stockName}: {e}")
-
-
 def process_stock(stock: Stock) -> Tuple[MonitorResult, bool, Optional[str]]:
     mode = shared.app_ctx.mode
     min_rows = 3 if mode is not None and mode.name == shared.Mode.INTRADAY.name else 2
@@ -713,34 +706,12 @@ def fetch_and_analyze_stocks() -> List[Tuple[MonitorResult, bool, Optional[str]]
         # Fetch price data for all stocks at once
         price_future = executor.submit(fetch_price_data, stock_objs, index_objs, commodity_objs, global_indices_objs)
 
-        if ENABLE_NSE_DERIVATIVES:
-            # Fetch futures data for each stock in parallel
-            futures_futures = {executor.submit(fetch_futures_data, stock): stock for stock in stock_objs}
-            
-            # Wait for all data fetching to complete
-            concurrent.futures.wait([price_future] + list(futures_futures.keys()))
-            
-            # Check for any errors in price data fetching
-            try:
-                price_future.result()
-            except Exception as exc:
-                logger.error(f"Error fetching price data for stocks: {exc}")
-            
-            # Check for any errors in futures data fetching
-            for future in concurrent.futures.as_completed(futures_futures):
-                stock = futures_futures[future]
-                try:
-                    future.result()
-                except Exception as exc:
-                    logger.error(f"Error fetching futures data for {stock.stockName}: {exc}")
-
-        else:
-            # Wait for price data fetching to complete
-            try:
-                price_future.result()  # This will block until the price data fetching is complete
-            except Exception as exc:
-                logger.error(f"Error fetching price data for stocks: {exc}")
-                return [(MonitorResult.ERROR, False, str(exc))]
+        # Wait for price data fetching to complete
+        try:
+            price_future.result()
+        except Exception as exc:
+            logger.error(f"Error fetching price data for stocks: {exc}")
+            return [(MonitorResult.ERROR, False, str(exc))]
         
         # Monitor and analyze all index
         results = []
@@ -1364,7 +1335,6 @@ def init():
     global orchestrator
     global PRODUCTION
     global SHUTDOWN_SYSTEM
-    global ENABLE_NSE_DERIVATIVES
     global ENABLE_ZERODHA_DERIVATIVES
     global ENABLE_ZERODHA_API
     global ENABLE_TELEGRAM_BOT
@@ -1388,13 +1358,6 @@ def init():
     else:
         logger.info("Shutdown mode disabled")
         SHUTDOWN_SYSTEM = False
-    
-    if os.getenv(constant.ENV_ENABLE_NSE_DERIVATIVES, "0") == "1":
-        logger.info(" Derivative analysis enabled")
-        ENABLE_NSE_DERIVATIVES = True
-    else:
-        logger.info(" Derivative analysis disabled")
-        ENABLE_NSE_DERIVATIVES = False
     
     if os.getenv(constant.ENV_ENABLE_ZERODHA_DERIVATIVES, "0") == "1":
         logger.info("Zerodha Derivative analysis enabled")
@@ -1502,9 +1465,6 @@ def init():
         orchestrator.register(PCRAnalyser())
         orchestrator.register(MaxPainAnalyser())
         orchestrator.register(OIChainAnalyser())
-    if ENABLE_NSE_DERIVATIVES:
-        shared.app_ctx.stockExpires = NSE_DATA_CLASS.expiry_dates_future()        
-    
     if ENABLE_ZERODHA_API:
         logger.info("Zerodha API enabled")
         userName = os.getenv(constant.ENV_ZERODHA_USERNAME)
