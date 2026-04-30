@@ -144,11 +144,13 @@ class PCRAnalyser(BaseAnalyzer):
             logger.error(f"Traceback: {traceback.format_exc()}")
             return False
 
-    @BaseAnalyzer.both
-    @BaseAnalyzer.index_both
+    @BaseAnalyzer.positional
+    @BaseAnalyzer.index_positional
     def analyse_pcr_trend(self, stock: Stock):
         """
-        Analyze PCR trend from historical data.
+        Analyze PCR trend from historical data (positional only).
+        Intraday PCR trend is handled by OIChainAnalyser.analyse_intraday_oi_trend
+        which uses dedicated per-expiry oi_chain_history snapshots.
         Rising PCR: Increasing put interest (Bullish)
         Falling PCR: Increasing call interest (Bearish)
         """

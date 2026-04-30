@@ -390,7 +390,7 @@ def _fmt_max_pain_align(data, trend):
 @MessageFormatter.register("IV_SPIKE")
 def _fmt_iv_spike(data, trend):
     items = data if isinstance(data, list) else [data]
-    return [f"  IV Spike: {d.expiry} <code>{d.iv_change:.2f}%</code>"
+    return [f"  IV Spike: {d.expiry} ATM IV=<code>{d.iv:.1f}%</code> Δ=<code>{d.iv_change:+.2f}%</code>"
             for d in items]
 
 
@@ -398,7 +398,23 @@ def _fmt_iv_spike(data, trend):
 def _fmt_iv_trend(data, trend):
     items = data if isinstance(data, list) else [data]
     return [f"  IV Trend: {d.expiry} <b>{d.trend}</b> "
-            f"<code>{d.iv_change_pct:.2f}%</code>"
+            f"ATM IV=<code>{d.atm_iv:.1f}%</code> Δ=<code>{d.iv_change_pct:+.2f}%</code>"
+            for d in items]
+
+
+@MessageFormatter.register("IV_RANK")
+def _fmt_iv_rank(data, trend):
+    items = data if isinstance(data, list) else [data]
+    return [f"  IV Rank: {d.expiry} IVP=<code>{d.iv_percentile:.0f}</code> "
+            f"ATM IV=<code>{d.atm_iv:.1f}%</code> (<b>{d.category}</b>)"
+            for d in items]
+
+
+@MessageFormatter.register("IV_RANK_EXTREME")
+def _fmt_iv_rank_extreme(data, trend):
+    items = data if isinstance(data, list) else [data]
+    return [f"  IV Rank Extreme: {d.expiry} IVP=<code>{d.iv_percentile:.0f}</code> "
+            f"ATM IV=<code>{d.atm_iv:.1f}%</code> (<b>{d.category}</b>)"
             for d in items]
 
 
