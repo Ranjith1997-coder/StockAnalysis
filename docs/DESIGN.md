@@ -1,6 +1,6 @@
 # StockAnalysis - Comprehensive Design Document
 
-> **Last Updated**: March 2026 (Market Holiday Gatekeeper & Warning System added)
+> **Last Updated**: March 2026 (Observability System, Narrator Flood Control)
 > **Purpose**: Complete architectural reference for the Indian Stock Market Analysis System targeting NSE (National Stock Exchange) equities. This document captures the entire codebase: architecture, data flows, module interactions, signal processing, scoring, notifications, and deployment details.
 
 ---
@@ -27,8 +27,9 @@
 18. [ML Pipeline](#18-ml-pipeline)
 19. [Configuration & Constants](#19-configuration--constants)
 20. [Market Holiday Gatekeeper & Warning System](#20-market-holiday-gatekeeper--warning-system)
-21. [Key Design Patterns](#21-key-design-patterns)
-22. [Data Flow Diagrams](#22-data-flow-diagrams)
+21. [Observability System](#21-observability-system)
+22. [Key Design Patterns](#22-key-design-patterns)
+23. [Data Flow Diagrams](#23-data-flow-diagrams)
 
 ---
 
@@ -626,6 +627,16 @@ with ThreadPoolExecutor(max_workers=N) as executor:
 - Ticks update `stock.ltp` and derivatives context
 - Optional Telegram bot listener runs in a separate thread
 
+#### Observability — 3-Layer System
+
+Three lightweight reliability layers are injected at module load time (before any class definitions) and inside the intraday loop. See [Section 21](#21-observability-system) for full detail.
+
+| Layer | Function | Trigger |
+|-------|----------|---------|
+| 1 — Crash Handler | `_crash_handler()` + `sys.excepthook` | Any uncaught exception |
+| 2 — Heartbeat | `_ping_healthcheck()` | End of every `intraday_analysis()` loop iteration |
+| 3 — Zombie Watchdog | `check_data_freshness(stock)` | Per-stock inside loop, gated by `ENABLE_LIVE_OPTIONS` |
+
 ---
 
 ## 10. Pre-Market Reports
@@ -1006,8 +1017,9 @@ create_stock_and_index_objects()  [downloads period="1y" daily data]
     v
 compute_morning_bias()
     |-- Temporarily sets mode = POSITIONAL
+    |-- orchestrator.reset_all_constants()   [sets POSITIONAL-mode thresholds on all analysers]
     |-- Runs all positional analysers on each stock/index
-    |-- Emits positional signals to SignalBus
+    |-- Emits positional signals to SignalBus (score-gated: score >= MIN_NOTIFICATION_SCORE)
     |-- Restores mode = INTRADAY
     |
     v
@@ -1016,13 +1028,19 @@ Intraday loop begins (positional signals remain in correlator buffer for 6 hours
 
 Morning bias is skipped in POSITIONAL mode (EOD analysis already runs positional analysers).
 
+**Why `reset_all_constants()` is required:** Several analysers (e.g. `IVAnalyser`) define mode-dependent class attributes (`IV_TREND_CONTINUATION_DAYS`, `IV_TREND_PERCENTAGE_CHANGE`) only inside `reset_constants()`. Without calling it before analysis, those attributes do not exist on the class and any analyser method that references them raises `AttributeError`. The normal intraday loop calls `reset_all_constants()` before each cycle; morning bias must do the same after switching mode to POSITIONAL.
+
 #### Signal Emission Points
 
-| Layer | Source | When |
-|-------|--------|------|
-| POSITIONAL | `intraday_monitor.compute_morning_bias()` | Once at startup |
-| INTRADAY | `intraday_monitor.process_stock()` | Every 5-min cycle, per stock |
-| LIVE | `LiveOptionsEngine.on_option_tick()` | Per tick (via LiveOI/LiveStraddle analysers) |
+| Layer | Source | When | Score Gate |
+|-------|--------|------|------------|
+| POSITIONAL | `intraday_monitor.compute_morning_bias()` | Once at startup | `score >= MIN_NOTIFICATION_SCORE (75)` |
+| INTRADAY | `AnalyserOrchestrator.run_all_intraday()` | Every 5-min cycle, per stock | `score >= MIN_NOTIFICATION_SCORE (75)` |
+| LIVE | `LiveOptionsEngine.on_option_tick()` | Per tick (via LiveOI/LiveStraddle analysers) | None — always emitted |
+
+**Score gate rationale:** All 8 analysers for a stock run sequentially to completion on the same candle. `_emit_signals()` is only called if `score_result.total_score >= 75`. Stocks that fire only 1-2 weak indicators never reach the correlator. LIVE signals bypass the gate because they originate from per-tick WebSocket data and have no batch score context — latency is the priority.
+
+**Emission is already effectively batched for INTRADAY/POSITIONAL:** all analysers finish before `_emit_signals()` is called, so there is no intra-cycle race condition between individual indicators (RSI vs MACD etc.). The "race condition" concern only applies to LIVE signals, which are genuinely independent per-tick.
 
 ### Phase 2: Market Narrative Generator (`ENABLE_NARRATOR=1`)
 
@@ -1076,6 +1094,26 @@ System prompt focuses on:
 - VIX-aware strategy (VIX > 18: sell premium, VIX < 13: buy OTM)
 - Time decay awareness (avoid new positions < 60 min to close)
 - Response capped at 200 words
+
+**Flood Control (anti-flooding guards added March 2026):**
+
+Before routing a confluence to `narrate_async()`, two gates are applied:
+
+1. **Level gate** (in `_handle_confluence`, `intraday_monitor.py`): Only `HIGH` confluences (3+ layers aligned) trigger the narrator. `MODERATE` confluences (2 layers) still send the raw alert but skip the LLM call. This eliminates ~90% of morning-open LLM calls.
+
+2. **Per-symbol cooldown** (`MarketNarrator.NARRATE_SYMBOL_COOLDOWN = 1800`): The same symbol cannot be narrated more than once per 30 minutes, regardless of direction. Cooldown is tracked in `_last_narrated: dict[str, float]` (symbol → epoch). Skipped calls are logged at DEBUG level with remaining cooldown seconds.
+
+```python
+# Guard in _handle_confluence (intraday_monitor.py)
+if shared.app_ctx.narrator and confluence.level == "HIGH":
+    shared.app_ctx.narrator.narrate_async(confluence)
+
+# Guard in narrate_async (narrator.py)
+now = time.time()
+if now - self._last_narrated.get(symbol, 0) < NARRATE_SYMBOL_COOLDOWN:
+    return  # skip — logged at DEBUG
+self._last_narrated[symbol] = now
+```
 
 **2. Positional EOD Briefing** (`narrate_positional(report_data)`)
 - Called after all positional analysis completes (~4 PM)
@@ -1144,6 +1182,7 @@ RISKS & CONTRADICTIONS:  [mixed signals, key levels, event risk]
 | `ENABLE_INTELLIGENCE` | `0` | Toggle SignalBus + Correlator + morning bias |
 | `ENABLE_NARRATOR` | `0` | Toggle LLM narratives (requires `GEMINI_API_KEY`) |
 | `GEMINI_API_KEY` | (empty) | Google AI Studio API key for Gemini Flash |
+| `HEALTHCHECK_URL` | (empty) | Dead-man's switch ping URL (e.g., healthchecks.io). If set, pinged at end of every analysis cycle. Unset = no-op. |
 
 Both features are fully opt-in. When disabled, the system operates exactly as before.
 
@@ -1431,7 +1470,115 @@ prepended to the morning global-cues Telegram message:
 
 ---
 
-## 21. Key Design Patterns
+## 21. Observability System
+
+### Overview
+
+Three lightweight reliability layers are injected into `intraday/intraday_monitor.py`. All layers are **fail-silent** — they never raise exceptions or disrupt the trading loop. Designed for an AWS t2.micro instance (1 GB RAM) where silent failures are common.
+
+---
+
+### Layer 1 — Global Exception Catcher
+
+**Function:** `_crash_handler(exc_type, exc_value, exc_tb)`  
+**Activation:** `sys.excepthook = _crash_handler` at module load time
+
+Intercepts every uncaught exception before the process dies and fires a Telegram alert with the formatted traceback:
+
+```python
+def _crash_handler(exc_type, exc_value, exc_tb):
+    if issubclass(exc_type, KeyboardInterrupt):
+        sys.__excepthook__(...)   # pass-through — don't trap Ctrl-C
+        return
+    tb_text  = "".join(traceback.format_exception(...))
+    tb_text  = truncate(tb_text, 3500)          # fits Telegram 4096-char limit
+    exc_summary = truncate(str(exc_value), 200)
+    # html.escape() both fields — prevents Telegram 400 errors from
+    # repr strings like <urllib3.HTTPSConnection object at 0x...>
+    message = f"🚨 FATAL CRASH ... <pre>{html.escape(tb_text)}</pre>"
+    TELEGRAM_NOTIFICATIONS.send_notification(message, parse_mode="HTML")
+```
+
+**Key properties:**
+- `html.escape()` applied to both `exc_summary` and `tb_text` — prevents Telegram HTTP 400 (`Bad Request: can't parse entities: Unsupported start tag`) when tracebacks contain angle-bracket repr strings (e.g., `<urllib3.connection.HTTPSConnection object at 0x7f...>`)
+- `KeyboardInterrupt` is forwarded to `sys.__excepthook__` so `Ctrl+C` behaves normally
+- Entire body wrapped in `try/except` — will never itself raise
+- Logs at `CRITICAL` level regardless of Telegram success
+
+---
+
+### Layer 2 — Heartbeat (Dead-Man's Switch)
+
+**Function:** `_ping_healthcheck()`  
+**Activation:** Called at the **bottom of every `intraday_analysis()` loop iteration**, after all analysis and before `sleep()`
+
+Pings an external heartbeat service to confirm the process is alive:
+
+```python
+def _ping_healthcheck():
+    url = os.getenv("HEALTHCHECK_URL")
+    if not url:
+        return           # no-op if env var not set
+    try:
+        import requests  # local import — keeps module-level imports clean
+        requests.get(url, timeout=5)
+    except Exception:
+        logger.debug("Healthcheck ping failed (non-fatal)")
+```
+
+**Setup:** Create a free check at [healthchecks.io](https://healthchecks.io) and set `HEALTHCHECK_URL` in `.env`. If the ping is not received within the configured period (e.g., 15 minutes), healthchecks.io sends an alert via email / Telegram / Slack.
+
+**Key properties:**
+- Completely optional — unset `HEALTHCHECK_URL` and the function is a no-op
+- `requests` is imported locally to avoid adding it to module-level scope
+- Any exception (Timeout, ConnectionError, etc.) is silently swallowed
+
+---
+
+### Layer 3 — Zombie Data Watchdog
+
+**Function:** `check_data_freshness(stock, stale_threshold_sec=120)`  
+**Activation:** Called per-index-object inside `intraday_analysis()` loop, gated by `ENABLE_LIVE_OPTIONS`
+
+Detects silently-stalled WebSocket feeds — a common failure mode where the WebSocket connection appears open but stops delivering ticks:
+
+```python
+_stale_alerts_sent = set()   # per-session dedup: never re-alert same symbol
+
+def check_data_freshness(stock, stale_threshold_sec=120):
+    # Gate 1: only during market hours (09:15–15:30)
+    # Gate 2: only on trading days (via market_calendar, fail-open)
+    # Gate 3: options_aggregate must exist and have last_updated
+    age = now.timestamp() - last_updated   # supports epoch float OR datetime
+    if age > stale_threshold_sec:
+        if symbol not in _stale_alerts_sent:
+            _stale_alerts_sent.add(symbol)
+            TELEGRAM_NOTIFICATIONS.send_notification("⚠️ STALE DATA...", ...)
+    return age <= stale_threshold_sec
+```
+
+**Key properties:**
+- All three gates must pass before any staleness check occurs
+- **One-time alert per symbol per session** — `_stale_alerts_sent` set prevents repeated flooding when data stays stale
+- Supports both `int/float` epoch timestamps and `datetime`-like objects (duck-typed via `hasattr(x, "timestamp")`)
+- Fail-open on `is_trading_day()` import errors — assumes trading day so real stale data is never silently missed
+- Returns `True` (fresh / skipped) or `False` (stale, alert sent)
+
+---
+
+### Test Coverage
+
+`tests/test_observability.py` — **22 tests, 0 network calls**
+
+| Class | Count | What's tested |
+|-------|-------|---------------|
+| `TestCrashHandler` | 7 | Telegram alert sent, `parse_mode="HTML"`, `KeyboardInterrupt` bypass, long traceback truncation, Telegram failure survival, `sys.excepthook` installed, angle-bracket HTML escaping (`&lt;urllib3`) |
+| `TestHeartbeat` | 5 | Pings when URL set, no-op when unset, suppresses `Timeout` / `ConnectionError` / generic exceptions |
+| `TestZombieDataWatchdog` | 10 | Fresh data, stale alert+dedup, different symbols both alert, outside market hours, holiday skip, no `options_aggregate`, no `last_updated`, custom threshold, `datetime`-typed `last_updated` |
+
+---
+
+## 22. Key Design Patterns
 
 ### 1. Decorator-Based Method Registration
 Analyzers use decorators (`@intraday`, `@both`, `@index_both`) to self-register methods. The orchestrator discovers them automatically at init time. This makes adding new analysis methods trivial - just decorate and implement.
@@ -1469,12 +1616,22 @@ Instead of subscribing all 514 NIFTY option tokens, only 94 tokens in 3 zones ar
 ### 12. Cross-Layer Signal Correlation (Intelligence)
 The `SignalBus` + `SignalCorrelator` pattern decouples signal producers (analysers) from consumers (correlator, narrator). Analysers emit standardized `Signal` objects without knowing what will consume them. The correlator buffers signals with per-layer time windows and detects alignment across 2+ layers as a `Confluence`. This pub/sub design makes it trivial to add new signal sources or consumers.
 
+**Score-gated emission (INTRADAY/POSITIONAL only):** `_emit_signals()` is only called when `score_result.total_score >= MIN_NOTIFICATION_SCORE (75)`. This ensures the correlator only receives signals from stocks with genuine multi-indicator conviction — the same bar used for Telegram alerts. Stocks that fire only 1-2 weak indicators are silently dropped at the bus boundary. LIVE layer signals bypass this gate since they have no batch score context and require minimum latency.
+
+**Hybrid emission model:** INTRADAY and POSITIONAL signals are effectively batched — all analysers run sequentially to completion before `_emit_signals()` fires, eliminating intra-cycle race conditions. LIVE signals are streamed individually per tick, where latency is the priority. The correlator's time-window design naturally reconciles these two regimes.
+
 ### 13. Background Narrative Generation (Intelligence)
 `MarketNarrator` uses a single-worker `ThreadPoolExecutor` to run LLM calls off the hot path. The raw alert fires instantly via Telegram; the LLM-generated narrative follows 1-3 seconds later without blocking the analysis pipeline. This pattern ensures the core system latency is unaffected by LLM response time.
 
+### 14. Dual-Gate Flood Control (Narrator)
+The narrator uses two independent guards before queuing an LLM call: a **level gate** (`level == "HIGH"`) in `_handle_confluence` and a **per-symbol cooldown** in `narrate_async`. Separating the gates at different call sites means each can be tuned or disabled independently without touching the other. See [Section 21](#21-observability-system) for implementation details.
+
+### 15. Fail-Silent Observability Helpers
+`_crash_handler`, `_ping_healthcheck`, and `check_data_freshness` are designed on the principle that observability code must **never** affect the system it observes. All three catch all exceptions internally and log at DEBUG/WARNING rather than propagating. This "fail-silent" pattern is enforced in tests by injecting `side_effect=Exception` into Telegram/requests mocks and asserting that the production call still returns normally.
+
 ---
 
-## 22. Data Flow Diagrams
+## 23. Data Flow Diagrams
 
 ### Intraday Analysis Flow
 

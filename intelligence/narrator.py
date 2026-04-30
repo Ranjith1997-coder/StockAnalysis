@@ -20,55 +20,59 @@ from common.logging_util import logger
 import common.shared as shared
 
 
-SYSTEM_PROMPT = """You are a senior Indian stock market options analyst.
-You trade NIFTY and BANKNIFTY weekly options on NSE.
-You receive confluence signals from a multi-layer automated analysis system that monitors:
-- POSITIONAL layer: daily indicators (RSI, MACD, EMA crossovers, candlestick patterns)
-- INTRADAY layer: 5-minute cycle indicators (same as above but on intraday data)
-- LIVE layer: per-tick options data (PCR crossover, OI wall breach, IV skew flip, straddle decay)
+# Tradable index symbols that route to the options desk
+_INDEX_SYMBOLS = {"NIFTY 50", "NIFTY BANK", "FINNIFTY", "NIFTY", "BANKNIFTY"}
 
-When signals from multiple layers align in the same direction, it's called a confluence.
-Your job is to interpret the confluence and provide a concise, actionable trade thesis.
+# ── Options Desk (Index confluences) ──────────────────────────────────────────
+_INDEX_SYSTEM_PROMPT = (
+    "You are an institutional derivatives trader for the Indian Stock Market. "
+    "Your focus is strictly on NIFTY and BANKNIFTY weekly options."
+)
 
-Rules:
-- Be specific: recommend exact strike prices, entry ranges, stop losses
-- Weekly options only — use the nearest weekly expiry
-- Consider time decay: if less than 60 minutes to close, avoid new positions
-- If VIX is above 18, prefer selling strategies (short straddle/strangle)
-- If VIX is below 13, prefer buying strategies (directional CE/PE)
-- Always mention what would invalidate the trade
-- Keep the response under 200 words
-- Do not use markdown formatting — use plain text with line breaks"""
+_INDEX_PROMPT_TEMPLATE = """A HIGH confluence signal has fired for {symbol}.
 
-
-PROMPT_TEMPLATE = """## Confluence Detected
-Symbol: {symbol}
+## Confluence
 Direction: {direction} ({level} conviction, score {score:.0f})
-Has contradicting signals: {contradiction}
-
-## Signals ({signal_count} total)
+Signals ({signal_count} total):
 {signals_block}
+Contradicting signals: {contradiction}
 
 ## Market Snapshot
 {context_block}
 
-## Respond with this structure:
+TASK: Based on the OI walls, PCR, and Straddle premium, recommend a specific weekly options strategy.
+RULES:
+- Respect the VIX regime (if VIX is low, prefer buying; if high, prefer credit spreads)
+- Anchor your Strike selection to the nearest OI Wall
+- Provide a clear Strike, Entry Zone, Stop Loss, and Target
+- Keep the response under 150 words
+- Do not use markdown formatting — plain text with line breaks"""
 
-SIGNAL ANALYSIS:
-[1 line per signal — what it means in plain language]
+# ── Delta-One Desk (Equity confluences) ───────────────────────────────────────
+_EQUITY_SYSTEM_PROMPT = (
+    "You are an institutional equity and futures swing trader for the Indian Stock Market. "
+    "You specialize in price action, volume breakouts, and pure delta-one trading. "
+    "You do NOT trade stock options due to liquidity constraints."
+)
 
-MARKET CONTEXT:
-[2-3 lines on current conditions relevant to the trade]
+_EQUITY_PROMPT_TEMPLATE = """A HIGH confluence signal has fired for {symbol}.
 
-TRADE IDEA:
-Action: [BUY CE / BUY PE / SELL STRADDLE / AVOID]
-Strike: [specific strike price]
-Entry: [price range]
-Target: [price range with spot level]
-Stop loss: [price range with spot level]
-Invalidation: [what negates this setup]
+## Confluence
+Direction: {direction} ({level} conviction, score {score:.0f})
+Signals ({signal_count} total):
+{signals_block}
+Contradicting signals: {contradiction}
 
-CONFIDENCE: [1-10] — [one line reasoning]"""
+## Market Snapshot
+{context_block}
+
+TASK: Based on the technical momentum and available context, recommend a pure Equity/Futures trade setup.
+RULES:
+- Strictly DO NOT recommend stock options — recommend Cash (delivery/intraday) or Futures execution
+- Provide a clear Entry Zone, Stop Loss, and Target based on support/resistance logic
+- Detail the immediate invalidation condition for this trade
+- Keep the response under 150 words
+- Do not use markdown formatting — plain text with line breaks"""
 
 
 POSITIONAL_SYSTEM_PROMPT = """You are a senior Indian stock market options analyst providing an end-of-day briefing.
@@ -171,9 +175,9 @@ class MarketNarrator:
         """Submit narrative generation to background thread. Non-blocking.
 
         Guards:
-        - Only HIGH confluences should reach here (gated in _handle_confluence).
-        - Per-symbol cooldown: same symbol is not narrated more than once per
-          NARRATE_SYMBOL_COOLDOWN seconds, regardless of direction.
+        1. Per-symbol cooldown (NARRATE_SYMBOL_COOLDOWN).
+        2. Time-decay gate: skips if < 60 min to market close.
+        3. Asset class router: index → options desk prompt, equity → delta-one prompt.
         """
         now = time.time()
         last = self._last_narrated.get(confluence.symbol, 0.0)
@@ -184,15 +188,38 @@ class MarketNarrator:
                 f"({remaining}s remaining)"
             )
             return
-        self._last_narrated[confluence.symbol] = now
-        self._executor.submit(self._narrate, confluence)
 
-    def _narrate(self, confluence: Confluence):
-        """Build prompt, call LLM, send result to Telegram."""
-        try:
+        # Asset class router — determines context depth and prompt
+        is_index = confluence.symbol.upper() in _INDEX_SYMBOLS
+        if is_index:
+            ctx = self._ctx.build_index(confluence.symbol)
+            system_prompt = _INDEX_SYSTEM_PROMPT
+            template = _INDEX_PROMPT_TEMPLATE
+            desk = "options"
+        else:
             ctx = self._ctx.build(confluence.symbol)
-            prompt = self._build_prompt(confluence, ctx)
-            response = self._llm.generate(SYSTEM_PROMPT, prompt)
+            system_prompt = _EQUITY_SYSTEM_PROMPT
+            template = _EQUITY_PROMPT_TEMPLATE
+            desk = "equity"
+
+        if ctx.minutes_to_close is not None and ctx.minutes_to_close < 60:
+            logger.info(
+                f"[Narrator] Skipping {confluence.symbol} — "
+                f"{ctx.minutes_to_close}m to close (< 60m gate)"
+            )
+            return
+
+        logger.debug(f"[Narrator] Routing {confluence.symbol} → {desk} desk")
+
+        self._last_narrated[confluence.symbol] = now
+        self._executor.submit(self._narrate, confluence, ctx, system_prompt, template)
+
+    def _narrate(self, confluence: Confluence, ctx: MarketContext,
+                 system_prompt: str, template: str):
+        """Call LLM with routed prompts and send result to Telegram."""
+        try:
+            prompt = self._build_prompt(confluence, ctx, template)
+            response = self._llm.generate(system_prompt, prompt)
 
             if not response:
                 logger.debug(f"[Narrator] No response for {confluence.symbol} confluence")
@@ -206,7 +233,8 @@ class MarketNarrator:
         except Exception as e:
             logger.error(f"[Narrator] Failed to generate narrative: {e}")
 
-    def _build_prompt(self, confluence: Confluence, ctx: MarketContext) -> str:
+    def _build_prompt(self, confluence: Confluence, ctx: MarketContext,
+                      template: str) -> str:
         signals_lines = []
         for s in sorted(confluence.signals, key=lambda s: s.timestamp):
             age = f"{s.age_seconds:.0f}s ago" if s.age_seconds < 120 else f"{s.age_seconds / 60:.0f}m ago"
@@ -215,7 +243,7 @@ class MarketNarrator:
                 f"({s.strength.name}, {age})"
             )
 
-        return PROMPT_TEMPLATE.format(
+        return template.format(
             symbol=confluence.symbol,
             direction=confluence.direction.value,
             level=confluence.level,
