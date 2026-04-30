@@ -1144,6 +1144,7 @@ def compute_morning_bias():
 
     # Temporarily switch to POSITIONAL so analysers apply daily-data thresholds
     shared.app_ctx.mode = shared.Mode.POSITIONAL
+    orchestrator.reset_all_constants()
     signals_emitted = []
 
     try:
@@ -1186,7 +1187,9 @@ def compute_morning_bias():
         # Always restore INTRADAY mode
         shared.app_ctx.mode = shared.Mode.INTRADAY
 
-    logger.info(f"Morning bias computed: {len(signals_emitted)} positional signals emitted")
+    for sig in signals_emitted:
+        bus.emit(sig)
+    logger.info(f"Morning bias computed: {len(signals_emitted)} positional signals emitted to SignalBus")
 
 
 def live_options_analysis():
