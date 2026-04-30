@@ -144,7 +144,10 @@ class AnalyserOrchestrator:
             should_send, score_result = should_notify(stock.analysis, min_priority)
             stock.analysis["ScoreResult"] = score_result
             logger.debug(f"Score for {stock.stock_symbol}: {score_result.total_score} ({score_result.priority.value})")
-            self._emit_signals(stock, Layer.INTRADAY)
+            if score_result.total_score >= constant.MIN_NOTIFICATION_SCORE:
+                self._emit_signals(stock, Layer.INTRADAY)
+            else:
+                logger.debug(f"[SignalBus] Skipping intraday emit for {stock.stock_symbol} — score {score_result.total_score} < {constant.MIN_NOTIFICATION_SCORE}")
             return should_send, score_result
         else:
             # Legacy behavior
@@ -176,7 +179,10 @@ class AnalyserOrchestrator:
             should_send, score_result = should_notify(stock.analysis, min_priority)
             stock.analysis["ScoreResult"] = score_result
             logger.debug(f"Score for {stock.stock_symbol}: {score_result.total_score} ({score_result.priority.value})")
-            self._emit_signals(stock, Layer.POSITIONAL)
+            if score_result.total_score >= constant.MIN_NOTIFICATION_SCORE:
+                self._emit_signals(stock, Layer.POSITIONAL)
+            else:
+                logger.debug(f"[SignalBus] Skipping positional emit for {stock.stock_symbol} — score {score_result.total_score} < {constant.MIN_NOTIFICATION_SCORE}")
             return should_send, score_result
         else:
             # Legacy behavior
