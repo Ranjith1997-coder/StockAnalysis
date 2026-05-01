@@ -40,6 +40,8 @@ from intelligence.signal_bus import SignalBus
 from intelligence.correlator import SignalCorrelator, Confluence
 from intelligence.signal import Signal, Direction, Layer, SignalStrength, weight_to_strength
 from zerodha.live_stock_engine import LiveStockEngine
+from zerodha.futures_fetcher import FuturesFetcher
+from fno.sensibull_fetcher import SensibullFetcher
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -221,24 +223,25 @@ def monitor(stock: Stock) -> Tuple[MonitorResult, bool, Optional[str]]:
         if ENABLE_ZERODHA_DERIVATIVES:
             try:
                 # Fetch futures data only (ATM IV now sourced from Sensibull)
-                stock.get_futures_data_for_stock(mode=analysis_type)
+                FuturesFetcher(shared.app_ctx.zd_kc).fetch(stock, mode=analysis_type)
                 logger.debug(f"Zerodha futures data fetched successfully for {stock.stockName}")
             except Exception as e:
                 logger.error(f"Error fetching zerodha futures data for {stock.stockName}: {e}")
         else:
             logger.debug("Zerodha derivatives data not enabled for {stock.stockName}")
-        
+
+        _sensibull = SensibullFetcher()
         # Fetch Sensibull data (for stocks and indices, except VIX)
         if not stock.is_index or stock.stock_symbol != "INDIA_VIX":
             try:
-                stock.fetch_sensibull_data(mode=analysis_type)
+                _sensibull.fetch_data(stock, mode=analysis_type)
                 logger.debug(f"Sensibull data fetched successfully for {stock.stockName}")
             except Exception as e:
                 logger.error(f"Error fetching Sensibull data for {stock.stockName}: {e}")
-            
+
             # Fetch Sensibull OI chain data (per-strike OI analysis)
             try:
-                stock.fetch_sensibull_oi_chain(mode=analysis_type)
+                _sensibull.fetch_oi_chain(stock, mode=analysis_type)
                 logger.debug(f"Sensibull OI chain data fetched successfully for {stock.stockName}")
             except Exception as e:
                 logger.error(f"Error fetching Sensibull OI chain data for {stock.stockName}: {e}")
