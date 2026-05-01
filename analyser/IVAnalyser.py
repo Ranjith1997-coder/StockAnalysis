@@ -16,9 +16,21 @@ class IVAnalyser(BaseAnalyzer):
         if shared.app_ctx.mode.name == shared.Mode.INTRADAY.name:
             IVAnalyser.IV_PERCENTAGE_CHANGE = 5
             IVAnalyser.IV_TREND_PERCENTAGE_CHANGE = 8
+            # IV vs HV — intraday realized vol is noisier, raise the bar slightly
+            IVAnalyser.IV_HV_ELEVATED_RATIO   = 1.3
+            IVAnalyser.IV_HV_EXPENSIVE_RATIO  = 1.6
+            IVAnalyser.IV_HV_EXTREME_RATIO    = 2.0
+            IVAnalyser.IV_HV_MIN_BARS         = 50   # min 5-min bars for reliable std
+            IVAnalyser.IV_HV_PERIOD_BARS      = 50   # how many bars to use for HV window
         else:
             IVAnalyser.IV_PERCENTAGE_CHANGE = 20
             IVAnalyser.IV_TREND_PERCENTAGE_CHANGE = 20
+            # IV vs HV — positional uses 20-day daily HV
+            IVAnalyser.IV_HV_ELEVATED_RATIO   = 1.2
+            IVAnalyser.IV_HV_EXPENSIVE_RATIO  = 1.5
+            IVAnalyser.IV_HV_EXTREME_RATIO    = 2.0
+            IVAnalyser.IV_HV_MIN_BARS         = 21   # min daily closes
+            IVAnalyser.IV_HV_PERIOD_BARS      = 20   # 20-day HV window
 
         logger.debug(f"IVAnalyser constants reset for mode {shared.app_ctx.mode.name}")
         logger.debug(f"IV_PERCENTAGE_CHANGE = {IVAnalyser.IV_PERCENTAGE_CHANGE}")
@@ -254,6 +266,142 @@ class IVAnalyser(BaseAnalyzer):
             return res
         except Exception as e:
             logger.error(f"Error in analyse_iv_rank for stock {stock.stock_symbol}: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            return False
+
+    @BaseAnalyzer.both
+    @BaseAnalyzer.index_both
+    def analyse_iv_vs_hv(self, stock: Stock):
+        """
+        Compares ATM IV (from Sensibull) against Historical Volatility (HV) computed
+        from priceData to detect when options premium is expensive or cheap.
+
+        This is the core "should I sell?" gate for options sellers.
+
+        Methodology:
+            Positional : HV = std(log_returns_daily, 20-day window) × √252 × 100
+            Intraday   : HV = std(log_returns_5m, last N bars) × √(252 × 75) × 100
+                         (75 = 5-min bars per NSE session: 9:15–15:30 = 375 min / 5)
+
+        Both produce annualized volatility in % — directly comparable to atm_iv.
+
+        IV Premium zones:
+            ratio < 0.8                 → CHEAP    (buyers' edge, do not sell)
+            0.8 ≤ ratio < elevated_ratio → FAIR     (no edge, skip)
+            elevated ≤ ratio < expensive → ELEVATED (mild edge, monitor)
+            expensive ≤ ratio < extreme  → EXPENSIVE (good sell setup, emit signal)
+            ratio ≥ extreme              → EXTREME   (strong sell setup, emit signal)
+
+        Only EXPENSIVE and EXTREME zones emit IV_PREMIUM into stock.analysis (NEUTRAL).
+        FAIR and below are logged only — no signal noise.
+        """
+        try:
+            logger.debug(f"Inside analyse_iv_vs_hv for {stock.stock_symbol}")
+            import numpy as np
+
+            # ── 1. Get ATM IV from Sensibull nearest expiry ───────────────────
+            per_expiry = (
+                stock.sensibull_ctx.get("current", {})
+                .get("stats", {})
+                .get("per_expiry_map", {})
+            )
+            if not per_expiry:
+                logger.debug(f"No Sensibull per_expiry_map for {stock.stock_symbol}, skipping IV vs HV")
+                return False
+
+            nearest_expiry = sorted(per_expiry.keys())[0]
+            atm_iv = per_expiry[nearest_expiry].get("atm_iv")
+            if atm_iv is None or atm_iv <= 0:
+                logger.debug(f"atm_iv missing or zero for {stock.stock_symbol} expiry {nearest_expiry}")
+                return False
+
+            # ── 2. Compute HV from priceData ──────────────────────────────────
+            price_data = stock.priceData
+            if price_data is None or price_data.empty:
+                logger.debug(f"No priceData for {stock.stock_symbol}, skipping IV vs HV")
+                return False
+
+            closes = price_data["Close"].dropna()
+            if len(closes) < IVAnalyser.IV_HV_MIN_BARS + 1:
+                logger.debug(
+                    f"Insufficient price data for {stock.stock_symbol}: "
+                    f"{len(closes)} rows, need {IVAnalyser.IV_HV_MIN_BARS + 1}"
+                )
+                return False
+
+            is_intraday = shared.app_ctx.mode.name == shared.Mode.INTRADAY.name
+
+            # Use the configured window (last N bars)
+            window_closes = closes.iloc[-(IVAnalyser.IV_HV_PERIOD_BARS + 1):]
+            log_returns = np.log(window_closes / window_closes.shift(1)).dropna()
+
+            if len(log_returns) < 2:
+                logger.debug(f"Not enough log returns for HV computation: {stock.stock_symbol}")
+                return False
+
+            std_returns = float(log_returns.std())
+            if std_returns == 0:
+                logger.warning(f"HV std is zero for {stock.stock_symbol} — flat price data, skipping")
+                return False
+
+            if is_intraday:
+                # 75 = number of 5-min bars per NSE trading session (375 min / 5)
+                bars_per_year = 252 * 75
+                hv_period_label = f"{IVAnalyser.IV_HV_PERIOD_BARS}×5m"
+            else:
+                bars_per_year = 252
+                hv_period_label = f"{IVAnalyser.IV_HV_PERIOD_BARS}d"
+
+            hv = std_returns * (bars_per_year ** 0.5) * 100  # annualized HV in %
+
+            # ── 3. Compute ratio and zone ─────────────────────────────────────
+            iv_hv_ratio   = atm_iv / hv
+            iv_premium_pct = (atm_iv - hv) / hv * 100
+
+            if iv_hv_ratio >= IVAnalyser.IV_HV_EXTREME_RATIO:
+                zone = "EXTREME"
+            elif iv_hv_ratio >= IVAnalyser.IV_HV_EXPENSIVE_RATIO:
+                zone = "EXPENSIVE"
+            elif iv_hv_ratio >= IVAnalyser.IV_HV_ELEVATED_RATIO:
+                zone = "ELEVATED"
+            elif iv_hv_ratio >= 0.8:
+                zone = "FAIR"
+            else:
+                zone = "CHEAP"
+
+            logger.info(
+                f"IV vs HV for {stock.stock_symbol} [{nearest_expiry}]: "
+                f"ATM IV={atm_iv:.1f}% HV={hv:.1f}% ratio={iv_hv_ratio:.2f} zone={zone}"
+            )
+
+            # ── 4. Only emit signal for EXPENSIVE or EXTREME ──────────────────
+            if zone not in ("EXPENSIVE", "EXTREME"):
+                return False
+
+            signal_str = (
+                f"ATM IV={atm_iv:.1f}% is {iv_premium_pct:+.1f}% above HV={hv:.1f}% "
+                f"({zone}) — options overpriced, seller has edge"
+            )
+
+            IV_PREMIUM = namedtuple("IV_PREMIUM", [
+                "hv", "atm_iv", "iv_hv_ratio", "iv_premium_pct",
+                "zone", "expiry", "hv_period", "signal"
+            ])
+            stock.set_analysis("NEUTRAL", "IV_PREMIUM", IV_PREMIUM(
+                hv=round(hv, 2),
+                atm_iv=atm_iv,
+                iv_hv_ratio=round(iv_hv_ratio, 2),
+                iv_premium_pct=round(iv_premium_pct, 1),
+                zone=zone,
+                expiry=nearest_expiry,
+                hv_period=hv_period_label,
+                signal=signal_str,
+            ))
+            logger.info(f"IV_PREMIUM emitted for {stock.stock_symbol}: {signal_str}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error in analyse_iv_vs_hv for {stock.stock_symbol}: {str(e)}")
             logger.error(f"Traceback: {traceback.format_exc()}")
             return False
 

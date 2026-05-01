@@ -1,0 +1,18 @@
+# Dev / test requirements — install on developer laptops and CI
+#
+# Includes all production dependencies plus testing and code-quality tools.
+#
+# Usage:
+#   pip install -r requirements-dev.txt
+#   make install-dev
+
+-r requirements.txt
+
+# Testing
+pytest
+pytest-asyncio
+pytest-cov
+
+# Code quality
+ruff
+pyright
