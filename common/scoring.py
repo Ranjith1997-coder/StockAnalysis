@@ -37,6 +37,9 @@ class ScoreResult:
 def get_analysis_weight(analysis_type: str) -> int:
     """
     Get the weight for a given analysis type.
+
+    Lookup is case-insensitive: "volume", "VOLUME", and "Volume" all resolve
+    to the same entry. Falls back to the DEFAULT weight if not found.
     
     Args:
         analysis_type: The type of analysis (e.g., 'RSI', 'MACD', 'MAX_PAIN')
@@ -44,8 +47,9 @@ def get_analysis_weight(analysis_type: str) -> int:
     Returns:
         Weight value for the analysis type
     """
+    normalised = analysis_type.upper()
     return constants.ANALYSIS_WEIGHTS.get(
-        analysis_type, 
+        normalised,
         constants.ANALYSIS_WEIGHTS.get("DEFAULT", 10)
     )
 

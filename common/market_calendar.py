@@ -18,13 +18,12 @@ Custom-holidays JSON schema (array of ISO-8601 date strings):
 from __future__ import annotations
 
 import json
-import logging
 from datetime import date, datetime, timedelta
 from functools import lru_cache
 from pathlib import Path
 from typing import Dict, List, Optional
 
-logger = logging.getLogger(__name__)
+from common.logging_util import logger
 
 # ---------------------------------------------------------------------------
 # Constants

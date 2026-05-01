@@ -761,6 +761,11 @@ class Stock:
             
     
     def reset_analysis(self):
+        # Remove this stock from the 52-week tracking lists to prevent cross-cycle duplicates
+        if self in shared.ticker_52_week_high_list:
+            shared.ticker_52_week_high_list.remove(self)
+        if self in shared.ticker_52_week_low_list:
+            shared.ticker_52_week_low_list.remove(self)
         self.analysis = {"Timestamp" : None,
                             "BULLISH":{},
                             "BEARISH":{},
@@ -813,16 +818,20 @@ class Stock:
     
     @property
     def previous_previous_equity_data(self):
+        if self.priceData is None:
+            return None
         if shared.app_ctx.mode.name == shared.Mode.INTRADAY.name:
-            prev_data = self.priceData.iloc[-4]
+            if len(self.priceData) < 4:
+                return None
+            return self.priceData.iloc[-4]
         else:
-            prev_data = self.priceData.iloc[-3]
-        return prev_data
+            if len(self.priceData) < 3:
+                return None
+            return self.priceData.iloc[-3]
     
 
     def removeStockData(self):
         self.priceData = pd.DataFrame()
-        self.ivData = None
     
     def is_price_data_empty(self):
         return self.priceData.empty
