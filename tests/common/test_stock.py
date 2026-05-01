@@ -237,13 +237,13 @@ class TestUpdateZerodhaData:
     def test_last_price_updated(self):
         s = make_stock()
         s.update_zerodha_data(self._tick(ltp=3050.0))
-        assert s._zerodha_data["last_price"] == 3050.0
+        assert s.zerodha_data["last_price"] == 3050.0
 
     def test_ohlc_mapped_correctly(self):
         s = make_stock()
         s.update_zerodha_data(self._tick())
-        assert s._zerodha_data["open"] == 2980.0
-        assert s._zerodha_data["high"] == 3010.0
+        assert s.zerodha_data["open"] == 2980.0
+        assert s.zerodha_data["high"] == 3010.0
 
     def test_thread_safe_concurrent_updates(self):
         s = make_stock()
