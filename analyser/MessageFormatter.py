@@ -510,3 +510,27 @@ def _fmt_52h(data, trend):
 @MessageFormatter.register("52-week-low")
 def _fmt_52l(data, trend):
     return ["  💥 Price at <b>52 WEEK LOW</b>"]
+
+
+@MessageFormatter.register("PANIC_MODE")
+def _fmt_panic_mode(data, trend):
+    e = "🔴" if trend == "BEARISH" else "🟢"
+    conditions = ", ".join(data.conditions_met)
+    return [
+        f"  {e} <b>PANIC MODE</b> [{data.mode}] {data.direction} "
+        f"Price=<code>{data.price_change_pct:+.1f}%</code> "
+        f"({data.conditions_count}/6 confirmed)",
+        f"    {conditions}",
+    ]
+
+
+@MessageFormatter.register("PANIC_EXHAUSTION")
+def _fmt_panic_exhaustion(data, trend):
+    e = "🔄"
+    ivp_str = f" IVP=<code>{data.iv_percentile:.0f}</code>" if data.iv_percentile else ""
+    conditions = ", ".join(data.conditions_met)
+    return [
+        f"  {e} <b>PANIC EXHAUSTION</b> [{data.mode}] {data.panic_direction} panic burning out"
+        f"{ivp_str} ({data.conditions_count}/4 confirmed)",
+        f"    {conditions}",
+    ]
