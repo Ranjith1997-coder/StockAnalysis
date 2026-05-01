@@ -21,6 +21,7 @@ from analyser.IVAnalyser import IVAnalyser
 from analyser.PCRAnalyser import PCRAnalyser
 from analyser.MaxPainAnalyser import MaxPainAnalyser
 from analyser.OIChainAnalyser import OIChainAnalyser
+from analyser.PanicModeAnalyser import PanicModeAnalyser
 from common.logging_util import logger
 from typing import List, Tuple, Optional
 from enum import Enum
@@ -1464,6 +1465,7 @@ def init():
         orchestrator.register(PCRAnalyser())
         orchestrator.register(MaxPainAnalyser())
         orchestrator.register(OIChainAnalyser())
+        orchestrator.register(PanicModeAnalyser())    # MUST be last -- reads stock.analysis
     if ENABLE_ZERODHA_API:
         logger.info("Zerodha API enabled")
         userName = os.getenv(constant.ENV_ZERODHA_USERNAME)
