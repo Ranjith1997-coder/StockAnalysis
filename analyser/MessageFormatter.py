@@ -418,6 +418,19 @@ def _fmt_iv_rank_extreme(data, trend):
             for d in items]
 
 
+@MessageFormatter.register("IV_PREMIUM")
+def _fmt_iv_premium(data, trend):
+    zone_emoji = {"EXTREME": "🔥", "EXPENSIVE": "💰"}.get(data.zone, "📊")
+    return [
+        f"  {zone_emoji} <b>IV PREMIUM</b> [{data.zone}] "
+        f"IV=<code>{data.atm_iv:.1f}%</code> "
+        f"HV=<code>{data.hv:.1f}%</code> "
+        f"Ratio=<code>{data.iv_hv_ratio:.2f}x</code> "
+        f"Premium=<code>{data.iv_premium_pct:+.1f}%</code>",
+        f"    {data.expiry} [{data.hv_period}] — seller has edge",
+    ]
+
+
 # ── OI Chain ──────────────────────────────────────────────────────────────────
 
 @MessageFormatter.register("OI_SUPPORT_RESISTANCE")
@@ -510,3 +523,27 @@ def _fmt_52h(data, trend):
 @MessageFormatter.register("52-week-low")
 def _fmt_52l(data, trend):
     return ["  💥 Price at <b>52 WEEK LOW</b>"]
+
+
+@MessageFormatter.register("PANIC_MODE")
+def _fmt_panic_mode(data, trend):
+    e = "🔴" if trend == "BEARISH" else "🟢"
+    conditions = ", ".join(data.conditions_met)
+    return [
+        f"  {e} <b>PANIC MODE</b> [{data.mode}] {data.direction} "
+        f"Price=<code>{data.price_change_pct:+.1f}%</code> "
+        f"({data.conditions_count}/6 confirmed)",
+        f"    {conditions}",
+    ]
+
+
+@MessageFormatter.register("PANIC_EXHAUSTION")
+def _fmt_panic_exhaustion(data, trend):
+    e = "🔄"
+    ivp_str = f" IVP=<code>{data.iv_percentile:.0f}</code>" if data.iv_percentile else ""
+    conditions = ", ".join(data.conditions_met)
+    return [
+        f"  {e} <b>PANIC EXHAUSTION</b> [{data.mode}] {data.panic_direction} panic burning out"
+        f"{ivp_str} ({data.conditions_count}/4 confirmed)",
+        f"    {conditions}",
+    ]
