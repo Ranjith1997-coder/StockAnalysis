@@ -1,6 +1,6 @@
 import yfinance as yf
 from pandas import Series
-from common.constants import stocks, indexSymbolForYfinance
+from common.helperFunctions import get_stock_objects_from_json
 from math import log,exp
 from openpyxl import Workbook
 from openpyxl.styles import PatternFill
@@ -90,14 +90,20 @@ if __name__ == "__main__":
     addHeaderToExcel(ws,No_of_days_to_Expire)
     count = 1
 
-    for index in indexSymbolForYfinance:
-        data = yf.download(indexSymbolForYfinance[index], period="3y")["Close"]
-        computeSTDandAddtoExcel(index, data,No_of_days_to_Expire, ws, count)
-        count+=1
+    underlying_list, index_list, _, global_indices_list = get_stock_objects_from_json()
 
-    for stock in stocks:
-        data = yf.download(stocks[stock]+".NS" , period="3y")["Close"]
-        computeSTDandAddtoExcel(stock,data,No_of_days_to_Expire, ws,count)
+    for entry in index_list + global_indices_list:
+        symbol = entry.get("yfinanceSymbol") or entry.get("symbol", "")
+        name = entry.get("symbol", symbol)
+        data = yf.download(symbol, period="3y")["Close"]
+        computeSTDandAddtoExcel(name, data, No_of_days_to_Expire, ws, count)
+        count += 1
+
+    for entry in underlying_list:
+        symbol = entry.get("yfinanceSymbol") or (entry.get("symbol", "") + ".NS")
+        name = entry.get("symbol", symbol)
+        data = yf.download(symbol, period="3y")["Close"]
+        computeSTDandAddtoExcel(name, data, No_of_days_to_Expire, ws, count)
         count += 1
 
     wb.save(fileName)

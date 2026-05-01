@@ -63,14 +63,13 @@ REQUIRED_TRENDS = 3
 ANALYSIS_WEIGHTS = {
     # Technical Indicators
     "RSI": 15,
-    "rsi_crossover": 12,          # RSI crossing key levels
+    "RSI_CROSSOVER": 12,          # RSI crossing key levels
     "MACD": 15,
     "EMA_CROSSOVER": 12,
-    "BollingerBand": 10,          # Price at Bollinger Bands
-    "vwap_deviation": 12,         # VWAP deviation signal
+    "BOLLINGERBAND": 10,          # Price at Bollinger Bands
+    "VWAP_DEVIATION": 12,         # VWAP deviation signal
     "ATR": 8,                     # Volatility measure
     "VOLUME": 10,
-    "Volume": 10,                 # Alternative key
     "VOLUME_BREAKOUT": 12,        # Volume breakout with price confirmation
     "OBV_DIVERGENCE": 16,         # OBV divergence - smart money signal
     "VOLUME_CLIMAX": 15,          # Volume climax - exhaustion reversal
