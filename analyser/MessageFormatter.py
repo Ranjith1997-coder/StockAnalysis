@@ -418,6 +418,19 @@ def _fmt_iv_rank_extreme(data, trend):
             for d in items]
 
 
+@MessageFormatter.register("IV_PREMIUM")
+def _fmt_iv_premium(data, trend):
+    zone_emoji = {"EXTREME": "🔥", "EXPENSIVE": "💰"}.get(data.zone, "📊")
+    return [
+        f"  {zone_emoji} <b>IV PREMIUM</b> [{data.zone}] "
+        f"IV=<code>{data.atm_iv:.1f}%</code> "
+        f"HV=<code>{data.hv:.1f}%</code> "
+        f"Ratio=<code>{data.iv_hv_ratio:.2f}x</code> "
+        f"Premium=<code>{data.iv_premium_pct:+.1f}%</code>",
+        f"    {data.expiry} [{data.hv_period}] — seller has edge",
+    ]
+
+
 # ── OI Chain ──────────────────────────────────────────────────────────────────
 
 @MessageFormatter.register("OI_SUPPORT_RESISTANCE")

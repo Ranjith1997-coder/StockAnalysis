@@ -140,6 +140,9 @@ ANALYSIS_WEIGHTS = {
     "OI_INTRADAY_TREND": 15,      # Intraday OI + PCR trend across periodic snapshots
     "OI_SR_SHIFT": 14,            # Intraday support/resistance level migration
 
+    # IV vs Historical Volatility
+    "IV_PREMIUM": 18,             # IV overpriced vs HV (EXPENSIVE/EXTREME zone) -- seller's edge signal
+
     # Composite panic detection
     "PANIC_MODE": 22,             # Active panic -- price + IV + OI + futures + volume + PCR aligned
     "PANIC_EXHAUSTION": 25,       # Panic exhaustion -- IV extreme + contrarian PCR + volume climax + OI wall
@@ -197,6 +200,7 @@ OPTIONS_ANALYSES = {"MAX_PAIN", "MAX_PAIN_TREND", "MAX_PAIN_ALIGNMENT",
                     "IV_SPIKE", "IV_TREND", "IV_RANK", "IV_RANK_EXTREME",
                     "OI_BUILDUP", "OI_SUPPORT_RESISTANCE", "OI_WALL", "OI_SHIFT",
                     "OI_INTRADAY_TREND", "OI_SR_SHIFT",
+                    "IV_PREMIUM",
                     "PANIC_MODE", "PANIC_EXHAUSTION"}
 FUTURES_ANALYSES = {"FUTURES_PREMIUM", "FUTURE_ACTION", "FUTURE_ACTION_LONG_BUILDUP", 
                      "FUTURE_ACTION_SHORT_BUILDUP", "FUTURE_ACTION_SHORT_COVERING", 
