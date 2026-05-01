@@ -1,6 +1,6 @@
 # StockAnalysis - Comprehensive Design Document
 
-> **Last Updated**: March 2026 (Observability System, Narrator Flood Control)
+> **Last Updated**: June 2026 (PanicModeAnalyser, TickStore/FuturesFetcher/SensibullFetcher extraction, LiveStockEngine, LiveOptionsHistory, LiveAlertFormatter, MessageFormatter, full test suite)
 > **Purpose**: Complete architectural reference for the Indian Stock Market Analysis System targeting NSE (National Stock Exchange) equities. This document captures the entire codebase: architecture, data flows, module interactions, signal processing, scoring, notifications, and deployment details.
 
 ---
@@ -30,6 +30,7 @@
 21. [Observability System](#21-observability-system)
 22. [Key Design Patterns](#22-key-design-patterns)
 23. [Data Flow Diagrams](#23-data-flow-diagrams)
+24. [Test Suite](#24-test-suite)
 
 ---
 
@@ -75,13 +76,17 @@ StockAnalysis/
 |   |-- TechnicalAnalyser.py         # RSI, MACD, EMA, Bollinger, VWAP, Supertrend, etc.
 |   |-- VolumeAnalyser.py            # Volume breakout, OBV divergence, volume climax
 |   |-- candleStickPatternAnalyser.py # Single/double/triple candle patterns
-|   |-- IVAnalyser.py                # Implied Volatility spike & trend
+|   |-- IVAnalyser.py                # IV spike, trend, rank (IVP), IV vs HV comparison
 |   |-- PCRAnalyser.py               # Put-Call Ratio analysis (5 methods)
 |   |-- MaxPainAnalyser.py           # Max Pain deviation, trend, alignment
-|   |-- OIChainAnalyser.py           # OI-based S/R, buildup, walls, shifts
+|   |-- OIChainAnalyser.py           # OI-based S/R, buildup, walls, shifts, intraday trend
 |   |-- Futures_Analyser.py          # Futures action, PVO, ORB with dynamic thresholds
-|   |-- LiveOIAnalyser.py            # NEW: Real-time OI wall breach, PCR crossover, live max pain
-|   |-- LiveStraddleAnalyser.py      # NEW: Straddle decay, IV skew flip, implied move boundary
+|   |-- LiveOIAnalyser.py            # Real-time OI wall breach, PCR crossover, PCR sustained
+|   |-- LiveStraddleAnalyser.py      # Straddle IV change, IV skew reversal, implied move boundary
+|   |-- LiveOptionsHistory.py        # In-memory per-symbol time-series (375 snapshots/day)
+|   |-- LiveAlertFormatter.py        # HTML builder for real-time Telegram alerts (F singleton)
+|   |-- MessageFormatter.py          # Registry-based formatter for batch analysis alerts
+|   |-- PanicModeAnalyser.py         # Composite analyser — panic detection & exhaustion (9th, must be last)
 |
 |-- intelligence/
 |   |-- signal.py                    # Signal dataclass, Direction, Layer, SignalStrength enums
@@ -92,7 +97,7 @@ StockAnalysis/
 |   |-- llm_client.py                # GeminiClient — Google Gemini Flash API wrapper
 |
 |-- common/
-|   |-- Stock.py                     # Core Stock data model (~68KB)
+|   |-- Stock.py                     # Core Stock data model; delegates live ticks to TickStore
 |   |-- shared.py                    # AppContext singleton, Mode enum, global state
 |   |-- constants.py                 # All weights, thresholds, env vars, categories
 |   |-- scoring.py                   # Score calculation, alignment bonus, should_notify()
@@ -112,6 +117,11 @@ StockAnalysis/
 |   |-- zerodha_connect.py           # Modified KiteConnect with enctoken auth
 |   |-- zerodha_analysis.py          # ZerodhaTickerManager (WebSocket lifecycle)
 |   |-- zerodha_ticker.py            # Custom KiteTicker (Twisted/Autobahn WebSocket)
+|   |-- tick_store.py                # TickStore — thread-safe live tick state (extracted from Stock)
+|   |-- futures_fetcher.py           # FuturesFetcher — Zerodha Kite futures data fetcher (extracted from Stock)
+|   |-- live_options_engine.py       # LiveOptionsEngine — per-tick options analysis coordinator
+|   |-- live_stock_engine.py         # LiveStockEngine — per-tick equity signals (VWAP, ORB, imbalance)
+|   |-- zerodha_exceptions.py        # Custom exceptions for Zerodha API errors
 |
 |-- premarket/
 |   |-- premarket_report.py          # Global cues, bonds, commodities, VIX, FII/DII, pre-open
@@ -121,8 +131,11 @@ StockAnalysis/
 |   |-- registry.py                  # SOURCE_CLASSES list
 |   |-- runner.py                    # Pipeline: fetch -> normalize -> analyze -> summarize
 |   |-- summary.py                   # HTML formatters per source type
-|   |-- sources/                     # Individual source implementations
-|   |-- analyzer.py                  # Post-market data analyzer/dispatcher
+|   |-- analysis.py                  # Post-market data analyzer/dispatcher
+|   |-- fii_dii.py                   # FiiDiiActivitySource implementation
+|   |-- fo_participant_oi.py         # FoParticipantOISource implementation
+|   |-- index_returns.py             # IndexReturnsSource implementation
+|   |-- sector_performance.py        # SectorPerformanceSource implementation
 |
 |-- backtest/
 |   |-- backtest.py                  # Trade, BacktestResult, Backtester classes
@@ -133,15 +146,22 @@ StockAnalysis/
 |   |-- news_sentiment_manager.py    # FinBERT + Google News RSS
 |
 |-- fno/
-|   |-- OptionDataCollection.py      # Legacy NSE option chain scraper
-|   |-- OptionDatabaseStorage.py     # Legacy MySQL storage (incomplete)
+|   |-- sensibull_fetcher.py         # SensibullFetcher — Sensibull API fetcher (extracted from Stock)
+|   |-- OptionWriteStandardDeviation.py  # Legacy standard deviation writer
 |
 |-- ml_pipeline/                     # ML prediction pipeline (XGBoost, LightGBM, RF, Ensemble)
 |-- scripts/                         # Utility scripts
 |-- configs/                         # Configuration files
 |-- data/                            # Stock lists (final_derivatives_list.json, etc.)
 |-- docs/                            # Documentation
-|-- tests/                           # Test files
+|-- tests/                           # Test suite (951 tests, 41 files across 6 subdirectories)
+|   |-- analyser/                    # 17 test files covering all 11 analyser classes
+|   |-- common/                      # 6 test files (Stock, scoring, token_registry, market_calendar, etc.)
+|   |-- zerodha/                     # 5 test files (ZerodhaTickerManager, LiveOptionsEngine, LiveStockEngine, etc.)
+|   |-- notification/                # 2 test files (Notification, bot_listener)
+|   |-- post_market_analysis/        # 9 test files (all sources, runner, summary, analysis)
+|   |-- premarket/                   # 5 test files (fetching, formatting, helpers, parsing, runner)
+|   |-- test_observability.py        # 22 tests for crash handler, heartbeat, zombie watchdog
 ```
 
 ---
@@ -150,7 +170,7 @@ StockAnalysis/
 
 ### `common/Stock.py` - The Stock Class
 
-The `Stock` class is the central data container (~68KB). Every stock/index tracked by the system is represented as a Stock instance.
+The `Stock` class is the central data container. Every stock/index tracked by the system is represented as a Stock instance. Live tick state (WebSocket data, options ticks, futures ticks) is delegated to an internal `TickStore` instance (`_tick_store`), keeping `Stock` focused on price/analysis data.
 
 #### Key Attributes
 
@@ -159,20 +179,25 @@ class Stock:
     stock_symbol: str           # e.g., "RELIANCE", "NIFTY 50"
     stock_name: str
     ltp: float                  # Last traded price (from WebSocket ticks)
+    ltp_change_perc: float      # Percentage change from previous close
     priceData: pd.DataFrame     # OHLCV DataFrame (from yfinance)
+
+    # Live tick state — backed by TickStore (delegate)
+    _tick_store: TickStore      # Single-responsibility container for live WebSocket state
 
     # Derivatives data
     zerodha_ctx: dict           # Zerodha option chain & futures data
     sensibull_ctx: dict         # Sensibull OI chain, PCR, max pain
 
-    # Live WebSocket options data (NEW — populated by ZerodhaTickerManager per tick)
-    options_live: dict          # {strike: {"CE": {ltp, oi, prev_oi, volume, buy_qty, sell_qty, ohlc, depth, ts}, "PE": {...}}}
-    options_aggregate: dict     # Computed aggregates updated after each option tick:
+    # Live WebSocket options data — Properties that delegate to TickStore:
+    options_live: dict          # {strike: {"CE": {ltp, oi, prev_oi, volume, ...}, "PE": {...}}}
+    options_aggregate: dict     # Computed aggregates:
                                 #   total_ce_oi, total_pe_oi, live_pcr, atm_strike,
                                 #   atm_straddle_premium, atm_iv_ce, atm_iv_pe, iv_skew,
                                 #   max_oi_ce_strike, max_oi_pe_strike,
                                 #   net_ce_oi_change, net_pe_oi_change, last_updated
     futures_live: dict          # {expiry: {ltp, oi, volume, ...}}
+    zerodha_data: dict          # Thread-safe equity/index tick snapshot (via property)
 
     # Candlestick pattern support
     current: dict               # Current candle OHLCV
@@ -184,7 +209,8 @@ class Stock:
         "BULLISH": {},          # signal_type -> namedtuple
         "BEARISH": {},
         "NEUTRAL": {},
-        "NoOfTrends": 0         # Legacy counter
+        "NoOfTrends": 0,        # Legacy counter (still maintained)
+        "ScoreResult": None,    # Populated after scoring
     }
 
     DERIVATIVE_DATA_LENGTH: int # Max stored derivative snapshots
@@ -195,12 +221,22 @@ class Stock:
 | Method | Purpose |
 |--------|---------|
 | `set_analysis(sentiment, signal_type, data)` | Store analysis result (BULLISH/BEARISH/NEUTRAL) |
-| `get_futures_and_options_data_from_nse_intraday()` | Fetch NSE derivatives data |
-| `update_zerodha_data(tick)` | Process real-time index/equity tick from WebSocket (safe `.get()` defaults — index ticks lack volume/OI fields) |
-| `update_option_tick(strike, option_type, tick)` | Store live option tick into `options_live[strike][CE\|PE]` |
-| `update_futures_tick(expiry, tick)` | Store live futures tick into `futures_live[expiry]` |
-| `recompute_options_aggregate(spot_price)` | Recompute PCR, ATM strike, straddle premium, OI walls from current `options_live` |
+| `update_zerodha_data(tick)` | Delegate to TickStore — thread-safe equity/index tick update |
+| `update_option_tick(strike, option_type, tick)` | Delegate to TickStore — store live option tick |
+| `update_futures_tick(expiry_key, tick)` | Delegate to TickStore — store live futures tick |
+| `recompute_options_aggregate(spot_price)` | Delegate to TickStore — recompute PCR, ATM strike, straddle premium, OI walls |
+| `update_latest_data()` | Recompute `ltp` and `ltp_change_perc` from latest priceData + prevDayOHLCV |
 | IV calculation methods | Black-Scholes using `scipy.optimize.brentq` |
+
+#### Deprecated Shims (backward compatibility)
+
+The following Stock methods are **deprecated** and emit `DeprecationWarning`. They delegate to the extracted fetcher classes:
+
+| Deprecated Method | Replacement |
+|------------------|-------------|
+| `get_futures_data_for_stock(mode, is_next_expiry_required)` | `FuturesFetcher(kite_connect).fetch(stock, mode)` |
+| `fetch_sensibull_data(mode)` | `SensibullFetcher().fetch_data(stock, mode)` |
+| `fetch_sensibull_oi_chain(mode)` | `SensibullFetcher().fetch_oi_chain(stock, mode)` |
 
 #### Analysis Dict Structure
 When an analyzer fires a signal:
@@ -212,7 +248,31 @@ stock.set_analysis("BULLISH", "RSI", RSIAnalysis(
 ))
 # Result: stock.analysis["BULLISH"]["RSI"] = RSIAnalysis(...)
 # stock.analysis["NoOfTrends"] += 1
+# Multiple signals for same type are stored as a list
 ```
+
+### `zerodha/tick_store.py` - TickStore
+
+Extracted from `Stock` to give Stock a single responsibility. `TickStore` owns all live WebSocket tick state:
+
+```python
+class TickStore:
+    _lock: threading.Lock        # Protects _zerodha_data from concurrent writes
+    _zerodha_data: dict          # {volume_traded, last_price, open, high, close, low, change,
+                                 #  average_traded_price, total_buy_quantity, total_sell_quantity}
+    options_live: dict           # {strike: {"CE": {...}, "PE": {...}}}
+    options_aggregate: dict      # Aggregated metrics, updated by recompute_options_aggregate()
+    futures_live: dict           # {"current": {...}, "next": {...}}
+
+    # Methods mirror Stock's old public interface — Stock façade delegates to these
+    def update_zerodha_data(ticker_data)       # Thread-safe; handles 28/32-byte index ticks
+    def update_option_tick(strike, opt_type, tick)
+    def update_futures_tick(expiry_key, tick)
+    def recompute_options_aggregate(spot_price)
+    @property zerodha_data -> dict             # Thread-safe copy
+```
+
+**Why extracted:** Index ticks (segment 9, 28/32 bytes) lack `volume_traded`, OI, and depth fields. `TickStore.update_zerodha_data()` uses `.get()` with safe defaults. Centralizing this in TickStore keeps all tick-format quirks in one place.
 
 ---
 
@@ -363,15 +423,13 @@ The largest analyzer with backtested-optimized parameters.
 | `analyse_rsi` | RSI | upper=85, lower=30 | RSI with zone duration tracking (consecutive bars in overbought/oversold) |
 | `analyse_macd` | MACD | fast=12, slow=26, signal=9 | MACD crossover with histogram confirmation |
 | `analyse_ema_crossover` | EMA_CROSSOVER | short=9, long=21 | EMA crossover with ADX trend strength gate |
-| `analyse_bollinger_bands` | BOLLINGER_BANDS | period=20, std=2.0 | Momentum strategy (not mean-reversion) |
+| `analyse_Bolinger_band` | BOLLINGER_BANDS | period=20, std=2.0 | Momentum strategy (not mean-reversion). **Note:** exact method name has capital B — `analyse_Bolinger_band` |
 | `analyse_vwap` | VWAP | deviation threshold | VWAP deviation for intraday bias |
 | `analyse_atr` | ATR | period=14 | ATR-based volatility assessment |
-| `analyse_buy_sell_quantity` | BUY_SELL_QTY | - | Bid/ask quantity imbalance |
 | `analyse_supertrend` | SUPERTREND | period=14, multiplier=2.5 | Supertrend indicator direction change |
-| `analyse_rsi_divergence` | RSI_DIVERGENCE | - | Swing high/low detection with RSI divergence |
+| `analyse_rsi_divergence` | RSI_DIVERGENCE | — | Swing high/low detection with RSI divergence |
 | `analyse_stochastic` | STOCHASTIC | K=5, D=5, upper=90, lower=30 | Stochastic oscillator with signal strength classification |
-| `analyse_obv_divergence` | OBV_DIVERGENCE | - | OBV vs price divergence |
-| `analyse_pivot_points` | PIVOT_POINTS | - | Classic pivot point S/R levels |
+| `analyse_pivot_points` | PIVOT_POINTS | — | Classic pivot point S/R levels |
 
 ### 7.2 VolumeAnalyser (`analyser/VolumeAnalyser.py`)
 
@@ -398,12 +456,16 @@ All reversal patterns call `_get_trend_context()` to validate that the pattern a
 
 ### 7.4 IVAnalyser (`analyser/IVAnalyser.py`)
 
+**Note on method names:** The public methods use the original exact names from the source file.
+
 | Method | Signal Type | Description |
 |--------|-------------|-------------|
-| `analyse_iv_spike` | IV_SPIKE | IV percentage change exceeds threshold (from Zerodha ATM option) |
-| `analyse_iv_trend` | IV_TREND | N consecutive days of rising/falling IV |
+| `analyse_spike_in_ATM_IV` | IV_SPIKE | IV percentage change exceeds threshold (intraday: 5%, positional: 20%) from Zerodha ATM option `atm_iv_change` field; falls back to comparing last 2 `historical_data` rows |
+| `analyse_trend_in_ATM_IV` | IV_TREND | N consecutive rows (default 3) of rising/falling ATM IV from Sensibull `historical_data` |
+| `analyse_iv_rank` | IV_RANK / IV_RANK_EXTREME | IVP percentile-based rank. IVP<20 → IV_RANK LOW; IVP>70 → IV_RANK HIGH; IVP>85 → IV_RANK_EXTREME HIGH; IVP<10 → IV_RANK_EXTREME LOW |
+| `analyse_iv_vs_hv` | IV_VS_HV | Ratio of current ATM IV to realized historical volatility (HV). Intraday: 50×5m bars, positional: 20-day HV. Ratios: ≥1.3/1.2=ELEVATED, ≥1.6/1.5=EXPENSIVE, ≥2.0=EXTREME |
 
-Both always classified as **NEUTRAL** (IV is directionally ambiguous).
+All IV signals are always classified as **NEUTRAL** (IV is directionally ambiguous). `IV_SPIKE` and `IV_TREND` are excluded from directional score via `NEUTRAL_EXCLUDE_FROM_SCORE`.
 
 ### 7.5 PCRAnalyser (`analyser/PCRAnalyser.py`)
 
@@ -433,12 +495,12 @@ Per-strike OI chain analysis from Sensibull.
 
 | Method | Signal Type | Description |
 |--------|-------------|-------------|
-| OI-based support/resistance | OI_SUPPORT_RESISTANCE | Identifies S/R from OI concentration (proximity gate to current price) |
-| OI buildup detection | OI_BUILDUP | Fresh writing detection with dominant ratio (call vs put) |
-| OI wall detection | OI_WALL | Statistical outlier detection for massive OI at specific strikes |
-| OI shift / position migration | OI_SHIFT | Tracks movement of OI concentration between strikes |
-| Intraday OI trend | OI_TREND | Multi-snapshot PCR trend within the day |
-| S/R level shift tracking | SR_SHIFT | Monitors when key S/R levels change |
+| `analyse_oi_support_resistance` | OI_SUPPORT_RESISTANCE | Identifies S/R from OI concentration (proximity gate to current price) |
+| `analyse_oi_buildup` | OI_BUILDUP | Fresh writing detection with dominant ratio (call vs put) |
+| `analyse_oi_wall` | OI_WALL | Statistical outlier detection for massive OI at specific strikes |
+| `analyse_oi_shift` | OI_SHIFT | Tracks movement of OI concentration between strikes |
+| `analyse_intraday_oi_trend` | OI_INTRADAY_TREND | Multi-snapshot PCR trend within the day (intraday only) |
+| `analyse_intraday_oi_sr_shift` | OI_SR_SHIFT | Monitors when key S/R levels shift intraday (intraday only) |
 
 ### 7.8 FuturesAnalyser (`analyser/Futures_Analyser.py`)
 
@@ -446,7 +508,7 @@ Enhanced with dynamic thresholds and multi-timeframe analysis.
 
 | Method | Signal Type | Description |
 |--------|-------------|-------------|
-| `analyse_futures_action` | FUTURES_ACTION | Detects: long_buildup, short_buildup, short_covering, long_unwinding |
+| `analyse_futures_action` | FUTURES_ACTION | Detects: long_buildup, short_buildup, short_covering, long_unwinding. Reads from `stock.zerodha_ctx["futures_data"]["current"]` DataFrame |
 | PVO patterns | PVO | Price-Volume-OI pattern detection |
 | ORB breakout | ORB | Opening Range Breakout with OI + volume confirmation |
 
@@ -569,16 +631,15 @@ This is the production entry point that orchestrates the entire system.
 
 #### Registered Analyzers
 ```python
-orchestrator.register([
-    TechnicalAnalyser(),
-    VolumeAnalyser(),
-    CandleStickAnalyser(),
-    IVAnalyser(),
-    PCRAnalyser(),
-    MaxPainAnalyser(),
-    OIChainAnalyser(),
-    FuturesAnalyser()
-])
+orchestrator.register(VolumeAnalyser())
+orchestrator.register(TechnicalAnalyser())
+orchestrator.register(CandleStickAnalyser())
+orchestrator.register(IVAnalyser())
+orchestrator.register(FuturesAnalyser())
+orchestrator.register(PCRAnalyser())
+orchestrator.register(MaxPainAnalyser())
+orchestrator.register(OIChainAnalyser())
+orchestrator.register(PanicModeAnalyser())    # MUST be last — reads stock.analysis
 ```
 
 #### Production Daily Timeline
@@ -621,6 +682,32 @@ with ThreadPoolExecutor(max_workers=N) as executor:
     futures = {executor.submit(analyze_stock, stock): stock
                for stock in stocks}
 ```
+
+#### Data Fetching (Decoupled)
+
+Derivatives data is fetched using dedicated fetcher classes (not Stock methods):
+
+```python
+# Futures data — from Zerodha Kite API
+FuturesFetcher(shared.app_ctx.zd_kc).fetch(stock, mode=analysis_type)
+# Stores result in stock.zerodha_ctx["futures_data"]["current"] DataFrame
+
+# Sensibull OI/PCR/MaxPain data
+_sensibull = SensibullFetcher()
+_sensibull.fetch_data(stock, mode=analysis_type)
+_sensibull.fetch_oi_chain(stock, mode=analysis_type)
+```
+
+#### LiveStockEngine Integration
+
+When `ENABLE_INTELLIGENCE=1`, a `LiveStockEngine` is injected into the `ZerodhaTickerManager` for per-tick equity signal generation:
+
+```python
+if shared.app_ctx.signal_bus:
+    zd_ticker_manager.live_stock_engine = LiveStockEngine(shared.app_ctx.signal_bus)
+```
+
+Signals: VWAP cross, bid/ask imbalance, Opening Range Breakout (ORB), day high/low break.
 
 #### Zerodha WebSocket Integration
 - WebSocket connects at startup for real-time tick data
@@ -683,12 +770,15 @@ On a market holiday in production mode it calls `sys.exit(0)` immediately.
 
 ```
 post_market_analysis/
-|-- base.py       # Abstract PostMarketSource
-|-- registry.py   # SOURCE_CLASSES list
-|-- runner.py     # Pipeline orchestrator
-|-- summary.py    # HTML formatters
-|-- sources/      # Concrete source implementations
-|-- analyzer.py   # Data analyzer/dispatcher
+|-- base.py                 # Abstract PostMarketSource
+|-- registry.py             # SOURCE_CLASSES list
+|-- runner.py               # Pipeline orchestrator
+|-- summary.py              # HTML formatters
+|-- analysis.py             # Data analyzer/dispatcher
+|-- fii_dii.py              # FiiDiiActivitySource
+|-- fo_participant_oi.py    # FoParticipantOISource
+|-- index_returns.py        # IndexReturnsSource
+|-- sector_performance.py   # SectorPerformanceSource
 ```
 
 ### Pipeline Flow
@@ -737,8 +827,58 @@ All formatters enforce a 3900-character Telegram message limit.
 ```
 zerodha/
 |-- zerodha_connect.py    # REST API (modified KiteConnect)
-|-- zerodha_analysis.py   # WebSocket manager
+|-- zerodha_analysis.py   # WebSocket manager (ZerodhaTickerManager)
 |-- zerodha_ticker.py     # WebSocket client (Twisted/Autobahn)
+|-- tick_store.py         # TickStore — live tick state container (extracted from Stock)
+|-- futures_fetcher.py    # FuturesFetcher — Kite historical futures fetcher (extracted from Stock)
+|-- live_options_engine.py # LiveOptionsEngine — per-tick options analysis coordinator
+|-- live_stock_engine.py  # LiveStockEngine — per-tick equity signals (VWAP, ORB, imbalance)
+|-- zerodha_exceptions.py # Custom API exception types
+```
+
+### `zerodha/futures_fetcher.py` - FuturesFetcher
+
+Extracted from `Stock.get_futures_data_for_stock()` to separate HTTP/network concerns from the data model.
+
+```python
+class FuturesFetcher:
+    def __init__(self, kite_connect): ...
+
+    def fetch(stock, mode="positional", is_next_expiry_required=False) -> Tuple[DataFrame, DataFrame]:
+        # mode="positional": daily data, last 5 business days
+        # mode="intraday":   5-min data, today only
+        # Reads/writes stock.zerodha_ctx["futures_data"]["current"] and "next" DataFrames
+```
+
+### `zerodha/live_stock_engine.py` - LiveStockEngine
+
+Per-tick equity analysis for VWAP, ORB, and bid/ask imbalance signals. Attached when `ENABLE_INTELLIGENCE=1`:
+
+```python
+class LiveStockEngine:
+    IMBALANCE_BULLISH = 2.5    # buy_qty / sell_qty > 2.5
+    IMBALANCE_BEARISH = 0.4    # buy_qty / sell_qty < 0.4
+    SIGNAL_COOLDOWN = 300      # 5 min between same signal per symbol
+    TICK_INTERVAL = 5          # throttle: max once per 5s per symbol
+
+    def on_tick(stock):
+        # Emits Signal objects to SignalBus (Layer.LIVE)
+        # Signal types: VWAP_CROSS, BID_ASK_IMBALANCE, ORB_BREAKOUT, DAY_HIGH_LOW_BREAK
+```
+
+### `fno/sensibull_fetcher.py` - SensibullFetcher
+
+Extracted from `Stock.fetch_sensibull_data()` and `fetch_sensibull_oi_chain()`.
+
+```python
+class SensibullFetcher:
+    def fetch_data(stock, mode="positional") -> Optional[DataFrame]:
+        # Fetches insights (underlying_info, stats, per_expiry_map, nse_stats)
+        # Stores in stock.sensibull_ctx["current"] and "historical_data"
+
+    def fetch_oi_chain(stock, mode="positional") -> Optional[list]:
+        # Fetches per-strike OI chain
+        # Stores in stock.sensibull_ctx["oi_chain"] and "oi_chain_history"
 ```
 
 ### `zerodha_connect.py` - Modified KiteConnect
@@ -878,11 +1018,11 @@ Dynamic re-centering fires when spot moves ≥ 50 pts (1 strike gap):
 
 ### LiveOptionsEngine
 
-Runs inside `ZerodhaTickerManager` when `ENABLE_LIVE_OPTIONS=1`. Calls both live analysers and enforces cooldowns:
+Lives in `zerodha/live_options_engine.py`. Runs when `ENABLE_LIVE_OPTIONS=1`. Calls both live analysers and enforces cooldowns. Per-symbol `LiveOIAnalyser`, `LiveStraddleAnalyser`, and `LiveOptionsHistory` instances are created lazily:
 
 ```python
 class LiveOptionsEngine:
-    COOLDOWNS = {
+    COOLDOWNS: dict[str, int] = {
         "PCR_CROSSOVER_BULLISH/BEARISH": 600,   # 10 min
         "PCR_EXTREME_PE/CE":            900,    # 15 min
         "CE_WALL_BREACH/PE_WALL_BREACH": 900,   # 15 min
@@ -891,6 +1031,49 @@ class LiveOptionsEngine:
         "SKEW_FLIP_BULLISH/BEARISH":    600,    # 10 min
         "PCR_SUSTAINED_BULLISH/BEARISH": 1200,  # 20 min
     }
+
+    def on_aggregate_updated(stock, spot):
+        # Entry point — called after every options_aggregate recompute (≈1s per symbol)
+```
+
+### `analyser/LiveOptionsHistory.py` - LiveOptionsHistory
+
+In-memory circular time-series store for real-time options data. One instance per tracked index.
+
+```python
+class LiveOptionsHistory:
+    MAX_SNAPSHOTS = 375        # 375 min = full trading day at 1-min samples
+    SAMPLE_INTERVAL = 60       # seconds between recorded snapshots
+
+    def record(agg, options_live, spot) -> bool
+    def straddle_series(minutes) -> list[OptionsSnapshot]
+    def pcr_series(minutes) -> list[float]
+```
+
+Each `OptionsSnapshot` captures: `ts, spot, pcr, straddle, atm_strike, total_ce_oi, total_pe_oi, ce_wall, pe_wall, ce_wall_oi, pe_wall_oi, net_ce_oi_change, net_pe_oi_change`.
+
+### `analyser/LiveAlertFormatter.py` - F singleton
+
+Consistent HTML builder for real-time Telegram alerts:
+
+```python
+# Usage: from analyser.LiveAlertFormatter import F
+F.header(symbol, title, emoji) -> str    # "[HH:MM:SS] SYMBOL — Title"
+F.kv(label, value)             -> str    # "  Label: <code>value</code>"
+F.kv_pair(l1, v1, l2, v2)     -> str    # "  L1: <code>v1</code>  |  L2: <code>v2</code>"
+F.kv_bold(label, value)        -> str    # "  Label: <b>value</b>"
+F.signal(text)                 -> str    # "→ text"
+F.note(text)                   -> str    # "  <i>text</i>"
+F.build(*lines)                -> str    # Joins non-empty lines with \n
+```
+
+### `analyser/MessageFormatter.py` - MessageFormatter
+
+Registry-based formatter for batch analysis Telegram alerts. Each analysis type registers a formatter function via `@MessageFormatter.register(*types)`. Provides a generic fallback so no alert is ever silently dropped.
+
+```python
+MessageFormatter.format(analysis_type, data, trend) -> list[str]
+MessageFormatter.registered_types() -> list[str]
 ```
 
 ### 7.9 LiveOIAnalyser (`analyser/LiveOIAnalyser.py`)
@@ -899,22 +1082,52 @@ Real-time OI analysis using live WebSocket ticks (not polled Sensibull data):
 
 | Method | Alert Type | Signal |
 |--------|-----------|--------|
-| `check_pcr_crossover` | `PCR_CROSSOVER_BULLISH/BEARISH` | PCR crosses 1.0 threshold |
-| `check_pcr_extreme` | `PCR_EXTREME_PE/CE` | PCR > 1.3 (contrarian bullish) or < 0.7 (contrarian bearish) |
-| `check_pcr_sustained` | `PCR_SUSTAINED_BULLISH/BEARISH` | PCR sustained above/below 1.0 for N ticks |
-| `check_oi_wall_breach` | `CE_WALL_BREACH/PE_WALL_BREACH` | Max OI strike weakening ≥ 3% |
-| `check_live_max_pain` | `LIVE_MAX_PAIN` | Live max pain deviates > 2% from spot |
+| `check_pcr_crossover(agg)` | `PCR_CROSSOVER_BULLISH/BEARISH` | PCR crosses 1.0 threshold |
+| `check_pcr_extreme(agg)` | `PCR_EXTREME_PE/CE` | PCR > 1.3 (contrarian bullish) or < 0.7 (contrarian bearish) |
+| `check_pcr_sustained_trend(history)` | `PCR_SUSTAINED_BULLISH/BEARISH` | PCR sustained above/below 1.0 for N minutes via `LiveOptionsHistory` |
+| `check_oi_wall_breach(agg, options_live)` | `CE_WALL_BREACH/PE_WALL_BREACH` | Max OI strike weakening ≥ 3% |
 
 ### 7.10 LiveStraddleAnalyser (`analyser/LiveStraddleAnalyser.py`)
 
-Real-time straddle and IV analysis:
+Real-time straddle and IV analysis. Each method receives `(agg, options_live, spot)` from `LiveOptionsEngine`.
 
 | Method | Alert Type | Signal |
 |--------|-----------|--------|
-| `check_iv_change` | `IV_EXPANDING/IV_COMPRESSING` | Straddle changes ≥ 3% in 5 min with spot flat (±0.3%) |
-| `check_implied_move_boundary` | `RANGE_BOUNDARY` | Spot used ≥ 80% of expected range (straddle × 0.68) |
-| `check_skew_flip` | `SKEW_FLIP_BULLISH/BEARISH` | ATM CE/PE ratio crosses 1.0 |
-| `check_straddle_decay_rate` | informational | Actual decay vs theoretical theta |
+| `check_iv_change(agg, history)` | `IV_EXPANDING/IV_COMPRESSING` | Straddle changes ≥ 3% in 5 min with spot flat (±0.3%) |
+| `check_implied_move_boundary(agg, spot)` | `RANGE_BOUNDARY` | Spot used ≥ 80% of expected range (straddle × 0.68); returns `"RANGE_BOUNDARY"` signal type |
+| `check_iv_skew_reversal(agg, options_live, spot)` | `SKEW_FLIP_BULLISH/BEARISH` | ATM CE/PE IV ratio crosses 1.0 |
+
+### 7.11 PanicModeAnalyser (`analyser/PanicModeAnalyser.py`)
+
+Composite analyser that cross-reads `stock.analysis` already populated by all earlier analysers. **Must be registered last** in `AnalyserOrchestrator`.
+
+Two signals:
+
+**`PANIC_MODE`** — active panic: ≥ 4/6 conditions in same direction
+**`PANIC_EXHAUSTION`** — move burning out: ≥ 3/4 contrarian conditions
+
+**PANIC_MODE conditions (6):**
+
+| # | Condition | How Checked |
+|---|-----------|-------------|
+| C1 | Price momentum | `ltp_change_perc` ≥ threshold (intraday: 1.5%, positional: 3.0%) |
+| C2 | IV expanding | `IV_SPIKE` or `IV_TREND(UPWARD)` in NEUTRAL |
+| C3 | OI confirming | intraday: `OI_INTRADAY_TREND`; positional: `OI_BUILDUP` or `OI_SHIFT` |
+| C4 | Futures confirm | `FUTURE_ACTION_*` or `FUTURE_SIGNAL_SCORE_MEDIUM+` in same direction |
+| C5 | Volume surge | `VOLUME_BREAKOUT` or `VOLUME_CLIMAX` in panic direction |
+| C6 | PCR confirming | `PCR_BIAS`, `PCR_EXTREME`, or `PCR_TREND` in panic direction |
+
+**PANIC_EXHAUSTION conditions (4):**
+
+| # | Condition | How Checked |
+|---|-----------|-------------|
+| E1 | IV at extreme | `IV_RANK_EXTREME` NEUTRAL with `ivp_type=VERY_HIGH` or IVP > 80 |
+| E2 | Contrarian PCR | `PCR_EXTREME` or `PCR_REVERSAL` in opposite direction |
+| E3 | Volume climax | `VOLUME_CLIMAX` in panic direction (exhaustion candle) |
+| E4 | OI wall holding | `OI_WALL` (contrarian) or NEUTRAL `OI_SUPPORT_RESISTANCE` |
+
+Result namedtuple `PANIC_MODE`: `(direction, price_change_pct, conditions_met, conditions_count, mode, signal)`
+Result namedtuple `PANIC_EXHAUSTION`: `(panic_direction, conditions_met, conditions_count, iv_percentile, mode, signal)`
 
 ### Expiry Selection
 
@@ -1629,6 +1842,15 @@ The narrator uses two independent guards before queuing an LLM call: a **level g
 ### 15. Fail-Silent Observability Helpers
 `_crash_handler`, `_ping_healthcheck`, and `check_data_freshness` are designed on the principle that observability code must **never** affect the system it observes. All three catch all exceptions internally and log at DEBUG/WARNING rather than propagating. This "fail-silent" pattern is enforced in tests by injecting `side_effect=Exception` into Telegram/requests mocks and asserting that the production call still returns normally.
 
+### 16. Single-Responsibility Extraction (Stock Decoupling)
+`TickStore`, `FuturesFetcher`, and `SensibullFetcher` were extracted from `Stock` to apply the Single Responsibility Principle. `Stock` now owns price data and analysis results only. Live tick state is in `TickStore`. HTTP fetching is in the dedicated fetcher classes. `Stock` provides deprecated shim methods for backward compatibility.
+
+### 17. Composite Analyser Pattern (PanicModeAnalyser)
+`PanicModeAnalyser` is a **meta-analyser**: instead of reading raw market data, it reads the `stock.analysis` dict populated by all earlier analysers. This makes it a cross-signal correlator that can detect confluent panic conditions without duplicating any individual signal logic. The constraint that it **must run last** is enforced in the `orchestrator.register()` call order.
+
+### 18. Registry-Based Alert Formatting (MessageFormatter)
+`MessageFormatter` uses a `@register(*analysis_types)` decorator pattern to map analysis type strings to HTML formatter functions. This decouples formatting from analysis logic, allows incremental addition of new analysis types without touching existing code, and provides a non-silent fallback for any unregistered types.
+
 ---
 
 ## 23. Data Flow Diagrams
@@ -1806,6 +2028,92 @@ _route_tick(tick)
 
 ---
 
+## 24. Test Suite
+
+### Overview
+
+The project has a comprehensive test suite with **951 tests across 41 files** organized in 6 subdirectories. All tests run in-process with zero network calls (all external dependencies are mocked).
+
+```
+tests/
+|-- conftest.py                          # Root-level fixtures
+|-- test_observability.py                # 22 tests: crash handler, heartbeat, zombie watchdog
+|
+|-- analyser/                            # 17 test files — all analyser classes
+|   |-- conftest.py                      # Shared fixtures (mock_stock, make_price_df, etc.)
+|   |-- test_analyser_base.py            # BaseAnalyzer decorator registration + AnalyserOrchestrator
+|   |-- test_technical_analyser.py       # RSI, ADX, EMA crossover, Bollinger, Supertrend, Stochastic
+|   |-- test_volume_analyser.py          # Volume breakout, OBV divergence, volume climax
+|   |-- test_candle_stick_pattern_analyser.py  # All 6 candlestick pattern groups
+|   |-- test_iv_analyser.py              # IV spike, trend, rank, IV vs HV
+|   |-- test_pcr_analyser.py             # 5 PCR methods
+|   |-- test_max_pain_analyser.py        # Max pain deviation, trend
+|   |-- test_oi_chain_analyser.py        # 5 OI chain methods
+|   |-- test_panic_mode_analyser.py      # PANIC_MODE and PANIC_EXHAUSTION
+|   |-- test_futures_analyser.py         # ATR, dynamic thresholds, futures action
+|   |-- test_live_oi_analyser.py         # PCR crossover, extreme, sustained, wall breach
+|   |-- test_live_straddle_analyser.py   # IV change, implied move boundary, skew reversal
+|   |-- test_live_alert_formatter.py     # F singleton HTML builder
+|   |-- test_live_options_history.py     # OptionsSnapshot recording, querying
+|   |-- test_message_formatter.py        # Registry registration, format, fallback
+|
+|-- common/                              # 6 test files
+|   |-- test_stock.py                    # Stock construction, set_analysis, TickStore delegation
+|   |-- test_scoring.py                  # Score calculation, alignment bonus, should_notify
+|   |-- test_token_registry.py           # TokenRegistry, TokenType, OptionZone, zone assignment
+|   |-- test_market_calendar.py          # is_trading_day, get_upcoming_holidays, custom_holidays
+|   |-- test_shared.py                   # AppContext, Mode enum
+|   |-- test_helper_functions.py         # percentageChange, isNowInTimePeriod, etc.
+|
+|-- zerodha/                             # 5 test files
+|   |-- test_zerodha_analysis.py         # ZerodhaTickerManager WebSocket lifecycle
+|   |-- test_live_options_engine.py      # LiveOptionsEngine cooldowns, dispatch
+|   |-- test_live_stock_engine.py        # LiveStockEngine VWAP, ORB, imbalance signals
+|   |-- test_kite_connect.py             # Modified KiteConnect enctoken auth
+|   |-- test_exceptions.py              # Custom exception types
+|
+|-- notification/                        # 2 test files
+|   |-- test_notification.py             # TELEGRAM_NOTIFICATIONS send, retry, routing
+|   |-- test_bot_listener.py             # All Telegram bot commands (/status, /ltp, etc.)
+|
+|-- post_market_analysis/                # 9 test files
+|   |-- test_base.py, test_registry.py, test_runner.py, test_summary.py
+|   |-- test_fii_dii.py, test_fo_participant_oi.py, test_index_returns.py
+|   |-- test_sector_performance.py, test_analysis.py
+|
+|-- premarket/                           # 5 test files
+|   |-- test_fetching.py, test_formatting.py, test_helpers.py
+|   |-- test_parsing.py, test_report_runner.py
+```
+
+### Test Conventions
+
+| Convention | Detail |
+|------------|--------|
+| Framework | `pytest` 9.0.2 |
+| Mocking | `unittest.mock.patch`, `MagicMock` — all HTTP, Zerodha API, and Telegram calls mocked |
+| AppContext patching | `patch("common.shared.app_ctx", mock_obj)` covers all analyser mode checks |
+| Fixtures | `conftest.py` at each level provides `mock_stock`, `make_price_df`, `make_sensibull_ctx`, etc. |
+| No network | Zero network calls; `yfinance`, `requests`, and all WebSocket code mocked |
+| Run command | `PYTHONPATH=$(pwd) .venv/bin/python -m pytest tests/ -q` |
+
+### Key Testing Facts (Accuracy Notes)
+
+These method names and behaviors were discovered/verified during test creation:
+
+| Item | Actual (verified) | DESIGN.md had |
+|------|------------------|---------------|
+| TechnicalAnalyser Bollinger | `analyse_Bolinger_band` (capital B, lowercase olinger) | `analyse_bollinger_bands` |
+| OIChainAnalyser intraday trend | `analyse_intraday_oi_trend` | described as OI_TREND |
+| LiveStraddleAnalyser skew check | `check_iv_skew_reversal(agg, options_live, spot)` | `check_skew_flip` |
+| LiveOIAnalyser PCR sustained | `check_pcr_sustained_trend(history)` | `check_pcr_sustained` |
+| `check_implied_move_boundary` | returns `"RANGE_BOUNDARY"` signal | — |
+| FuturesAnalyser data source | `stock.zerodha_ctx["futures_data"]["current"]` DataFrame | `stock.future_data` |
+| MaxPainAnalyser far-expiry gate | Parses actual expiry date string vs `date.today()` | — |
+| PCR divergence data path | `underlying_base_stats["per_expiry_pcr"]` dict | `per_expiry_map` |
+
+---
+
 ## Appendix A: Analyzer Method Registration Quick Reference
 
 To add a new analysis method to any analyzer:
@@ -1833,13 +2141,14 @@ ANALYSIS_WEIGHTS["MY_SIGNAL"] = 12  # weight
 
 ## Appendix B: Key File Sizes (for context budget awareness)
 
-| File | Size | Notes |
-|------|------|-------|
-| `common/Stock.py` | ~68KB | Core data model, many methods |
-| `analyser/TechnicalAnalyser.py` | ~63KB | 12+ analysis methods |
-| `analyser/OIChainAnalyser.py` | ~68KB | Complex OI chain logic |
-| `intraday/intraday_monitor.py` | ~55KB | Main orchestration |
-| `backtest/optimizer.py` | ~60KB | Search spaces for all methods |
+| File | Notes |
+|------|-------|
+| `common/Stock.py` | Core data model; delegates live ticks to TickStore |
+| `analyser/TechnicalAnalyser.py` | ~63KB — 12+ analysis methods |
+| `analyser/OIChainAnalyser.py` | ~68KB — complex OI chain logic |
+| `intraday/intraday_monitor.py` | ~55KB — main orchestration |
+| `backtest/optimizer.py` | ~60KB — Optuna search spaces for all methods |
+| `analyser/PanicModeAnalyser.py` | Composite analyser — reads all other analysers' output |
 
 ## Appendix C: External Dependencies
 
