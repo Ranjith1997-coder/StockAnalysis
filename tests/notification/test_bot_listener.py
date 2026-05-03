@@ -382,7 +382,7 @@ async def test_cmd_holidays_shows_upcoming(clean_ctx):
     import datetime
     holiday = datetime.date(2026, 4, 14)
     update, context = make_update()
-    with patch("notification.bot_listener.datetime") as mock_dt, \
+    with patch("notification.commands.market.datetime") as mock_dt, \
          patch("common.market_calendar.is_trading_day", return_value=True), \
          patch("common.market_calendar.get_upcoming_holidays",
                return_value=[holiday]):

@@ -395,7 +395,10 @@ class ZerodhaTickerManager:
         self.stop_tick_processor()
 
     def on_ticks(self, ws, ticks):
+        import time
+        import common.shared as shared
         logger.debug(f"Received {len(ticks)} ticks")
+        shared.app_ctx.last_equity_tick_time = time.time()
         for tick in ticks:
             self.tick_queue.put(tick)
 
