@@ -25,6 +25,9 @@ help:
 	@echo "    run-premarket Global cues + pre-open reports"
 	@echo "    run-postmarket Post-market analysis pipeline"
 	@echo "    deploy        Deploy to EC2 via SSH"
+	@echo "    service-stop        Start EC2 (if stopped), stop stock_analysis.service"
+	@echo "                         On holidays/weekends: exits if instance stopped, skips 15s wait if running"
+	@echo "    service-stop-force  Dev: same but bypasses holiday guard (SSH retry-poll instead of fixed sleep)"
 	@echo ""
 	@echo "  Test"
 	@echo "    test          Run full test suite"
@@ -108,6 +111,19 @@ run_and_summarize()"
 .PHONY: deploy
 deploy:
 	PYTHONPATH=$(CURDIR) $(PYTHON) scripts/deploy.py
+
+.PHONY: service-stop
+service-stop:
+	@echo "Starting EC2 instance (if needed) and stopping stock_analysis.service..."
+	PYTHONPATH=$(CURDIR) $(PYTHON) scripts/service_stop.py
+
+# Dev: bypass holiday guard — start instance even on weekends/holidays.
+# Uses SSH retry-poll to connect ASAP and stop the service before
+# intraday_monitor.py can trigger an OS shutdown.
+.PHONY: service-stop-force
+service-stop-force:
+	@echo "[DEV] Starting EC2 + stopping service (holiday guard bypassed)..."
+	PYTHONPATH=$(CURDIR) $(PYTHON) scripts/service_stop.py --force
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Test

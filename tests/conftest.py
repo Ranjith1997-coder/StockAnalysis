@@ -58,6 +58,9 @@ class FakeAppCtx:
         self.token_registry = None
         self.signal_bus = None
         self.correlator = None
+        self.narrator = None
+        self.last_equity_tick_time = 0.0
+        self.llm_budget_warned = False
 
 
 @pytest.fixture
