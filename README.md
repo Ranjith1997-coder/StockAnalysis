@@ -41,9 +41,10 @@ StockAnalysis is a comprehensive automated stock market analysis tool designed f
   - NSE Index returns (top 10 gainers/losers)
 
 ### Notification System
-- **Telegram Integration**: Real-time alerts for trend detection and market reports
-- **Separate Channels**: Different chat IDs for intraday vs positional analysis
-- **Interactive Bot**: Optional Telegram bot listener for commands
+- **Three Telegram Channels**: Intraday alerts, positional/EOD alerts, and a dedicated real-time options channel
+- **Interactive Bot**: Command Router architecture — `/ltp`, `/gainers`, `/losers`, `/watchlist`, `/holidays`, `/straddle`, `/walls`, `/status`, `/enctoken`
+- **System Health Dashboard** (`/status`): live feed lag, RAM usage, LLM token budget
+- **Options Seller Commands**: `/straddle` (ATM premium, ±1SD range, PCR) and `/walls` (OI walls with tick-level and session delta)
 
 ### Additional Features
 - **Modular Architecture**: Easily extensible analyzer and data source framework
@@ -51,6 +52,8 @@ StockAnalysis is a comprehensive automated stock market analysis tool designed f
 - **Automated Scheduling**: Can auto-start at market open and shutdown system after EOD
 - **Selective Analysis**: Command-line arguments to analyze specific stocks or indices
 - **Environment-based Configuration**: Feature flags for enabling/disabling components
+- **Intelligence Layer**: Cross-layer signal confluence detection (live + intraday + positional) via `SignalCorrelator`; LLM-powered trade narratives via Google Gemini Flash (`ENABLE_INTELLIGENCE`, `ENABLE_NARRATOR`)
+- **Holiday-aware Deployment**: `make service-stop` exits early on non-trading days; SSH retry-poll connects the moment the instance is reachable instead of a fixed sleep
 
 ## Getting Started
 
@@ -89,6 +92,36 @@ Create a `.env` file in the project root with the following environment variable
 
 #### Mode Selection (Development Only)
 - `ENV_DEV_INTRADAY`: Set to `1` to run intraday analysis in dev mode
+### Makefile targets
+
+A `Makefile` wraps all common workflows:
+
+```bash
+make venv              # Create .venv/
+make install           # Install production dependencies
+make install-dev       # Install prod + dev/test tools
+make install-deploy    # Install deploy tools (boto3, paramiko)
+make env-check         # Verify required .env vars are set
+
+make run-prod          # PRODUCTION=1 intraday monitor
+make run-dev           # PRODUCTION=0 intraday monitor (safe)
+make run-premarket     # Global cues + pre-open report
+make run-postmarket    # Post-market analysis pipeline
+make deploy            # git pull + restart service on EC2 via SSH
+make service-stop      # Start EC2 (if stopped) + stop service; exits early on holidays
+make service-stop-force  # Same but bypasses holiday guard (dev/debugging)
+
+make test              # Full test suite
+make test-fast         # Stop on first failure
+make test-cov          # Coverage report
+make lint              # ruff check
+make format            # ruff format
+make typecheck         # pyright
+make logs              # Tail logs/monitor.log (last 50 lines)
+make logs-follow       # Follow logs/monitor.log live
+make clean             # Remove __pycache__, .pyc, pytest cache
+```
+
 #### Basic Usage
 Run the main analysis script:
 ```bash
@@ -213,26 +246,31 @@ This runs the analysis in a separate thread while keeping the bot listener activ
 
 ```
 StockAnalysis/
-├── analyser/              # Analysis modules (Volume, Technical, IV, PCR, Max Pain, Futures, etc.)
-├── backtest/              # Backtesting framework
-├── common/                # Shared utilities, constants, logging
-├── fno/                   # Futures & Options data collection
-├── intraday/              # Main monitoring script
-├── notification/          # Telegram notification and bot listener
-├── nse/                   # NSE data fetching utilities
-├── post_market_analysis/  # Post-market analysis modules
-│   ├── analysis.py        # Analysis logic for each data source
-│   ├── base.py            # Base class for data sources
-│   ├── fii_dii.py         # FII/DII activity data source
-│   ├── fo_participant_oi.py  # F&O participant OI data source
-│   ├── index_returns.py   # NSE index returns data source
-│   ├── sector_performance.py # Sector performance data source
-│   ├── registry.py        # Source registration
-│   ├── runner.py          # Pipeline orchestration
-│   └── summary.py         # Formatters for notifications
-├── scripts/               # Deployment and utility scripts
-├── sentiment/             # News sentiment analysis
-└── zerodha/               # Zerodha API integration
+├── analyser/              # Analysis modules (Volume, Technical, IV, PCR, Max Pain, Futures,
+│                        #   OI Chain, Candlestick, LiveOI, LiveStraddle, PanicMode)
+├── backtest/              # Backtesting framework + Optuna optimizer
+├── common/                # Shared utilities, constants, scoring, logging, market calendar
+├── configs/               # custom_holidays.json, ml_config.yaml
+├── data/                  # final_derivatives_list.json, backtest results, models
+├── docs/                  # DESIGN.md — full architectural reference
+├── fno/                   # SensibullFetcher, OptionWriteStandardDeviation
+├── intelligence/          # SignalBus, SignalCorrelator, MarketNarrator, GeminiClient
+├── intraday/              # intraday_monitor.py — main entry point
+├── notification/
+│   ├── Notification.py      # Telegram sender (3 channels)
+│   ├── bot_listener.py      # Thin entry point — registers commands, schedules jobs
+│   └── commands/            # Command Router: account, market, system modules
+├── nse/                   # NSE API wrappers, date helpers
+├── post_market_analysis/  # FII/DII, sector perf, F&O OI, index returns pipeline
+├── premarket/             # Global cues, bonds, commodities, pre-open report
+├── scripts/
+│   ├── deploy.py            # git pull + restart via SSH
+│   └── service_stop.py      # Start EC2 + stop service (holiday-aware, SSH retry-poll)
+├── sentiment/             # FinBERT news sentiment
+├── tests/                 # 951 tests across 41 files
+├── zerodha/               # WebSocket lifecycle, TickStore, LiveOptionsEngine, LiveStockEngine
+├── Makefile               # All common targets (see above)
+└── .env.template          # Copy to .env and fill in your credentials
 ```
 
 ### Key Files
