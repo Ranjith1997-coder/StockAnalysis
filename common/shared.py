@@ -33,6 +33,10 @@ class AppContext:
         self.signal_bus: Optional[SignalBus] = None
         self.correlator: Optional[SignalCorrelator] = None
         self.narrator: Optional[MarketNarrator] = None
+        # Feed health: wall-clock time of last equity tick received
+        self.last_equity_tick_time: float = 0.0
+        # LLM budget: flag to prevent repeated 80% alerts per day
+        self.llm_budget_warned: bool = False
 
 app_ctx = AppContext()
 ticker_52_week_high_list = []

@@ -5,7 +5,7 @@ import os
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
-load_dotenv()
+load_dotenv(override=True)
 
 # AWS Configuration from environment variables
 AWS_REGION = os.getenv("AWS_REGION", "ap-south-1")
