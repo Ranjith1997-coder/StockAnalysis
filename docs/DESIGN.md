@@ -1,6 +1,6 @@
 # StockAnalysis - Comprehensive Design Document
 
-> **Last Updated**: June 2026 (PanicModeAnalyser, TickStore/FuturesFetcher/SensibullFetcher extraction, LiveStockEngine, LiveOptionsHistory, LiveAlertFormatter, MessageFormatter, full test suite)
+> **Last Updated**: May 2026 (Command Router bot refactor, /straddle + /walls commands, System Health Dashboard /status, LLM budget alert job, service-stop + service-stop-force Makefile targets, SSH retry-poll, `last_equity_tick_time` feed health, `llm_budget_warned` daily flag)
 > **Purpose**: Complete architectural reference for the Indian Stock Market Analysis System targeting NSE (National Stock Exchange) equities. This document captures the entire codebase: architecture, data flows, module interactions, signal processing, scoring, notifications, and deployment details.
 
 ---
@@ -107,7 +107,13 @@ StockAnalysis/
 |
 |-- notification/
 |   |-- Notification.py              # Telegram message sender
-|   |-- bot_listener.py              # Telegram bot with interactive commands (/help, /status, /ltp, /gainers, /losers, /watchlist, /holidays, /enctoken)
+|   |-- bot_listener.py              # Thin entry point: register_all() + LLM budget alert job
+|   |-- commands/
+|   |   |-- __init__.py              # register_all(application) — iterates all command modules
+|   |   |-- _helpers.py             # find_stock_by_symbol(), build_gainers_losers()
+|   |   |-- account.py              # /start, /enctoken
+|   |   |-- market.py               # /ltp, /gainers, /losers, /watchlist, /holidays, /straddle, /walls
+|   |   |-- system.py               # /help, /status (System Health Dashboard), job_llm_budget_alert
 |
 |-- nse/
 |   |-- nse_derivative_data.py       # NSE API wrappers (futures, options, bhav copy, etc.)
@@ -150,7 +156,11 @@ StockAnalysis/
 |   |-- OptionWriteStandardDeviation.py  # Legacy standard deviation writer
 |
 |-- ml_pipeline/                     # ML prediction pipeline (XGBoost, LightGBM, RF, Ensemble)
-|-- scripts/                         # Utility scripts
+|-- scripts/
+|   |-- deploy.py                    # SSH deploy: git pull + restart service on EC2
+|   |-- service_stop.py              # Start EC2 (if stopped) + stop stock_analysis.service
+|                                    # Holiday guard: exits early on non-trading days unless --force
+|                                    # SSH retry-poll replaces fixed 15s sleep
 |-- configs/                         # Configuration files
 |-- data/                            # Stock lists (final_derivatives_list.json, etc.)
 |-- docs/                            # Documentation
@@ -298,6 +308,10 @@ class AppContext:
     signal_bus: SignalBus         # Cross-layer signal event bus (when ENABLE_INTELLIGENCE=1)
     correlator: SignalCorrelator  # Cross-layer confluence detector (when ENABLE_INTELLIGENCE=1)
     narrator: MarketNarrator      # LLM narrative generator (when ENABLE_NARRATOR=1)
+    last_equity_tick_time: float  # epoch of last equity WebSocket tick; 0.0 = no tick yet
+                                  # Set by ZerodhaTickerManager.on_ticks(); used by /status
+    llm_budget_warned: bool       # True once 80% LLM budget alert fires today;
+                                  # prevents duplicate alerts; reset at midnight via callback
 
 # Global singleton
 app_ctx = AppContext()
@@ -1530,32 +1544,78 @@ class TELEGRAM_NOTIFICATIONS:
 | Positional | `POSITIONAL_CHAT_ID` | EOD swing trade alerts |
 | Live Options | `LIVE_OPTIONS_CHAT_ID` | Real-time options tick signals (NEW) |
 
-### `notification/bot_listener.py`
+### Command Router (`notification/commands/`)
 
-Telegram bot with interactive commands. Runs in a background thread via `init_telegram_bot()` using `python-telegram-bot` polling.
+The bot was refactored from a 430-line monolith into a **Command Router** pattern. `bot_listener.py` is now a thin ~30-line entry point; all command logic lives in the `commands/` subpackage.
 
-#### Commands
-
-| Command | Description | Data source |
-|---------|-------------|-------------|
-| `/help` | List all available commands | Static |
-| `/status` | System health snapshot: mode, WebSocket state, stock/index count, production flag, trading day | `shared.app_ctx`, `market_calendar` |
-| `/ltp <SYMBOL>` | Last traded price + % change + previous close for any symbol (case-insensitive, searches indices, stocks, commodities, global indices) | `stock_token_obj_dict` |
-| `/gainers` | Top 5 stocks by positive % change since previous close | `stock_token_obj_dict` |
-| `/losers` | Top 5 stocks by negative % change since previous close | `stock_token_obj_dict` |
-| `/watchlist` | Full subscription overview: indices, F&O stocks (with preview), commodities, global indices, Zerodha WebSocket status and token counts, options registry stats per index (zone breakdown + spot price), live futures LTP/OI, current & next expiry | `shared.app_ctx`, `token_registry`, `zerodha_ctx` |
-| `/holidays` | Today's trading status + upcoming NSE holidays in the next 30 days | `market_calendar` |
-| `/enctoken <token>` | Updates Zerodha enctoken in `.env`, reconnects WebSocket, subscribes options | `.env`, `ZerodhaTickerManager` |
-
-#### Key helpers
-
-```python
-_find_stock_by_symbol(symbol)   # O(n) search across all 4 tracked dicts
-_build_gainers_losers()         # Returns ([top5 gainers], [top5 losers]) sorted by % change
+```
+notification/
+  bot_listener.py       # init_telegram_bot() → register_all(); schedules job_llm_budget_alert
+  commands/
+    __init__.py         # register_all(app): iterates [account, market, system] for HANDLERS
+    _helpers.py         # find_stock_by_symbol(), build_gainers_losers()
+    account.py          # /start, /enctoken + _subscribe_registered_options
+    market.py           # /ltp, /gainers, /losers, /watchlist, /holidays, /straddle, /walls
+    system.py           # /help, /status, job_llm_budget_alert (background job)
 ```
 
+**Adding a new command:** create `commands/mymodule.py` with `HANDLERS = [("cmd", handler_fn)]`. `register_all()` picks it up automatically — no changes to `bot_listener.py` needed.
+
+`bot_listener.py` re-exports all old public symbols for backward compatibility with existing tests.
+
+### Bot Commands
+
+| Command | Module | Description |
+|---------|--------|-------------|
+| `/help` | system | All available commands |
+| `/status` | system | **System Health Dashboard** — feed lag, RAM, LLM budget |
+| `/ltp <SYMBOL>` | market | Last traded price + % change (all 4 dicts, case-insensitive) |
+| `/gainers` | market | Top 5 gainers by % change since previous close |
+| `/losers` | market | Top 5 losers by % change since previous close |
+| `/watchlist` | market | Full subscription overview: WebSocket state, options zones, futures LTP/OI |
+| `/holidays` | market | Today's trading status + upcoming NSE holidays (next 30 days) |
+| `/straddle <SYMBOL>` | market | Live ATM straddle: premium, ±1SD range, CE/PE LTPs, PCR (NIFTY/BANKNIFTY only) |
+| `/walls <SYMBOL>` | market | OI walls: CE/PE max-OI strikes, tick delta, session delta, gaps, Iron Condor zone |
+| `/enctoken <token>` | account | Update Zerodha enctoken in `.env` + reconnect WebSocket |
+| `/start` | account | Register for notifications |
+
+### `/status` — System Health Dashboard
+
+`notification/commands/system.py` assembles three sections in a single message:
+
+**1. Feed Health**
+- **Equity feed**: time since last WebSocket tick (`app_ctx.last_equity_tick_time`). 🟢 <30s · 🟡 30-120s · 🔴 >120s. Shows "outside market hours" between 15:30–09:15 IST.
+- **Options feed**: `options_aggregate["last_updated"]` per tracked index. Same thresholds.
+
+**2. RAM Health** (via `psutil`)
+- Process RSS + system total RAM + usage %. 🟢 <60% · 🟡 60–80% · 🔴 >80%.
+
+**3. LLM Budget**
+- `GeminiClient._daily_tokens / DAILY_TOKEN_LIMIT` (900 K tokens/day).
+- Background job `job_llm_budget_alert` runs every 15 min. Fires a Telegram alert **once per day** when usage crosses 80% (`app_ctx.llm_budget_warned` prevents repeats; reset at midnight).
+
+### `/straddle <SYMBOL>` (NIFTY / BANKNIFTY only)
+
+Reads `options_aggregate` + `options_live[atm_strike]` from `TickStore`:
+- Spot, ATM strike, straddle premium
+- ±1SD expected daily move (`straddle × 0.68`)
+- CE and PE individual LTPs
+- PCR + staleness warning if feed lag > 30 s
+
+### `/walls <SYMBOL>` (NIFTY / BANKNIFTY only)
+
+Reads `max_oi_ce_strike` / `max_oi_pe_strike` from `options_aggregate`:
+
+| Row | Source | Meaning |
+|-----|--------|---------|
+| OI | `options_live[strike][type]["oi"]` | Current open interest |
+| Tick delta | `oi − prev_oi` | Change in last WebSocket update |
+| Session delta | `LiveOptionsHistory.wall_oi_trend(type, 375)` | OI built/unwound since open |
+
+Session delta is suppressed if the wall strike migrated during the session. Also shows gap (pts + %) from spot to each wall and an Iron Condor zone suggestion.
+
 #### Telegram message size handling
-`/watchlist` automatically splits messages that exceed Telegram's 4096-character limit into multiple sequential messages.
+`/watchlist` automatically splits messages exceeding Telegram's 4096-character limit into sequential messages.
 
 ### Message Format (from `AnalyserOrchestrator.generate_analysis_message()`)
 

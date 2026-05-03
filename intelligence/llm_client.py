@@ -43,6 +43,8 @@ class GeminiClient(LLMClient):
         self._daily_tokens = 0
         self._daily_date = date.today()
         self._lock = Lock()
+        # Optional callback(used, limit) invoked once when budget crosses 80%
+        self._budget_alert_callback = None
 
     @property
     def available(self) -> bool:
@@ -94,10 +96,20 @@ class GeminiClient(LLMClient):
             output_tokens = usage.get("candidatesTokenCount", 0)
             with self._lock:
                 self._daily_tokens += total_tokens
+                tokens_now = self._daily_tokens
 
-            logger.info(f"[Gemini] finish={finish_reason} prompt={prompt_tokens} output={output_tokens} daily={self._daily_tokens}")
+            logger.info(f"[Gemini] finish={finish_reason} prompt={prompt_tokens} output={output_tokens} daily={tokens_now}")
             if finish_reason == "MAX_TOKENS":
                 logger.warning("[Gemini] Response hit MAX_TOKENS limit — consider increasing MAX_OUTPUT_TOKENS")
+
+            # Fire budget alert callback once per day when crossing 80%
+            budget_threshold = int(self.DAILY_TOKEN_LIMIT * 0.8)
+            if tokens_now >= budget_threshold and callable(self._budget_alert_callback):
+                try:
+                    self._budget_alert_callback(tokens_now, self.DAILY_TOKEN_LIMIT)
+                except Exception:
+                    pass
+
             return text.strip()
 
         except requests.Timeout:
