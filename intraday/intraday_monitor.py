@@ -1166,6 +1166,87 @@ def compute_morning_bias():
     logger.info(f"Morning bias computed: {len(signals_emitted)} positional signals emitted to SignalBus")
 
 
+# ---------------------------------------------------------------------------
+# Sensibull WS helpers — used when OPTIONS_SOURCE=sensibull
+# ---------------------------------------------------------------------------
+
+def _get_nearest_expiry_str(index_stock) -> str | None:
+    """Return nearest expiry as 'YYYY-MM-DD' from already-populated zerodha_ctx."""
+    try:
+        chain_df = index_stock.zerodha_ctx.get("option_chain", {}).get("current")
+        if chain_df is not None and not chain_df.empty:
+            expiry = chain_df["expiry"].iloc[0]
+            if hasattr(expiry, "strftime"):
+                return expiry.strftime("%Y-%m-%d")
+            return str(expiry)[:10]
+    except Exception as exc:
+        logger.warning(f"[Sensibull] could not resolve expiry for {index_stock.stock_symbol}: {exc}")
+    return None
+
+
+def _start_sensibull_feed(live_options_engine) -> None:
+    """
+    Create one SensibullFeed per supported symbol and start them.
+    The underlying token is read directly from index_token_obj_dict — the dict
+    key IS the NSE/BSE instrument token, which Sensibull also uses as the
+    underlying identifier. No separate token mapping is needed.
+    Expiry is resolved from the zerodha_ctx already populated at startup.
+    Feeds are stored in ``shared.app_ctx.sensibull_feed``.
+    """
+    from fno.sensibull_feed import SensibullFeed
+    from fno.sensibull_adapter import SensibullAdapter
+    from notification.Notification import TELEGRAM_NOTIFICATIONS
+
+    # Symbols to subscribe via Sensibull WS
+    _SENSIBULL_SYMBOLS = {"NIFTY", "BANKNIFTY", "SENSEX"}
+
+    adapter = SensibullAdapter()
+    feeds: list[SensibullFeed] = []
+    started_symbols: list[str] = []
+
+    for underlying_token, index_stock in shared.app_ctx.index_token_obj_dict.items():
+        symbol = index_stock.stock_symbol
+        if symbol not in _SENSIBULL_SYMBOLS:
+            continue
+
+        expiry = _get_nearest_expiry_str(index_stock)
+        if not expiry:
+            # Allow manual override as a last resort
+            expiry = os.getenv(f"SENSIBULL_EXPIRY_{symbol}", "")
+        if not expiry:
+            logger.error(
+                f"[Sensibull] cannot resolve expiry for {symbol}. "
+                f"Set SENSIBULL_EXPIRY_{symbol}=YYYY-MM-DD or ensure zerodha option chain is loaded."
+            )
+            continue
+
+        subscriptions = [{"underlying": underlying_token, "expiry": expiry}]
+        captured_stock = index_stock  # explicit closure capture
+
+        def make_callback(stock):
+            def _on_snapshot(token: int, data: dict) -> None:
+                try:
+                    adapter.apply(stock, data, live_options_engine)
+                except Exception as exc:
+                    logger.error(f"[Sensibull] snapshot error for {stock.stock_symbol}: {exc}")
+            return _on_snapshot
+
+        feed = SensibullFeed(subscriptions, on_snapshot=make_callback(captured_stock))
+        feed.start()
+        feeds.append(feed)
+        started_symbols.append(symbol)
+        logger.info(f"[Sensibull] feed started for {symbol} (underlying_token={underlying_token}, expiry={expiry})")
+
+    if feeds:
+        shared.app_ctx.sensibull_feed = feeds
+        TELEGRAM_NOTIFICATIONS.send_live_options_notification(
+            f"📡 <b>Sensibull Live Feed Started</b> — {', '.join(started_symbols)}"
+        )
+        logger.info(f"[Sensibull] {len(feeds)} feed(s) running: {started_symbols}")
+    else:
+        logger.error("[Sensibull] no feeds started — check symbol/expiry configuration")
+
+
 def live_options_analysis():
     """
     Live options only mode — WebSocket + LiveOptionsEngine, no regular analysis.
@@ -1187,10 +1268,13 @@ def live_options_analysis():
             tm.update_enctoken(_quote(enc_raw, safe=""))
             if tm.connect():
                 logger.info("Live options WebSocket connected")
-                from notification.bot_listener import _subscribe_registered_options
                 from time import sleep as _sleep
                 _sleep(3)   # wait for first index ticks
-                _subscribe_registered_options(tm)
+                if shared.app_ctx.options_source == "sensibull":
+                    _start_sensibull_feed(tm.live_options_engine)
+                else:
+                    from notification.bot_listener import _subscribe_registered_options
+                    _subscribe_registered_options(tm)
             else:
                 logger.error("WebSocket connect failed — live options analysis aborted")
                 return
@@ -1483,6 +1567,9 @@ def init():
         if ENABLE_LIVE_OPTIONS:
             shared.app_ctx.zd_ticker_manager.live_options_engine = LiveOptionsEngine()
             logger.info("LiveOptionsEngine attached to ZerodhaTickerManager")
+            options_source = os.getenv(constant.ENV_OPTIONS_SOURCE, "zerodha").lower()
+            shared.app_ctx.options_source = options_source
+            logger.info(f"OPTIONS_SOURCE={options_source}")
 
         # Attach LiveStockEngine for per-tick equity analysis (VWAP cross, ORB, etc.)
         if ENABLE_INTELLIGENCE and shared.app_ctx.signal_bus:

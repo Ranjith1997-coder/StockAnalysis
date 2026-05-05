@@ -19,7 +19,9 @@ class LiveStraddleAnalyser:
       - ATM Implied Move:      Spot consumed ≥ 75% of expected daily range → boundary alert.
                                Opening reference comes from history[0] (true open) when
                                available, else from first tick seen this session.
-      - IV Skew Reversal:      CE/PE LTP ratio crosses parity at ATM → skew flip alert.
+      - IV Skew Reversal:      IV skew (PE IV − CE IV) crosses zero → real skew flip alert.
+                               Falls back to CE/PE LTP ratio when greeks absent (Zerodha path).
+      - IV Trend:              ATM IV rising/falling consistently over ≥ 10 min (history-powered).
     """
 
     SNAPSHOT_INTERVAL_SEC  = 60      # Internal fallback snapshot frequency
@@ -27,7 +29,13 @@ class LiveStraddleAnalyser:
     IV_COMPRESS_THRESHOLD  = -0.05   # −5% straddle with flat spot = IV compressing
     SPOT_FLAT_PCT          = 0.001   # Spot must move < 0.1% to attribute change to IV
     RANGE_USED_PCT         = 0.75    # Alert when ≥ 75% of expected range is consumed
-    SKEW_FLIP_BUFFER       = 0.05    # CE/PE ratio needs >1.05 / <0.95 before a flip counts
+    # IV skew thresholds (skew = (PE IV − CE IV) × 100)
+    SKEW_FLIP_BUFFER_IV    = 0.10    # IV skew must exceed ±0.10 pp before a flip is counted
+    SKEW_FLIP_BUFFER_LTP   = 0.05    # Fallback LTP ratio buffer (Zerodha path)
+    # IV trend thresholds
+    IV_TREND_MINUTES       = 10      # Minimum minutes of history for IV trend check
+    IV_TREND_RISE_PP       = 0.015   # ATM IV must rise ≥ 1.5 pp over window to alert
+    IV_TREND_FALL_PP       = 0.010   # ATM IV must fall ≥ 1.0 pp over window to alert
     # Minimum straddle as % of spot — rejects partial ticks where only CE or PE has arrived.
     # A real ATM straddle is typically 0.5-3% of spot. Below 0.3% means one leg is missing.
     MIN_STRADDLE_SPOT_PCT  = 0.003
@@ -43,8 +51,8 @@ class LiveStraddleAnalyser:
         self._open_straddle: float = 0.0
         self._open_spot: float = 0.0
 
-        # CE/PE ratio history for skew detection
-        self._skew_ratio_history: deque = deque(maxlen=6)
+        # IV skew history — tracks iv_skew value (pp); fallback uses CE/PE LTP ratio
+        self._skew_history: deque = deque(maxlen=6)    # float: iv_skew pp or LTP ratio
 
     # ── helpers ───────────────────────────────────────────────────────────────
 
@@ -216,14 +224,55 @@ class LiveStraddleAnalyser:
         spot: float,
     ) -> tuple[str, str] | None:
         """
-        Tracks CE LTP / PE LTP ratio at ATM.
-        Fires when ratio crosses parity with enough prior skew.
-        (No history needed — skew reversals are fast events.)
+        Detects a flip in the IV skew direction.
+
+        Sensibull path: uses agg["iv_skew"] = (PE IV − CE IV) × 100.
+          Positive skew → puts more expensive (downside fear).
+          Negative skew → calls more expensive (upside speculation).
+          Fires when skew crosses zero after being on the other side.
+
+        Zerodha fallback (no greeks): tracks CE/PE LTP ratio at ATM.
         """
         atm = agg.get("atm_strike")
         if not atm or spot <= 0:
             return None
 
+        # ── Sensibull path: actual IV-based skew ─────────────────────────────
+        ce_iv = agg.get("atm_iv_ce", 0.0) or 0.0
+        pe_iv = agg.get("atm_iv_pe", 0.0) or 0.0
+        if ce_iv > 0 and pe_iv > 0:
+            iv_skew = agg.get("iv_skew", 0.0) or 0.0  # (pe_iv − ce_iv) × 100
+            self._skew_history.append(iv_skew)
+
+            if len(self._skew_history) < 3:
+                return None
+
+            prev_skew = self._skew_history[-2]
+            buf = self.SKEW_FLIP_BUFFER_IV
+
+            # Was bearish (put-skewed) → flipped to neutral/bullish
+            if prev_skew > buf and iv_skew <= 0:
+                msg = F.build(
+                    F.header(self.symbol, "IV Skew Flip — PUT→NEUTRAL", "🔄"),
+                    F.kv("ATM", f"{atm:.0f}  IV Skew: {prev_skew:+.2f} → {iv_skew:+.2f} pp"),
+                    F.kv_pair("CE IV", f"{ce_iv:.1%}", "PE IV", f"{pe_iv:.1%}"),
+                    F.signal("Put premium collapsing. <b>Downside fear easing — bullish tilt.</b>"),
+                )
+                return ("SKEW_FLIP_BULLISH", msg)
+
+            # Was bullish/neutral → flipped to put-skewed (fear building)
+            if prev_skew < -buf and iv_skew >= 0:
+                msg = F.build(
+                    F.header(self.symbol, "IV Skew Flip — CALL→PUT", "🔄"),
+                    F.kv("ATM", f"{atm:.0f}  IV Skew: {prev_skew:+.2f} → {iv_skew:+.2f} pp"),
+                    F.kv_pair("CE IV", f"{ce_iv:.1%}", "PE IV", f"{pe_iv:.1%}"),
+                    F.signal("Put IV overtaking calls. <b>Downside protection being bought — bearish skew.</b>"),
+                )
+                return ("SKEW_FLIP_BEARISH", msg)
+
+            return None
+
+        # ── Zerodha fallback: CE/PE LTP ratio ────────────────────────────────
         atm_data = options_live.get(atm, {})
         ce_ltp   = atm_data.get("CE", {}).get("ltp", 0)
         pe_ltp   = atm_data.get("PE", {}).get("ltp", 0)
@@ -231,29 +280,80 @@ class LiveStraddleAnalyser:
             return None
 
         ratio = ce_ltp / pe_ltp
-        self._skew_ratio_history.append(ratio)
+        self._skew_history.append(ratio)
 
-        if len(self._skew_ratio_history) < 3:
+        if len(self._skew_history) < 3:
             return None
 
-        prev = self._skew_ratio_history[-2]
+        prev = self._skew_history[-2]
+        buf  = self.SKEW_FLIP_BUFFER_LTP
 
-        if prev > (1.0 + self.SKEW_FLIP_BUFFER) and ratio <= 1.0:
+        if prev > (1.0 + buf) and ratio <= 1.0:
             msg = F.build(
-                F.header(self.symbol, "IV Skew Flip — CALL→PUT", "🔄"),
-                F.kv("ATM", f"{atm:.0f}  CE/PE ratio: {prev:.2f} → {ratio:.2f}"),
+                F.header(self.symbol, "Skew Flip — CALL→PUT", "🔄"),
+                F.kv("ATM", f"{atm:.0f}  CE/PE LTP ratio: {prev:.2f} → {ratio:.2f}"),
                 F.kv_pair("CE LTP", f"{ce_ltp:.2f}", "PE LTP", f"{pe_ltp:.2f}"),
                 F.signal("Market shifting to downside protection. <b>Bearish skew building.</b>"),
             )
             return ("SKEW_FLIP_BEARISH", msg)
 
-        if prev < (1.0 - self.SKEW_FLIP_BUFFER) and ratio >= 1.0:
+        if prev < (1.0 - buf) and ratio >= 1.0:
             msg = F.build(
-                F.header(self.symbol, "IV Skew Flip — PUT→CALL", "🔄"),
-                F.kv("ATM", f"{atm:.0f}  CE/PE ratio: {prev:.2f} → {ratio:.2f}"),
+                F.header(self.symbol, "Skew Flip — PUT→CALL", "🔄"),
+                F.kv("ATM", f"{atm:.0f}  CE/PE LTP ratio: {prev:.2f} → {ratio:.2f}"),
                 F.kv_pair("CE LTP", f"{ce_ltp:.2f}", "PE LTP", f"{pe_ltp:.2f}"),
                 F.signal("Market shifting to upside buying. <b>Bullish skew building.</b>"),
             )
             return ("SKEW_FLIP_BULLISH", msg)
+
+        return None
+
+    def check_iv_trend(
+        self,
+        agg: dict,
+        spot: float,
+        history: "LiveOptionsHistory | None" = None,
+    ) -> tuple[str, str] | None:
+        """
+        Detects a sustained ATM IV rise or fall over IV_TREND_MINUTES.
+        Only fires when Sensibull greeks are present (atm_iv > 0 in history).
+        Does NOT require spot to be flat — IV rising while spot moves is still notable.
+        """
+        if not history or history.minutes_of_data() < self.IV_TREND_MINUTES:
+            return None
+
+        series = history.atm_iv_series(self.IV_TREND_MINUTES)
+        if len(series) < 3:
+            return None
+
+        slope = history.atm_iv_trend_slope(self.IV_TREND_MINUTES)
+        if slope is None:
+            return None
+
+        first_iv = series[0]
+        last_iv  = series[-1]
+        change   = last_iv - first_iv   # absolute change in IV (e.g. 0.19 → 0.21 = +0.02)
+
+        atm      = agg.get("atm_strike", "N/A")
+        iv_skew  = agg.get("iv_skew", 0.0) or 0.0
+        skew_str = f"Skew: {iv_skew:+.2f} pp" if iv_skew != 0 else ""
+
+        if slope > 0 and change >= self.IV_TREND_RISE_PP:
+            msg = F.build(
+                F.header(self.symbol, f"IV Rising Trend ({self.IV_TREND_MINUTES} min)", "📈"),
+                F.kv("ATM IV", f"{first_iv:.1%} → {last_iv:.1%}  ({change*100:+.1f} pp)"),
+                F.kv_pair("ATM", f"{atm}", "Spot", f"{spot:.2f}  {skew_str}"),
+                F.signal("Volatility building. <b>Event/directional move expected — avoid naked short premium.</b>"),
+            )
+            return ("IV_TREND_RISING", msg)
+
+        if slope < 0 and change <= -self.IV_TREND_FALL_PP:
+            msg = F.build(
+                F.header(self.symbol, f"IV Falling Trend ({self.IV_TREND_MINUTES} min)", "📉"),
+                F.kv("ATM IV", f"{first_iv:.1%} → {last_iv:.1%}  ({change*100:+.1f} pp)"),
+                F.kv_pair("ATM", f"{atm}", "Spot", f"{spot:.2f}  {skew_str}"),
+                F.signal("IV crush in progress. <b>Theta / sell-side favored — vega risk shrinking.</b>"),
+            )
+            return ("IV_TREND_FALLING", msg)
 
         return None
