@@ -57,6 +57,13 @@ class TickStore:
             "net_ce_oi_change": 0,
             "net_pe_oi_change": 0,
             "last_updated": 0.0,
+            # Sensibull WS enrichment — populated when OPTIONS_SOURCE=sensibull;
+            # remain at default (0.0 / None) in Zerodha mode.
+            "atm_iv": 0.0,
+            "atm_iv_percentile": 0.0,
+            "atm_ivp_type": None,
+            "max_pain_strike": None,
+            "future_price": 0.0,
         }
 
         # Live futures tick data from WebSocket
@@ -116,6 +123,15 @@ class TickStore:
             entry["buy_qty"] = tick.get("total_buy_quantity", 0)
             entry["sell_qty"] = tick.get("total_sell_quantity", 0)
             entry["timestamp"] = tick.get("exchange_timestamp")
+
+            # Greeks (populated by Sensibull path; absent in Zerodha ticks)
+            if "delta" in tick:
+                entry["delta"]     = tick["delta"]
+                entry["gamma"]     = tick.get("gamma", 0.0)
+                entry["theta"]     = tick.get("theta", 0.0)
+                entry["vega"]      = tick.get("vega", 0.0)
+                entry["iv"]        = tick.get("iv", 0.0)
+                entry["iv_change"] = tick.get("iv_change", 0.0)
 
             if "ohlc" in tick:
                 entry["open"] = tick["ohlc"].get("open", 0)

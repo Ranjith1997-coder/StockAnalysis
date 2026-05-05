@@ -47,6 +47,8 @@ class LiveOptionsEngine:
         "SKEW_FLIP_BEARISH":        600,
         "PCR_SUSTAINED_BULLISH":   1200,  # 20 min — slow-burn trend signal
         "PCR_SUSTAINED_BEARISH":   1200,
+        "IV_TREND_RISING":          900,   # 15 min
+        "IV_TREND_FALLING":         900,
     }
 
     def __init__(self):
@@ -209,8 +211,15 @@ class LiveOptionsEngine:
             if not self._throttled(symbol, alert_type):
                 self._fire(symbol, alert_type, msg)
 
-        # IV skew reversal — tick-level, no history needed
+        # IV skew reversal — uses actual IV from Sensibull; falls back to LTP ratio
         result = analyser.check_iv_skew_reversal(agg, options_live, spot)
+        if result:
+            alert_type, msg = result
+            if not self._throttled(symbol, alert_type):
+                self._fire(symbol, alert_type, msg)
+
+        # IV trend — history-powered, Sensibull path only (atm_iv in snapshot)
+        result = analyser.check_iv_trend(agg, spot, history)
         if result:
             alert_type, msg = result
             if not self._throttled(symbol, alert_type):

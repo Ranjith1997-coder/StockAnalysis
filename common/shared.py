@@ -37,6 +37,9 @@ class AppContext:
         self.last_equity_tick_time: float = 0.0
         # LLM budget: flag to prevent repeated 80% alerts per day
         self.llm_budget_warned: bool = False
+        # Options data source: "zerodha" (default) or "sensibull"
+        self.options_source: str = "zerodha"
+        self.sensibull_feed = None  # SensibullFeed instance when OPTIONS_SOURCE=sensibull
 
 app_ctx = AppContext()
 ticker_52_week_high_list = []

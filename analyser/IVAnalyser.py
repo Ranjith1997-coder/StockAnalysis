@@ -315,6 +315,12 @@ class IVAnalyser(BaseAnalyzer):
                 logger.debug(f"atm_iv missing or zero for {stock.stock_symbol} expiry {nearest_expiry}")
                 return False
 
+            # Sensibull returns atm_iv as a decimal (0.196 = 19.6%).
+            # HV is computed as a percentage (std * √N * 100 ≈ 19.6).
+            # Normalise to the same unit before computing the ratio.
+            if atm_iv < 1.0:
+                atm_iv = atm_iv * 100
+
             # ── 2. Compute HV from priceData ──────────────────────────────────
             price_data = stock.priceData
             if price_data is None or price_data.empty:
