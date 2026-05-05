@@ -19,6 +19,9 @@ __pycache__/
 .env.*
 !.env.template
 
+# Generated test/debug artifacts
+ws_decoded.json
+
 # Distribution / packaging
 dist/
 build/

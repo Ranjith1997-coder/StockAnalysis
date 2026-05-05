@@ -30,6 +30,8 @@ class OptionsSnapshot:
     pe_wall_oi:       int           # OI at pe_wall strike
     net_ce_oi_change: int           # Net CE OI change since last aggregate reset
     net_pe_oi_change: int           # Net PE OI change since last aggregate reset
+    atm_iv:           float = 0.0   # ATM IV (from Sensibull greeks; 0 on Zerodha path)
+    iv_skew:          float = 0.0   # (PE IV − CE IV) × 100; positive = put-skewed / fear
 
 
 class LiveOptionsHistory:
@@ -78,6 +80,8 @@ class LiveOptionsHistory:
             pe_wall_oi       = (options_live.get(pe_wall) or {}).get("PE", {}).get("oi", 0) if pe_wall else 0,
             net_ce_oi_change = agg.get("net_ce_oi_change", 0),
             net_pe_oi_change = agg.get("net_pe_oi_change", 0),
+            atm_iv           = agg.get("atm_iv", 0.0) or 0.0,
+            iv_skew          = agg.get("iv_skew", 0.0) or 0.0,
         )
         self._buf.append(snap)
         self._last_ts = now
@@ -183,3 +187,28 @@ class LiveOptionsHistory:
         if len(snaps) < 2 or snaps[0].total_pe_oi == 0:
             return None
         return (snaps[-1].total_pe_oi - snaps[0].total_pe_oi) / snaps[0].total_pe_oi * 100
+
+    def atm_iv_series(self, minutes: int) -> list[float]:
+        """ATM IV values over the last `minutes` minutes (oldest first). Zeros excluded."""
+        return [s.atm_iv for s in self.since(minutes * 60) if s.atm_iv > 0]
+
+    def iv_skew_series(self, minutes: int) -> list[float]:
+        """IV skew values over the last `minutes` minutes (oldest first).
+        Skew = (PE IV − CE IV) × 100.  Positive = put-skewed / fear."""
+        return [s.iv_skew for s in self.since(minutes * 60) if s.atm_iv > 0]
+
+    def atm_iv_trend_slope(self, minutes: int) -> float | None:
+        """
+        Linear slope of ATM IV over `minutes` minutes.
+        Positive = IV rising, Negative = IV falling.
+        Returns None if fewer than 3 data points.
+        """
+        series = self.atm_iv_series(minutes)
+        if len(series) < 3:
+            return None
+        n = len(series)
+        x_mean = (n - 1) / 2.0
+        y_mean = sum(series) / n
+        num = sum((i - x_mean) * (y - y_mean) for i, y in enumerate(series))
+        den = sum((i - x_mean) ** 2 for i in range(n))
+        return num / den if den > 0 else None
