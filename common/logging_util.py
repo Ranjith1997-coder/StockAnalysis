@@ -11,9 +11,9 @@ os.makedirs(LOG_DIR, exist_ok=True)
 LOG_FORMAT = "%(levelname)s:%(name)s:%(asctime)s:%(filename)s:%(lineno)d:%(funcName)s:%(message)s"
 
 # LOG_LEVEL env var controls verbosity across all handlers.
-# Valid values: DEBUG, INFO, WARNING, ERROR  (default: INFO)
-_level_name = os.environ.get("LOG_LEVEL", "INFO").upper()
-_level = getattr(logging, _level_name, logging.INFO)
+# Valid values: DEBUG, INFO, WARNING, ERROR  (default: WARNING)
+_level_name = os.environ.get("LOG_LEVEL", "WARNING").upper()
+_level = getattr(logging, _level_name, logging.WARNING)
 
 logger = logging.getLogger('StockMonitor')
 logger.setLevel(_level)
