@@ -29,6 +29,10 @@ class Stock:
         self.last_price_update = None
         self.ltp = None
         self.ltp_change_perc = None
+        # Annualised HV (%) from daily closes, computed once at morning bias.
+        # Persists through the intraday loop so IV vs HV is not contaminated
+        # by intraday gap bars when priceData is overwritten with 5m bars.
+        self.daily_hv: float | None = None
         self._priceData = pd.DataFrame()
         self.last_trend_timestamp = None
         self.derivativesData = { 

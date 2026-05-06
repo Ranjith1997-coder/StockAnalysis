@@ -180,6 +180,11 @@
                 "instrument_token": 3861249
             },
             {
+                "name": "Adani Power Limited",
+                "tradingsymbol": "ADANIPOWER",
+                "instrument_token": 4451329
+            },
+            {
                 "name": "Aditya Birla Capital Limited",
                 "tradingsymbol": "ABCAPITAL",
                 "instrument_token": 5533185
@@ -360,6 +365,11 @@
                 "instrument_token": 5215745
             },
             {
+                "name": "Cochin Shipyard Limited",
+                "tradingsymbol": "COCHINSHIP",
+                "instrument_token": 5506049
+            },
+            {
                 "name": "Coforge Limited",
                 "tradingsymbol": "COFORGE",
                 "instrument_token": 2955009
@@ -440,6 +450,11 @@
                 "instrument_token": 173057
             },
             {
+                "name": "FORCE MOTORS LTD",
+                "tradingsymbol": "FORCEMOT",
+                "instrument_token": 2962689
+            },
+            {
                 "name": "FSN E-Commerce Ventures Limited",
                 "tradingsymbol": "NYKAA",
                 "instrument_token": 1675521
@@ -463,6 +478,11 @@
                 "name": "Glenmark Pharmaceuticals Limited",
                 "tradingsymbol": "GLENMARK",
                 "instrument_token": 1895937
+            },
+            {
+                "name": "Godfrey Phillips India Limited",
+                "tradingsymbol": "GODFRYPHLP",
+                "instrument_token": 302337
             },
             {
                 "name": "Godrej Consumer Products Limited",
@@ -540,9 +560,9 @@
                 "instrument_token": 4724993
             },
             {
-                "name": "Housing & Urban Development Corporation Limited",
-                "tradingsymbol": "HUDCO",
-                "instrument_token": 5331201
+                "name": "Hyundai Motor India Limited",
+                "tradingsymbol": "HYUNDAI",
+                "instrument_token": 6616065
             },
             {
                 "name": "ICICI Bank Limited",
@@ -690,7 +710,7 @@
                 "instrument_token": 511233
             },
             {
-                "name": "LTIMindtree Limited",
+                "name": "LTM Limited",
                 "tradingsymbol": "LTM",
                 "instrument_token": 4561409
             },
@@ -760,6 +780,11 @@
                 "instrument_token": 130305
             },
             {
+                "name": "Motilal Oswal Financial Services Limited",
+                "tradingsymbol": "MOTILALOFS",
+                "instrument_token": 3826433
+            },
+            {
                 "name": "MphasiS Limited",
                 "tradingsymbol": "MPHASIS",
                 "instrument_token": 1152769
@@ -803,6 +828,11 @@
                 "name": "Nestle India Limited",
                 "tradingsymbol": "NESTLEIND",
                 "instrument_token": 4598529
+            },
+            {
+                "name": "Nippon Life India Asset Management Limited",
+                "tradingsymbol": "NAM-INDIA",
+                "instrument_token": 91393
             },
             {
                 "name": "Nuvama Wealth Management Limited",
@@ -878,11 +908,6 @@
                 "name": "Pidilite Industries Limited",
                 "tradingsymbol": "PIDILITIND",
                 "instrument_token": 681985
-            },
-            {
-                "name": "Piramal Pharma Limited",
-                "tradingsymbol": "PPLPHARMA",
-                "instrument_token": 2962177
             },
             {
                 "name": "Polycab India Limited",
@@ -1015,11 +1040,6 @@
                 "instrument_token": 6928897
             },
             {
-                "name": "Syngene International Limited",
-                "tradingsymbol": "SYNGENE",
-                "instrument_token": 2622209
-            },
-            {
                 "name": "TATA CONSUMER PRODUCTS LIMITED",
                 "tradingsymbol": "TATACONSUM",
                 "instrument_token": 878593
@@ -1055,11 +1075,6 @@
                 "instrument_token": 895745
             },
             {
-                "name": "Tata Technologies Limited",
-                "tradingsymbol": "TATATECH",
-                "instrument_token": 5195009
-            },
-            {
                 "name": "Tech Mahindra Limited",
                 "tradingsymbol": "TECHM",
                 "instrument_token": 3465729
@@ -1088,11 +1103,6 @@
                 "name": "Torrent Pharmaceuticals Limited",
                 "tradingsymbol": "TORNTPHARM",
                 "instrument_token": 900609
-            },
-            {
-                "name": "Torrent Power Limited",
-                "tradingsymbol": "TORNTPOWER",
-                "instrument_token": 3529217
             },
             {
                 "name": "Trent Limited",
@@ -1138,6 +1148,11 @@
                 "name": "Vedanta Limited",
                 "tradingsymbol": "VEDL",
                 "instrument_token": 784129
+            },
+            {
+                "name": "Vishal Mega Mart Limited",
+                "tradingsymbol": "VMM",
+                "instrument_token": 7160065
             },
             {
                 "name": "Vodafone Idea Limited",
