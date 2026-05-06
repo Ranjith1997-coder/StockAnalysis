@@ -231,20 +231,31 @@ def monitor(stock: Stock) -> Tuple[MonitorResult, bool, Optional[str]]:
             logger.debug("Zerodha derivatives data not enabled for {stock.stockName}")
 
         _sensibull = SensibullFetcher()
-        # Fetch Sensibull data (for stocks and indices, except VIX)
-        if not stock.is_index or stock.stock_symbol != "INDIA_VIX":
-            try:
-                _sensibull.fetch_data(stock, mode=analysis_type)
-                logger.debug(f"Sensibull data fetched successfully for {stock.stockName}")
-            except Exception as e:
-                logger.error(f"Error fetching Sensibull data for {stock.stockName}: {e}")
+        _excluded  = stock.stock_symbol in constant.INDEX_ANALYSIS_EXCLUDE
 
-            # Fetch Sensibull OI chain data (per-strike OI analysis)
-            try:
-                _sensibull.fetch_oi_chain(stock, mode=analysis_type)
-                logger.debug(f"Sensibull OI chain data fetched successfully for {stock.stockName}")
-            except Exception as e:
-                logger.error(f"Error fetching Sensibull OI chain data for {stock.stockName}: {e}")
+        if _excluded:
+            logger.debug(f"[monitor] {stock.stock_symbol} is in INDEX_ANALYSIS_EXCLUDE — skipping fetch and analysis")
+            return MonitorResult.SUCCESS, False, None
+
+        try:
+            _sensibull.fetch_data(stock, mode=analysis_type)
+            logger.debug(f"Sensibull data fetched successfully for {stock.stockName}")
+        except Exception as e:
+            logger.error(f"Error fetching Sensibull data for {stock.stockName}: {e}")
+
+        # Fetch Sensibull OI chain data (per-strike OI analysis)
+        try:
+            _sensibull.fetch_oi_chain(stock, mode=analysis_type)
+            logger.debug(f"Sensibull OI chain data fetched successfully for {stock.stockName}")
+        except Exception as e:
+            logger.error(f"Error fetching Sensibull OI chain data for {stock.stockName}: {e}")
+
+        # Fetch IV chart (daily IV history) — used by IV trend analyser in positional mode.
+        # Skipped automatically if already fetched today (fetch-once guard in fetcher).
+        try:
+            _sensibull.fetch_iv_chart(stock)
+        except Exception as e:
+            logger.error(f"Error fetching Sensibull IV chart for {stock.stockName}: {e}")
 
         if stock.is_index:
             trend_found, score_result = (
@@ -252,7 +263,7 @@ def monitor(stock: Stock) -> Tuple[MonitorResult, bool, Optional[str]]:
                 if shared.app_ctx.mode == shared.Mode.POSITIONAL
                 else orchestrator.run_all_intraday(stock, index=True)
             )
-        else: 
+        else:
             trend_found, score_result = (
                 orchestrator.run_all_positional(stock)
                 if shared.app_ctx.mode == shared.Mode.POSITIONAL
@@ -407,7 +418,7 @@ def update_zerodha_option_chain(stockName = None, indexName = None):
     for index in  shared.app_ctx.index_token_obj_dict.values():
         if not PRODUCTION and constant.NO_OF_INDEX != -1 and count >= constant.NO_OF_INDEX:
             break
-        if (index.stock_symbol in ("INDIA_VIX", "SENSEX")) or (indexName and index.stock_symbol != indexName):
+        if (index.stock_symbol in constant.INDEX_ANALYSIS_EXCLUDE) or (indexName and index.stock_symbol != indexName):
             continue
 
         zerodha_ctx = index.zerodha_ctx
@@ -1137,7 +1148,7 @@ def _compute_daily_hv_all():
     """
     all_stocks = list(shared.app_ctx.stock_token_obj_dict.values()) + [
         idx for idx in shared.app_ctx.index_token_obj_dict.values()
-        if idx.stock_symbol not in ("INDIA_VIX", "SENSEX")
+        if idx.stock_symbol not in constant.INDEX_ANALYSIS_EXCLUDE
     ]
     computed = 0
     for s in all_stocks:
@@ -1189,11 +1200,12 @@ def compute_morning_bias():
     try:
         # Indices
         for index in shared.app_ctx.index_token_obj_dict.values():
-            if index.stock_symbol in ("INDIA_VIX", "SENSEX"):
+            if index.stock_symbol in constant.INDEX_ANALYSIS_EXCLUDE:
                 continue
             try:
                 _sb.fetch_data(index, mode="positional")
                 _sb.fetch_oi_chain(index, mode="positional")
+                _sb.fetch_iv_chart(index)
             except Exception as e:
                 logger.warning(f"[MorningBias] Sensibull fetch failed for {index.stock_symbol}: {e}")
             orchestrator.run_all_positional(index, index=True)
@@ -1216,6 +1228,7 @@ def compute_morning_bias():
             try:
                 _sb.fetch_data(stock, mode="positional")
                 _sb.fetch_oi_chain(stock, mode="positional")
+                _sb.fetch_iv_chart(stock)
             except Exception as e:
                 logger.warning(f"[MorningBias] Sensibull fetch failed for {stock.stock_symbol}: {e}")
             orchestrator.run_all_positional(stock, index=False)
