@@ -18,8 +18,13 @@ ENV_OPTIONS_SOURCE      = "OPTIONS_SOURCE"         # "zerodha" (default) or "sen
 
 # Indices for which live option chains are subscribed via WebSocket.
 # Only weekly-traded, high-liquidity indices. Keeping this small avoids the 500-token limit.
-# FINNIFTY/NIFTYNXT50/SENSEX/INDIA_VIX are excluded — low retail relevance for options scalping.
 LIVE_OPTIONS_INDICES = ["NIFTY", "BANKNIFTY"]
+
+# Indices excluded from all analysis (fetch + orchestrator).
+# INDIA_VIX  — volatility index, has no options chain; Sensibull API returns 500 for it.
+# FINNIFTY   — Sensibull insights API returns 500; low retail relevance.
+# SENSEX     — BSE index; Zerodha NSE instrument setup does not apply to it.
+INDEX_ANALYSIS_EXCLUDE = {"INDIA_VIX", "FINNIFTY"}
 
 
 #DEV ENVIRONMENTS
@@ -184,7 +189,7 @@ NOTIFICATION_PRIORITY = {
 # Lowered from 75 → 60 to include MEDIUM-priority signals, since the expanded
 # technical pool (Supertrend, RSI Divergence, Stochastic, OBV, Pivot Points,
 # enhanced candlestick patterns) provides higher confidence at moderate scores
-MIN_NOTIFICATION_SCORE = 75
+MIN_NOTIFICATION_SCORE = 110
 
 # Bonus multipliers for signal alignment
 SIGNAL_ALIGNMENT_BONUS = {
