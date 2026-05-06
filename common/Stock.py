@@ -59,7 +59,8 @@ class Stock:
             },
             "historical_data": pd.DataFrame(),  # Time-series data
             "oi_chain": None,          # Latest per-strike OI chain snapshot
-            "oi_chain_history": []     # List of periodic OI chain snapshots (max 15 for intraday)
+            "oi_chain_history": [],    # List of periodic OI chain snapshots (max 15 for intraday)
+            "iv_chart_history": pd.DataFrame(),  # Daily IV closes from iv_chart API (fetched once)
         }
 
         self.analysis = {"Timestamp" : None,

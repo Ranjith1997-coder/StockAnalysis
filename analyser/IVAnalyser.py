@@ -267,10 +267,19 @@ class IVAnalyser(BaseAnalyzer):
     @BaseAnalyzer.index_both
     def analyse_trend_in_ATM_IV(self, stock: Stock):
         """
-        Detects a sustained IV trend (rising or falling) over the last N snapshots
-        using Sensibull historical_data atm_iv column for the nearest expiry.
+        Detects a sustained IV trend (rising or falling) over the last N snapshots.
 
-        SOURCE DATA (DEBUG):   IV series tail from historical_data
+        Source selection:
+            Intraday  — sensibull_ctx["historical_data"][atm_iv_{expiry}]
+                        (5-min API snapshots accumulated during the session)
+            Positional — sensibull_ctx["iv_chart_history"]["iv_close"]
+                        (daily ATM IV closes from iv_chart API, 2-year history)
+                        Falls back to historical_data when iv_chart not available.
+
+        iv_chart values are already in % (e.g. 13.5), no _to_pct() needed.
+        historical_data values may be decimal (0.135) — apply _to_pct() for display.
+
+        SOURCE DATA (DEBUG):   IV series tail and source used
         ANALYSER INPUT (DEBUG): last N values used for trend check
         CONDITION (DEBUG):     monotonic rising/falling + iv_change_pct vs threshold
         """
@@ -284,33 +293,68 @@ class IVAnalyser(BaseAnalyzer):
                 )
                 return False
 
-            # ── source data ───────────────────────────────────────────────────
-            hist_df = stock.sensibull_ctx.get("historical_data")
-            if hist_df is None or hist_df.empty or iv_col not in hist_df.columns:
+            is_intraday = shared.app_ctx.mode.name == shared.Mode.INTRADAY.name
+            n           = IVAnalyser.IV_TREND_CONTINUATION_DAYS
+
+            # ── source selection ──────────────────────────────────────────────
+            if not is_intraday:
+                # Positional: prefer iv_chart daily history (2yr); fall back to
+                # historical_data only if iv_chart was not fetched.
+                iv_chart_df = stock.sensibull_ctx.get("iv_chart_history")
+                if iv_chart_df is not None and not iv_chart_df.empty and "iv_close" in iv_chart_df.columns:
+                    iv_series  = iv_chart_df["iv_close"].dropna()
+                    source_tag = "iv_chart_daily"
+                    # iv_chart values are already in %; no conversion needed for display
+                    need_display_convert = False
+                    logger.debug(
+                        f"[IV_TREND] {stock.stock_symbol} expiry={nearest_expiry} | "
+                        f"SOURCE iv_chart_history total_rows={len(iv_series)} "
+                        f"last_5={iv_series.tail(5).tolist()}"
+                    )
+                else:
+                    # Fallback: historical_data (will almost always be 1 row for positional)
+                    hist_df = stock.sensibull_ctx.get("historical_data")
+                    if hist_df is None or hist_df.empty or iv_col not in hist_df.columns:
+                        logger.debug(
+                            f"[IV_TREND] {stock.stock_symbol} — no iv_chart and no historical_data, skip"
+                        )
+                        return False
+                    iv_series  = hist_df[iv_col].dropna()
+                    source_tag = "historical_data(fallback)"
+                    need_display_convert = True
+                    logger.debug(
+                        f"[IV_TREND] {stock.stock_symbol} expiry={nearest_expiry} | "
+                        f"SOURCE historical_data (iv_chart unavailable) "
+                        f"total_rows={len(iv_series)} last_5={iv_series.tail(5).tolist()}"
+                    )
+            else:
+                # Intraday: use 5-min snapshot history
+                hist_df = stock.sensibull_ctx.get("historical_data")
+                if hist_df is None or hist_df.empty or iv_col not in hist_df.columns:
+                    logger.debug(
+                        f"[IV_TREND] {stock.stock_symbol} — "
+                        f"no historical_data or column '{iv_col}' missing, skip"
+                    )
+                    return False
+                iv_series  = hist_df[iv_col].dropna()
+                source_tag = "historical_data_5min"
+                need_display_convert = True
                 logger.debug(
-                    f"[IV_TREND] {stock.stock_symbol} — "
-                    f"no historical_data or column '{iv_col}' missing, skip"
+                    f"[IV_TREND] {stock.stock_symbol} expiry={nearest_expiry} | "
+                    f"SOURCE column='{iv_col}' total_rows={len(iv_series)} "
+                    f"last_5={iv_series.tail(5).tolist()}"
                 )
-                return False
-
-            n         = IVAnalyser.IV_TREND_CONTINUATION_DAYS
-            iv_series = hist_df[iv_col].dropna()
-
-            logger.debug(
-                f"[IV_TREND] {stock.stock_symbol} expiry={nearest_expiry} | "
-                f"SOURCE column='{iv_col}' total_rows={len(iv_series)} "
-                f"last_5={iv_series.tail(5).tolist()}"
-            )
 
             if len(iv_series) < n:
                 logger.info(
                     f"[IV_TREND] {stock.stock_symbol} — "
-                    f"insufficient history ({len(iv_series)} rows, need {n}), skip"
+                    f"insufficient history ({len(iv_series)} rows, need {n}) "
+                    f"source={source_tag}, skip"
                 )
                 return False
 
             ivs        = iv_series.iloc[-n:].tolist()
-            display_iv = _to_pct(ivs[-1])
+            display_iv = _to_pct(ivs[-1]) if need_display_convert else ivs[-1]
 
             if ivs[0] == 0:
                 logger.debug(f"[IV_TREND] {stock.stock_symbol} — ivs[0]=0, skip")
@@ -323,7 +367,7 @@ class IVAnalyser(BaseAnalyzer):
             # ── analyser input + condition evaluation ─────────────────────────
             logger.debug(
                 f"[IV_TREND] {stock.stock_symbol} expiry={nearest_expiry} | "
-                f"INPUT last_{n}_ivs={[f'{v:.4f}' for v in ivs]} "
+                f"INPUT last_{n}_ivs={[f'{v:.4f}' for v in ivs]} source={source_tag} "
                 f"iv_change_pct={iv_change_pct:+.2f}% | "
                 f"CONDITION monotonic_rising={is_rising} monotonic_falling={is_falling} "
                 f"|change|={abs(iv_change_pct):.2f}% >= threshold={IVAnalyser.IV_TREND_PERCENTAGE_CHANGE}% → "
@@ -339,7 +383,7 @@ class IVAnalyser(BaseAnalyzer):
                 logger.info(
                     f"[IV_TREND] {stock.stock_symbol} expiry={nearest_expiry} — "
                     f"SIGNAL EMITTED UPWARD | ATM IV={display_iv:.1f}% "
-                    f"change={iv_change_pct:+.2f}% over {n} snapshots"
+                    f"change={iv_change_pct:+.2f}% over {n} days/snapshots [source={source_tag}]"
                 )
                 res = True
             elif is_falling and abs(iv_change_pct) >= IVAnalyser.IV_TREND_PERCENTAGE_CHANGE:
@@ -350,7 +394,7 @@ class IVAnalyser(BaseAnalyzer):
                 logger.info(
                     f"[IV_TREND] {stock.stock_symbol} expiry={nearest_expiry} — "
                     f"SIGNAL EMITTED DOWNWARD | ATM IV={display_iv:.1f}% "
-                    f"change={iv_change_pct:+.2f}% over {n} snapshots"
+                    f"change={iv_change_pct:+.2f}% over {n} days/snapshots [source={source_tag}]"
                 )
                 res = True
             else:

@@ -109,11 +109,11 @@ class PanicModeAnalyser(BaseAnalyzer):
         items = data if isinstance(data, list) else [data]
         return any(getattr(item, attr, None) == value for item in items)
 
-    def _is_intraday(self):
+    def _check_intraday_mode(self):
         return shared.app_ctx.mode.name == shared.Mode.INTRADAY.name
 
     def _price_threshold(self):
-        base = (self.INTRADAY_PRICE_THRESHOLD if self._is_intraday()
+        base = (self.INTRADAY_PRICE_THRESHOLD if self._check_intraday_mode()
                 else self.POSITIONAL_PRICE_THRESHOLD)
         try:
             vix = getattr(shared.app_ctx, "india_vix_ltp", None)
@@ -201,7 +201,7 @@ class PanicModeAnalyser(BaseAnalyzer):
 
             # ── C3: OI Smart Money Confirming Direction ───────────────────────
             oi_ok = False
-            if self._is_intraday():
+            if self._check_intraday_mode():
                 oi_ok = bool(self._get(stock, direction, "OI_INTRADAY_TREND"))
             if not oi_ok:
                 oi_ok = bool(self._get(stock, direction, "OI_BUILDUP"))
@@ -212,7 +212,7 @@ class PanicModeAnalyser(BaseAnalyzer):
                 oi_ok = bool(self._get(stock, direction, "OI_SUPPORT_RESISTANCE"))
             if not oi_ok:
                 oi_ok = bool(self._get(stock, direction, "OI_WALL"))
-            if not oi_ok and self._is_intraday():
+            if not oi_ok and self._check_intraday_mode():
                 oi_ok = bool(self._get(stock, direction, "OI_SR_SHIFT"))
             # Live wall breach signals (stored by options engine)
             if not oi_ok:
@@ -284,7 +284,7 @@ class PanicModeAnalyser(BaseAnalyzer):
                 return False
 
             confidence = {4: "MODERATE", 5: "HIGH"}.get(count, "EXTREME")
-            mode_label = "intraday" if self._is_intraday() else "positional"
+            mode_label = "intraday" if self._check_intraday_mode() else "positional"
             signal = (
                 f"{direction} panic [{confidence}] — {count}/6 confirmed: "
                 f"{', '.join(conditions_met)}"
@@ -416,7 +416,7 @@ class PanicModeAnalyser(BaseAnalyzer):
                 return False
 
             confidence = {3: "MODERATE", 4: "HIGH"}.get(count, "EXTREME")
-            mode_label = "intraday" if self._is_intraday() else "positional"
+            mode_label = "intraday" if self._check_intraday_mode() else "positional"
             signal = (
                 f"{panic_direction} panic exhaustion [{confidence}] — {count}/5 confirmed: "
                 f"{', '.join(conditions_met)}"
