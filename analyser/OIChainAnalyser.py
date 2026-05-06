@@ -274,7 +274,9 @@ class OIChainAnalyser(BaseAnalyzer):
                 "signal", "expiry"
             ])
             
-            oi_range = f"{max_put_oi_strike:.0f} - {max_call_oi_strike:.0f}"
+            lo = min(max_put_oi_strike, max_call_oi_strike)
+            hi = max(max_put_oi_strike, max_call_oi_strike)
+            oi_range = f"{lo:.0f} - {hi:.0f}"
             signal_generated = False
             
             # ── BREACH ONLY: Price BELOW dominant support → BEARISH ──

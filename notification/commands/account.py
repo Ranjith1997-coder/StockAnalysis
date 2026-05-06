@@ -147,7 +147,12 @@ async def cmd_enctoken(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             text="Connected to Zerodha Ticker",
         )
         _update_enctoken_in_env(decoded_enctoken)
-        _subscribe_registered_options(zerodha_ticker_manager)
+        if shared.app_ctx.options_source == "sensibull":
+            # Sensibull feed handles the option chain — do not subscribe Zerodha
+            # option tokens. Zerodha WS is used for equity/index/futures ticks only.
+            logger.info("[enctoken] OPTIONS_SOURCE=sensibull — skipping Zerodha option subscription")
+        else:
+            _subscribe_registered_options(zerodha_ticker_manager)
 
 
 HANDLERS = [

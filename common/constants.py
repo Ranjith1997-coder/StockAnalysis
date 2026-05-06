@@ -25,11 +25,17 @@ LIVE_OPTIONS_INDICES = ["NIFTY", "BANKNIFTY"]
 #DEV ENVIRONMENTS
 ENV_DEV_INTRADAY = "DEV_INTRADAY"
 ENV_DEV_POSITIONAL = "DEV_POSITIONAL"
+ENV_NO_OF_STOCKS = "NO_OF_STOCKS"
+ENV_NO_OF_INDEX  = "NO_OF_INDEX"
+ENV_DEV_MAX_CYCLES = "DEV_MAX_CYCLES"        # Max intraday loop cycles in dev mode (0 = unlimited)
+ENV_DEV_LOOP_WAIT  = "DEV_LOOP_WAIT_TIME"    # Seconds to sleep between dev cycles (-1 = use production wait time)
 
 
 #DEV_CONSTANTS
-NO_OF_STOCKS = -1
-NO_OF_INDEX = -1
+# Set NO_OF_STOCKS / NO_OF_INDEX env vars to limit how many stocks/indices are loaded
+# in dev mode (e.g. NO_OF_STOCKS=5). -1 means no limit (all loaded).
+NO_OF_STOCKS = int(os.environ.get(ENV_NO_OF_STOCKS, -1))
+NO_OF_INDEX  = int(os.environ.get(ENV_NO_OF_INDEX,  -1))
 
 
 #INTRADAY CONSTANTS

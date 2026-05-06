@@ -467,6 +467,8 @@ def create_stock_and_index_objects(stockName = None, indexName = None, commodity
     
     stock_list, index_list, commodity_list, global_indices_list = get_stock_objects_from_json()
 
+    is_intraday = shared.app_ctx.mode and shared.app_ctx.mode.name == shared.Mode.INTRADAY.name
+
     count = 0
     yfinanceIndexSymbols = []
     for index in index_list:
@@ -485,7 +487,6 @@ def create_stock_and_index_objects(stockName = None, indexName = None, commodity
     if yfinanceIndexSymbols:
         # Intraday: fetch 1y daily data so morning bias can run RSI/MACD/EMA on it
         # Positional: only need a few days for prev_day_ohlcv (full 2y loaded later in fetch_price_data)
-        is_intraday = shared.app_ctx.mode and shared.app_ctx.mode.name == shared.Mode.INTRADAY.name
         index_period = "1y" if is_intraday else "5D"
         prevDayIndexData = yf.download(yfinanceIndexSymbols, period=index_period, interval="1d", group_by='ticker', auto_adjust=True)
         for index in  shared.app_ctx.index_token_obj_dict.values():
@@ -705,6 +706,10 @@ def fetch_and_analyze_stocks() -> List[Tuple[MonitorResult, bool, Optional[str]]
     commodity_objs = list(shared.app_ctx.commodity_token_obj_dict.values())
     global_indices_objs = list(shared.app_ctx.global_indices_token_obj_dict.values())
     
+    # Reset analyser constants once per cycle before any analysis runs.
+    # Previously split across index/stock blocks causing a double reset per cycle.
+    orchestrator.reset_all_constants()
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
         # Fetch price data for all stocks at once
         price_future = executor.submit(fetch_price_data, stock_objs, index_objs, commodity_objs, global_indices_objs)
@@ -715,11 +720,10 @@ def fetch_and_analyze_stocks() -> List[Tuple[MonitorResult, bool, Optional[str]]
         except Exception as exc:
             logger.error(f"Error fetching price data for stocks: {exc}")
             return [(MonitorResult.ERROR, False, str(exc))]
-        
-        # Monitor and analyze all index
+
+        # Monitor and analyze all indices
         results = []
         monitor_futures = {executor.submit(process_stock, index): index for index in index_objs}
-        orchestrator.reset_all_constants(is_index=True)
         for future in concurrent.futures.as_completed(monitor_futures):
             index = monitor_futures[future]
             try:
@@ -728,11 +732,9 @@ def fetch_and_analyze_stocks() -> List[Tuple[MonitorResult, bool, Optional[str]]
             except Exception as exc:
                 logger.error(f"Unexpected error processing {index.stockName}: {exc}")
                 results.append((MonitorResult.ERROR, False, str(exc)))
-        
-        # Monitor and analyze all stocks
 
+        # Monitor and analyze all stocks
         monitor_futures = {executor.submit(process_stock, stock): stock for stock in stock_objs}
-        orchestrator.reset_all_constants(is_index=False)
         for future in concurrent.futures.as_completed(monitor_futures):
             stock = monitor_futures[future]
             try:
@@ -1096,6 +1098,59 @@ def _init_signal_intelligence():
 
 _morning_bias_done = False
 
+
+def _compute_daily_hv(stock) -> float | None:
+    """
+    Compute annualised Historical Volatility (%) from daily closes.
+    Uses std(log_returns, 20-day window) × √252 × 100.
+
+    Called once at morning bias while priceData still holds 1y daily bars.
+    Returns HV as a percentage (e.g. 28.5), or None if insufficient data.
+    """
+    import numpy as np
+    try:
+        price_data = stock.priceData
+        if price_data is None or price_data.empty:
+            return None
+        closes = price_data["Close"].dropna()
+        # Need at least 21 rows for a 20-bar window (20 log returns)
+        if len(closes) < 21:
+            return None
+        window = closes.iloc[-21:]
+        log_returns = np.log(window / window.shift(1)).dropna()
+        if len(log_returns) < 2:
+            return None
+        std = float(log_returns.std())
+        if std == 0:
+            return None
+        return round(std * (252 ** 0.5) * 100, 2)
+    except Exception as e:
+        logger.warning(f"[HV] Failed to compute daily HV for {stock.stock_symbol}: {e}")
+        return None
+
+
+def _compute_daily_hv_all():
+    """
+    Compute and cache daily HV for all stocks and indices.
+    Must be called while priceData still holds 1y daily bars (before the
+    intraday loop overwrites it with 5m data).
+    """
+    all_stocks = list(shared.app_ctx.stock_token_obj_dict.values()) + [
+        idx for idx in shared.app_ctx.index_token_obj_dict.values()
+        if idx.stock_symbol not in ("INDIA_VIX", "SENSEX")
+    ]
+    computed = 0
+    for s in all_stocks:
+        hv = _compute_daily_hv(s)
+        s.daily_hv = hv
+        if hv is not None:
+            logger.debug(f"[HV] {s.stock_symbol} daily_hv={hv:.1f}%")
+            computed += 1
+        else:
+            logger.debug(f"[HV] {s.stock_symbol} daily_hv=None (insufficient data)")
+    logger.info(f"[HV] Daily HV cached for {computed}/{len(all_stocks)} symbols")
+
+
 def compute_morning_bias():
     """
     Run positional analysers on daily data loaded by create_stock_and_index_objects().
@@ -1121,11 +1176,26 @@ def compute_morning_bias():
     orchestrator.reset_all_constants()
     signals_emitted = []
 
+    # Compute and cache daily HV for every stock and index while priceData
+    # still holds 1y daily bars (before it is overwritten with 5m data in
+    # the intraday loop). Stored on stock.daily_hv for use by IVAnalyser.
+    _compute_daily_hv_all()
+
+    # Fetch Sensibull data before running analysers.
+    # compute_morning_bias() bypasses monitor(), so without this fetch
+    # sensibull_ctx["current"]["stats"] stays None and IVAnalyser crashes.
+    _sb = SensibullFetcher()
+
     try:
         # Indices
         for index in shared.app_ctx.index_token_obj_dict.values():
             if index.stock_symbol in ("INDIA_VIX", "SENSEX"):
                 continue
+            try:
+                _sb.fetch_data(index, mode="positional")
+                _sb.fetch_oi_chain(index, mode="positional")
+            except Exception as e:
+                logger.warning(f"[MorningBias] Sensibull fetch failed for {index.stock_symbol}: {e}")
             orchestrator.run_all_positional(index, index=True)
             for sentiment in ("BULLISH", "BEARISH"):
                 for analysis_type in index.analysis.get(sentiment, {}):
@@ -1143,6 +1213,11 @@ def compute_morning_bias():
 
         # Equities
         for stock in shared.app_ctx.stock_token_obj_dict.values():
+            try:
+                _sb.fetch_data(stock, mode="positional")
+                _sb.fetch_oi_chain(stock, mode="positional")
+            except Exception as e:
+                logger.warning(f"[MorningBias] Sensibull fetch failed for {stock.stock_symbol}: {e}")
             orchestrator.run_all_positional(stock, index=False)
             for sentiment in ("BULLISH", "BEARISH"):
                 for analysis_type in stock.analysis.get(sentiment, {}):
@@ -1292,18 +1367,46 @@ def live_options_analysis():
     logger.info("Live options analysis stopped — market closed")
 
 
-def intraday_analysis(loop = True, loop_wait_time = 30):
+def intraday_analysis(loop = True, loop_wait_time = 30, max_cycles = 0):
+    """
+    Run intraday analysis loop.
+
+    Args:
+        loop:           Dev mode only — False = single cycle then stop.
+        loop_wait_time: Dev mode sleep between cycles (seconds).
+                        -1 = use the same production wait logic (align to next 5-min bar).
+                        Controlled by DEV_LOOP_WAIT_TIME env var.
+        max_cycles:     Dev mode only — stop after this many cycles.
+                        0 = unlimited. Controlled by DEV_MAX_CYCLES env var.
+    """
     shared.app_ctx.mode = shared.Mode.INTRADAY
+
+    # Start Sensibull live option chain feed independently of Zerodha WS.
+    # Sensibull is a public WebSocket — no enctoken required.
+    # Only start once (guard: sensibull_feed is None until first start).
+    if (ENABLE_LIVE_OPTIONS
+            and shared.app_ctx.options_source == "sensibull"
+            and not shared.app_ctx.sensibull_feed):
+        tm = shared.app_ctx.zd_ticker_manager
+        if tm and tm.live_options_engine:
+            logger.info("[intraday] OPTIONS_SOURCE=sensibull — starting Sensibull feed")
+            _start_sensibull_feed(tm.live_options_engine)
+        else:
+            logger.warning("[intraday] Cannot start Sensibull feed — LiveOptionsEngine not initialised")
 
     logger.info("Market time open. Starting Intraday analysis")
 
     TELEGRAM_NOTIFICATIONS.send_notification("\U0001F4C8 <b>Intraday Analysis Started</b> \U0001F4C8", parse_mode="HTML")
 
-    orchestrator.reset_all_constants()
     is_in_time_period = isNowInTimePeriod(time(9,15), time(15,30), datetime.now().time())
-    
+    cycle = 0
+
     while(is_in_time_period or not PRODUCTION):
-        logger.info("current iteration time : {}".format(datetime.now()))
+        cycle += 1
+        logger.info("current iteration time : {}  cycle={}{}".format(
+            datetime.now(), cycle,
+            f"/{max_cycles}" if max_cycles > 0 else "",
+        ))
 
         try:
             results = fetch_and_analyze_stocks()
@@ -1336,8 +1439,17 @@ def intraday_analysis(loop = True, loop_wait_time = 30):
         else:
             if not loop:
                 break
-            logger.info("Sleeping for {} sec in dev mode".format(loop_wait_time))
-            sleep(loop_wait_time)
+            if max_cycles > 0 and cycle >= max_cycles:
+                logger.info(f"Dev mode: reached max_cycles={max_cycles}, stopping.")
+                break
+            if loop_wait_time == -1:
+                # Mirror production wait: align to next 5-min bar
+                sleeptime = (constant.INTRADAY_SLEEP_TIME) - (datetime.now().second + ((datetime.now().minute % 5) * 60))
+                logger.info(f"Dev mode: production-style wait — sleeping {sleeptime}s to next 5-min bar")
+                sleep(sleeptime)
+            else:
+                logger.info("Sleeping for {} sec in dev mode".format(loop_wait_time))
+                sleep(loop_wait_time)
             is_in_time_period = True  # In dev mode, keep looping
 
     logger.info("Market time closed")
@@ -1544,15 +1656,15 @@ def init():
         update_zerodha_option_chain(args.stock, args.index)
     orchestrator = AnalyserOrchestrator()
     if not LIVE_OPTIONS_ONLY:
-        orchestrator.register(VolumeAnalyser())
-        orchestrator.register(TechnicalAnalyser())
-        orchestrator.register(CandleStickAnalyser())
+        # orchestrator.register(VolumeAnalyser())
+        # orchestrator.register(TechnicalAnalyser())
+        # orchestrator.register(CandleStickAnalyser())
         orchestrator.register(IVAnalyser())
-        orchestrator.register(FuturesAnalyser())
-        orchestrator.register(PCRAnalyser())
-        orchestrator.register(MaxPainAnalyser())
-        orchestrator.register(OIChainAnalyser())
-        orchestrator.register(PanicModeAnalyser())    # MUST be last -- reads stock.analysis
+        # orchestrator.register(FuturesAnalyser())
+        # orchestrator.register(PCRAnalyser())
+        # orchestrator.register(MaxPainAnalyser())
+        # orchestrator.register(OIChainAnalyser())
+        # orchestrator.register(PanicModeAnalyser())    # MUST be last -- reads stock.analysis
     if ENABLE_ZERODHA_API:
         logger.info("Zerodha API enabled")
         userName = os.getenv(constant.ENV_ZERODHA_USERNAME)
@@ -1648,7 +1760,10 @@ def start_stock_analysis():
         if LIVE_OPTIONS_ONLY:
             live_options_analysis()
         elif is_in_time_period:
-            intraday_analysis()
+            intraday_analysis(
+                max_cycles=int(os.getenv(constant.ENV_DEV_MAX_CYCLES, "0")),
+                loop_wait_time=int(os.getenv(constant.ENV_DEV_LOOP_WAIT, "30")),
+            )
         else:
             positional_analysis()
 
@@ -1670,9 +1785,36 @@ def start_stock_analysis():
         if LIVE_OPTIONS_ONLY:
             live_options_analysis()
         elif shared.app_ctx.mode and shared.app_ctx.mode.name == shared.Mode.INTRADAY.name:
-            intraday_analysis()
+            intraday_analysis(
+                max_cycles=int(os.getenv(constant.ENV_DEV_MAX_CYCLES, "0")),
+                loop_wait_time=int(os.getenv(constant.ENV_DEV_LOOP_WAIT, "30")),
+            )
         elif shared.app_ctx.mode and shared.app_ctx.mode.name == shared.Mode.POSITIONAL.name:
             positional_analysis()
+
+        _shutdown_background_services()
+
+def _shutdown_background_services():
+    """
+    Shut down non-daemon background threads so the process exits cleanly in dev mode.
+    ThreadPoolExecutor workers are non-daemon by default and will block exit indefinitely
+    if not explicitly stopped.
+    """
+    narrator = shared.app_ctx.narrator
+    if narrator:
+        try:
+            narrator.shutdown()
+            logger.debug("[shutdown] narrator executor stopped")
+        except Exception as e:
+            logger.warning(f"[shutdown] narrator shutdown error: {e}")
+
+    sensibull_feed = getattr(shared.app_ctx, "sensibull_feed", None)
+    if sensibull_feed:
+        try:
+            sensibull_feed.stop()
+            logger.debug("[shutdown] SensibullFeed stopped")
+        except Exception as e:
+            logger.warning(f"[shutdown] SensibullFeed stop error: {e}")
 
 if __name__ =="__main__":
 
