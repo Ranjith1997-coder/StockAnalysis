@@ -405,7 +405,7 @@ def _fmt_iv_trend(data, trend):
 @MessageFormatter.register("IV_RANK")
 def _fmt_iv_rank(data, trend):
     items = data if isinstance(data, list) else [data]
-    return [f"  IV Rank: {d.expiry} IVP=<code>{d.iv_percentile:.0f}</code> "
+    return [f"  IV Rank: {d.expiry} IVP=<code>{d.iv_percentile:.1f}</code> "
             f"ATM IV=<code>{d.atm_iv:.1f}%</code> (<b>{d.category}</b>)"
             for d in items]
 
@@ -413,7 +413,7 @@ def _fmt_iv_rank(data, trend):
 @MessageFormatter.register("IV_RANK_EXTREME")
 def _fmt_iv_rank_extreme(data, trend):
     items = data if isinstance(data, list) else [data]
-    return [f"  IV Rank Extreme: {d.expiry} IVP=<code>{d.iv_percentile:.0f}</code> "
+    return [f"  IV Rank Extreme: {d.expiry} IVP=<code>{d.iv_percentile:.1f}</code> "
             f"ATM IV=<code>{d.atm_iv:.1f}%</code> (<b>{d.category}</b>)"
             for d in items]
 
@@ -540,7 +540,7 @@ def _fmt_panic_mode(data, trend):
 @MessageFormatter.register("PANIC_EXHAUSTION")
 def _fmt_panic_exhaustion(data, trend):
     e = "🔄"
-    ivp_str = f" IVP=<code>{data.iv_percentile:.0f}</code>" if data.iv_percentile else ""
+    ivp_str = f" IVP=<code>{data.iv_percentile:.1f}</code>" if data.iv_percentile else ""
     conditions = ", ".join(data.conditions_met)
     return [
         f"  {e} <b>PANIC EXHAUSTION</b> [{data.mode}] {data.panic_direction} panic burning out"

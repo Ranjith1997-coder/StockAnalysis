@@ -20,14 +20,19 @@ help:
 	@echo "    env-check      Verify required .env variables are set"
 	@echo ""
 	@echo "  Run"
-	@echo "    run-prod      Intraday monitor — PRODUCTION=1"
-	@echo "    run-dev       Intraday monitor — PRODUCTION=0 (safe)"
-	@echo "    run-premarket Global cues + pre-open reports"
-	@echo "    run-postmarket Post-market analysis pipeline"
-	@echo "    deploy        Deploy to EC2 via SSH"
-	@echo "    service-stop        Start EC2 (if stopped), stop stock_analysis.service"
-	@echo "                         On holidays/weekends: exits if instance stopped, skips 15s wait if running"
-	@echo "    service-stop-force  Dev: same but bypasses holiday guard (SSH retry-poll instead of fixed sleep)"
+	@echo "    run-prod           Intraday monitor — PRODUCTION=1"
+	@echo "    run-dev            Dev intraday — PRODUCTION=0 DEV_INTRADAY=1"
+	@echo "    run-dev-positional Dev positional (EOD) — PRODUCTION=0 DEV_POSITIONAL=1"
+	@echo "    run-dev-stock-intraday   Dev single stock intraday:   make run-dev-stock-intraday STOCK=RELIANCE"
+	@echo "    run-dev-stock-positional Dev single stock positional: make run-dev-stock-positional STOCK=RELIANCE"
+	@echo "    run-dev-index-intraday   Dev single index intraday:   make run-dev-index-intraday INDEX=NIFTY"
+	@echo "    run-dev-index-positional Dev single index positional: make run-dev-index-positional INDEX=NIFTY"
+	@echo "    run-premarket      Global cues + pre-open reports (--premarket shortcut)"
+	@echo "    run-postmarket     Post-market analysis pipeline"
+	@echo "    deploy             Deploy to EC2 via SSH"
+	@echo "    service-stop       Start EC2 (if stopped), stop stock_analysis.service"
+	@echo "                        On holidays/weekends: exits if instance stopped, skips 15s wait if running"
+	@echo "    service-stop-force Dev: same but bypasses holiday guard (SSH retry-poll instead of fixed sleep)"
 	@echo ""
 	@echo "  Test"
 	@echo "    test          Run full test suite"
@@ -42,6 +47,7 @@ help:
 	@echo "    typecheck     Run pyright type checker"
 	@echo ""
 	@echo "  Maintenance"
+	@echo "    update-derivatives  Refresh final_derivatives_list.json from Zerodha + NSE"
 	@echo "    logs          Tail logs/monitor.log (last 50 lines)"
 	@echo "    logs-follow   Follow logs/monitor.log live"
 	@echo "    clean         Remove __pycache__, .pyc, pytest cache"
@@ -93,14 +99,41 @@ run-prod:
 
 .PHONY: run-dev
 run-dev:
-	PRODUCTION=0 PYTHONPATH=$(CURDIR) $(PYTHON) intraday/intraday_monitor.py
+	PRODUCTION=0 DEV_INTRADAY=1 PYTHONPATH=$(CURDIR) $(PYTHON) intraday/intraday_monitor.py
+
+.PHONY: run-dev-positional
+run-dev-positional:
+	PRODUCTION=0 DEV_POSITIONAL=1 PYTHONPATH=$(CURDIR) $(PYTHON) intraday/intraday_monitor.py
+
+# Usage: make run-dev-stock-intraday STOCK=RELIANCE
+#        make run-dev-stock-positional STOCK=RELIANCE
+STOCK ?= 
+.PHONY: run-dev-stock-intraday
+run-dev-stock-intraday:
+	@test -n "$(STOCK)" || { echo "ERROR: STOCK is required. Usage: make run-dev-stock-intraday STOCK=RELIANCE"; exit 1; }
+	PRODUCTION=0 DEV_INTRADAY=1 PYTHONPATH=$(CURDIR) $(PYTHON) intraday/intraday_monitor.py --stock $(STOCK)
+
+.PHONY: run-dev-stock-positional
+run-dev-stock-positional:
+	@test -n "$(STOCK)" || { echo "ERROR: STOCK is required. Usage: make run-dev-stock-positional STOCK=RELIANCE"; exit 1; }
+	PRODUCTION=0 DEV_POSITIONAL=1 PYTHONPATH=$(CURDIR) $(PYTHON) intraday/intraday_monitor.py --stock $(STOCK)
+
+# Usage: make run-dev-index-intraday INDEX=NIFTY
+#        make run-dev-index-positional INDEX=NIFTY
+INDEX ?= 
+.PHONY: run-dev-index-intraday
+run-dev-index-intraday:
+	@test -n "$(INDEX)" || { echo "ERROR: INDEX is required. Usage: make run-dev-index-intraday INDEX=NIFTY"; exit 1; }
+	PRODUCTION=0 DEV_INTRADAY=1 PYTHONPATH=$(CURDIR) $(PYTHON) intraday/intraday_monitor.py --index $(INDEX)
+
+.PHONY: run-dev-index-positional
+run-dev-index-positional:
+	@test -n "$(INDEX)" || { echo "ERROR: INDEX is required. Usage: make run-dev-index-positional INDEX=NIFTY"; exit 1; }
+	PRODUCTION=0 DEV_POSITIONAL=1 PYTHONPATH=$(CURDIR) $(PYTHON) intraday/intraday_monitor.py --index $(INDEX)
 
 .PHONY: run-premarket
 run-premarket:
-	PYTHONPATH=$(CURDIR) $(PYTHON) -c "\
-from premarket.premarket_report import run_global_cues_report, run_preopen_report; \
-run_global_cues_report(); \
-run_preopen_report()"
+	PYTHONPATH=$(CURDIR) $(PYTHON) intraday/intraday_monitor.py --premarket
 
 .PHONY: run-postmarket
 run-postmarket:
@@ -180,6 +213,10 @@ clean:
 	find . -type d -name __pycache__ -not -path "./.venv/*" | xargs rm -rf
 	find . -type f -name "*.pyc"     -not -path "./.venv/*" | xargs rm -f
 	rm -rf .pytest_cache .coverage htmlcov
+
+.PHONY: update-derivatives
+update-derivatives:
+	PYTHONPATH=$(CURDIR) $(PYTHON) scripts/stock_derivative_list.py
 
 .PHONY: clean-all
 clean-all: clean
