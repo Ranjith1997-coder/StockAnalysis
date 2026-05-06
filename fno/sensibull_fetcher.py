@@ -39,7 +39,8 @@ class SensibullFetcher:
         "https://oxide.sensibull.com/v1/compute/cache/insights/stock_info"
         "?tradingsymbol={symbol}"
     )
-    _OI_CHAIN_URL = "https://oxide.sensibull.com/v1/compute/1/oi_graphs/oi_chart"
+    _OI_CHAIN_URL  = "https://oxide.sensibull.com/v1/compute/1/oi_graphs/oi_chart"
+    _IV_CHART_URL  = "https://oxide.sensibull.com/v1/compute/iv_chart/{symbol}"
 
     # ------------------------------------------------------------------
     # Public API
@@ -249,6 +250,86 @@ class SensibullFetcher:
             logger.error(f"Request error fetching OI chain for {stock.stock_symbol}: {e}")
         except Exception as e:
             logger.error(f"Unexpected error fetching OI chain for {stock.stock_symbol}: {e}")
+        return None
+
+    def fetch_iv_chart(self, stock: "Stock") -> Optional[object]:
+        """
+        Fetch daily ATM IV history from Sensibull iv_chart API and store it in
+        ``stock.sensibull_ctx["iv_chart_history"]``.
+
+        The iv_chart API returns 2 years of daily IV closes. Values are already
+        in percentage form (e.g. 13.5 = 13.5%) — no decimal conversion needed.
+
+        This is used by IVAnalyser.analyse_trend_in_ATM_IV in positional mode,
+        where sensibull_ctx["historical_data"] only has 1 intraday snapshot.
+
+        Skips the fetch if iv_chart_history is already populated (fetch once per day).
+
+        Returns:
+            DataFrame with columns [date, iv_close, price_close], or None on failure.
+        """
+        import pandas as pd
+
+        ctx = stock.sensibull_ctx
+        existing = ctx.get("iv_chart_history")
+        if existing is not None and not existing.empty:
+            logger.debug(
+                f"[IV_CHART] {stock.stock_symbol} — already fetched "
+                f"({len(existing)} rows), skipping"
+            )
+            return existing
+
+        try:
+            encoded = quote(stock.stock_symbol, safe="")
+            url = self._IV_CHART_URL.format(symbol=encoded)
+            logger.info(f"[IV_CHART] Fetching IV chart for {stock.stock_symbol} from {url}")
+
+            response = requests.get(url, timeout=15)
+            response.raise_for_status()
+            data = response.json()
+
+            if not (data.get("success") and "payload" in data):
+                logger.warning(
+                    f"[IV_CHART] Sensibull iv_chart API returned unsuccessful response "
+                    f"for {stock.stock_symbol}"
+                )
+                return None
+
+            iv_ohlc = data["payload"].get("iv_ohlc_data", {})
+            if not iv_ohlc:
+                logger.warning(f"[IV_CHART] Empty iv_ohlc_data for {stock.stock_symbol}")
+                return None
+
+            rows = []
+            for date_str, entry in iv_ohlc.items():
+                iv_close    = entry.get("iv")
+                price_close = entry.get("close")
+                if iv_close is None:
+                    continue
+                rows.append({
+                    "date":        date_str,
+                    "iv_close":    float(iv_close),
+                    "price_close": float(price_close) if price_close is not None else None,
+                })
+
+            if not rows:
+                logger.warning(f"[IV_CHART] No valid rows parsed for {stock.stock_symbol}")
+                return None
+
+            df = pd.DataFrame(rows).sort_values("date").reset_index(drop=True)
+            ctx["iv_chart_history"] = df
+            logger.info(
+                f"[IV_CHART] {stock.stock_symbol} — stored {len(df)} daily IV rows "
+                f"({df['date'].iloc[0]} → {df['date'].iloc[-1]})"
+            )
+            return df
+
+        except requests.exceptions.Timeout:
+            logger.error(f"[IV_CHART] Timeout fetching iv_chart for {stock.stock_symbol}")
+        except requests.exceptions.RequestException as e:
+            logger.error(f"[IV_CHART] Request error fetching iv_chart for {stock.stock_symbol}: {e}")
+        except Exception as e:
+            logger.error(f"[IV_CHART] Unexpected error for {stock.stock_symbol}: {e}")
         return None
 
     # ------------------------------------------------------------------
