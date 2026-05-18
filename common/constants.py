@@ -150,6 +150,10 @@ ANALYSIS_WEIGHTS = {
     "OI_SHIFT": 13,               # OI position migration / shift analysis
     "OI_INTRADAY_TREND": 15,      # Intraday OI + PCR trend across periodic snapshots
     "OI_SR_SHIFT": 14,            # Intraday support/resistance level migration
+    "OI_CAPITULATION": 16,        # Institutional OI unwinding near money (panic/covering)
+    "OI_WALL_MIGRATION": 15,      # Overnight wall migration — institutions rolling defences
+    "OI_POSITIONAL_TREND": 16,    # Multi-day call/put OI build-up with futures confirmation
+    "OI_ACCELERATION": 17,        # Sudden 2x+ jump in daily OI writing velocity
 
     # IV vs Historical Volatility
     "IV_PREMIUM": 18,             # IV overpriced vs HV (EXPENSIVE/EXTREME zone) -- seller's edge signal
@@ -211,6 +215,8 @@ OPTIONS_ANALYSES = {"MAX_PAIN", "MAX_PAIN_TREND", "MAX_PAIN_ALIGNMENT",
                     "IV_SPIKE", "IV_TREND", "IV_RANK", "IV_RANK_EXTREME",
                     "OI_BUILDUP", "OI_SUPPORT_RESISTANCE", "OI_WALL", "OI_SHIFT",
                     "OI_INTRADAY_TREND", "OI_SR_SHIFT",
+                    "OI_CAPITULATION", "OI_WALL_MIGRATION",
+                    "OI_POSITIONAL_TREND", "OI_ACCELERATION",
                     "IV_PREMIUM",
                     "PANIC_MODE", "PANIC_EXHAUSTION"}
 FUTURES_ANALYSES = {"FUTURES_PREMIUM", "FUTURE_ACTION", "FUTURE_ACTION_LONG_BUILDUP", 

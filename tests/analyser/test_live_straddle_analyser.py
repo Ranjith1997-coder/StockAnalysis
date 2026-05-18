@@ -158,7 +158,7 @@ class TestCheckSkewReversal:
         }
         # Build history for a ratio flip: ratio goes from 0.92 (CE-heavy) past 0.95 boundary
         # Current ratio = CE/PE = 120/80 = 1.5 — crossing from below 0.95 (CE-heavy) to above
-        a._skew_ratio_history.extend([0.92, 0.90])  # was CE-heavy (ratio < 0.95)
+        a._skew_history.extend([0.92, 0.90])  # was CE-heavy (ratio < 0.95)
         result = a.check_iv_skew_reversal(agg, options_live, 20000.0)
         # With valid options_live, the method should fire or return None based on history
         assert isinstance(result, (tuple, type(None)))
