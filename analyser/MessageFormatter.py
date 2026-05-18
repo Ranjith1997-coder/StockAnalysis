@@ -513,6 +513,91 @@ def _fmt_oi_sr_shift(data, trend):
     ]
 
 
+@MessageFormatter.register("OI_POSITIONAL_TREND")
+def _fmt_oi_positional_trend(data, trend):
+    items = data if isinstance(data, list) else [data]
+    lines = []
+    for d in items:
+        type_emoji = {
+            "CALL_BUILDUP_ALIGNED": "🔴🔗",
+            "CALL_BUILDUP":         "🔴",
+            "PUT_BUILDUP_ALIGNED":  "🟢🔗",
+            "PUT_BUILDUP":          "🟢",
+            "BALANCED_ACCUMULATION": "⚪",
+        }.get(d.buildup_type, "")
+        lines.append(
+            f"  {type_emoji} OI Positional Trend: <b>{d.buildup_type}</b> "
+            f"[{d.days_analysed}d] "
+            f"Call=<code>{d.call_oi_change_pct:+.1f}%</code> "
+            f"Put=<code>{d.put_oi_change_pct:+.1f}%</code> "
+            f"Fut=<code>{d.futures_oi_change_pct:+.1f}%</code> "
+            f"PCR=<code>{d.current_pcr}</code>"
+        )
+        lines.append(f"    <i>{d.signal}</i>")
+    return lines
+
+
+@MessageFormatter.register("OI_ACCELERATION")
+def _fmt_oi_acceleration(data, trend):
+    items = data if isinstance(data, list) else [data]
+    lines = []
+    for d in items:
+        e = "🔴" if d.side == "CALL" else "🟢"
+        lines.append(
+            f"  {e} OI Acceleration: <b>{d.side}</b> "
+            f"<code>{d.accel_ratio:.1f}x</code> faster | "
+            f"recent=<code>{d.recent_velocity:,.0f}/day</code> "
+            f"prev=<code>{d.prev_velocity:,.0f}/day</code>"
+        )
+        lines.append(f"    <i>{d.signal}</i>")
+    return lines
+
+
+@MessageFormatter.register("OI_CAPITULATION")
+def _fmt_oi_capitulation(data, trend):
+    items = data if isinstance(data, list) else [data]
+    lines = []
+    for d in items:
+        e = "🟢" if d.side == "CALL" else "🔴"
+        top_str = " | ".join(
+            f"{s:.0f}(-{r:,.0f}/{p:.0f}%)" for s, r, p in d.top_strikes[:3]
+        )
+        lines.append(
+            f"  {e} OI Capitulation: <b>{d.side}</b> "
+            f"unwound=<code>{d.total_unwound:,.0f}</code> "
+            f"(<code>{d.unwound_pct:.1f}%</code> of total) "
+            f"{d.num_significant_strikes} strikes"
+        )
+        lines.append(f"    Top: {top_str} | exp={d.expiry}")
+    return lines
+
+
+@MessageFormatter.register("OI_WALL_MIGRATION")
+def _fmt_oi_wall_migration(data, trend):
+    items = data if isinstance(data, list) else [data]
+    lines = []
+    for d in items:
+        dir_emoji = {
+            "HIGHER":  "⬆️",
+            "LOWER":   "⬇️",
+            "RETREAT": "⚠️",
+            "UNCHANGED": "➡️",
+        }.get(d.migration_direction, "")
+        if d.migration_direction == "RETREAT":
+            lines.append(
+                f"  {dir_emoji} OI Wall Migration: <b>{d.side} RETREAT</b> "
+                f"prev=<code>{d.prev_wall_strike:.0f}</code> → vanished today"
+            )
+        else:
+            lines.append(
+                f"  {dir_emoji} OI Wall Migration: <b>{d.side} {d.migration_direction}</b> "
+                f"<code>{d.prev_wall_strike:.0f}→{d.curr_wall_strike:.0f}</code> "
+                f"(<code>{d.migration_pts:+.0f} pts / {d.migration_pct:+.2f}%</code>)"
+            )
+        lines.append(f"    <i>{d.signal}</i>")
+    return lines
+
+
 # ── 52-week ───────────────────────────────────────────────────────────────────
 
 @MessageFormatter.register("52-week-high")

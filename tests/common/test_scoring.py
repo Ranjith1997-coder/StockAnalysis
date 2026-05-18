@@ -267,13 +267,14 @@ class TestShouldNotify:
 
     def test_meets_threshold_and_priority_returns_true(self):
         # Build a high-enough score by using heavy weight signals
-        # PANIC_EXHAUSTION=25, RSI_DIVERGENCE=18, MACD=15 + alignment → >75
+        # PANIC_EXHAUSTION=25, RSI_DIVERGENCE=18, MACD=15, MAX_PAIN=15, SUPERTREND=15 + alignment → >110
         analysis = {
             "BULLISH": {
                 "PANIC_EXHAUSTION": {},    # 25 (OPTIONS)
                 "RSI_DIVERGENCE": {},      # 18 (TECHNICAL)
                 "MACD": {},                # 15 (TECHNICAL)
                 "MAX_PAIN": {},            # 15 (OPTIONS)
+                "SUPERTREND": {},          # 15 (TECHNICAL)
             },
             "BEARISH": {},
             "NEUTRAL": {},

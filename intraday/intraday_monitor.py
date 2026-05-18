@@ -250,12 +250,17 @@ def monitor(stock: Stock) -> Tuple[MonitorResult, bool, Optional[str]]:
         except Exception as e:
             logger.error(f"Error fetching Sensibull OI chain data for {stock.stockName}: {e}")
 
-        # Fetch IV chart (daily IV history) — used by IV trend analyser in positional mode.
-        # Skipped automatically if already fetched today (fetch-once guard in fetcher).
-        try:
-            _sensibull.fetch_iv_chart(stock)
-        except Exception as e:
-            logger.error(f"Error fetching Sensibull IV chart for {stock.stockName}: {e}")
+        # Daily history fetches — positional mode only.
+        # Both have fetch-once guards in the fetcher (skipped if already populated today).
+        if shared.app_ctx.mode == shared.Mode.POSITIONAL:
+            try:
+                _sensibull.fetch_iv_chart(stock)
+            except Exception as e:
+                logger.error(f"Error fetching Sensibull IV chart for {stock.stockName}: {e}")
+            try:
+                _sensibull.fetch_oi_history(stock)
+            except Exception as e:
+                logger.error(f"Error fetching Sensibull OI history for {stock.stockName}: {e}")
 
         if stock.is_index:
             trend_found, score_result = (
@@ -1206,6 +1211,7 @@ def compute_morning_bias():
                 _sb.fetch_data(index, mode="positional")
                 _sb.fetch_oi_chain(index, mode="positional")
                 _sb.fetch_iv_chart(index)
+                _sb.fetch_oi_history(index)
             except Exception as e:
                 logger.warning(f"[MorningBias] Sensibull fetch failed for {index.stock_symbol}: {e}")
             orchestrator.run_all_positional(index, index=True)
@@ -1229,6 +1235,7 @@ def compute_morning_bias():
                 _sb.fetch_data(stock, mode="positional")
                 _sb.fetch_oi_chain(stock, mode="positional")
                 _sb.fetch_iv_chart(stock)
+                _sb.fetch_oi_history(stock)
             except Exception as e:
                 logger.warning(f"[MorningBias] Sensibull fetch failed for {stock.stock_symbol}: {e}")
             orchestrator.run_all_positional(stock, index=False)
@@ -1669,15 +1676,15 @@ def init():
         update_zerodha_option_chain(args.stock, args.index)
     orchestrator = AnalyserOrchestrator()
     if not LIVE_OPTIONS_ONLY:
-        orchestrator.register(VolumeAnalyser())
-        orchestrator.register(TechnicalAnalyser())
-        orchestrator.register(CandleStickAnalyser())
-        orchestrator.register(IVAnalyser())
-        orchestrator.register(FuturesAnalyser())
-        orchestrator.register(PCRAnalyser())
-        orchestrator.register(MaxPainAnalyser())
+        # orchestrator.register(VolumeAnalyser())
+        # orchestrator.register(TechnicalAnalyser())
+        # orchestrator.register(CandleStickAnalyser())
+        # orchestrator.register(IVAnalyser())
+        # orchestrator.register(FuturesAnalyser())
+        # orchestrator.register(PCRAnalyser())
+        # orchestrator.register(MaxPainAnalyser())
         orchestrator.register(OIChainAnalyser())
-        orchestrator.register(PanicModeAnalyser())    # MUST be last -- reads stock.analysis
+        # orchestrator.register(PanicModeAnalyser())    # MUST be last -- reads stock.analysis
     if ENABLE_ZERODHA_API:
         logger.info("Zerodha API enabled")
         userName = os.getenv(constant.ENV_ZERODHA_USERNAME)
