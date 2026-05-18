@@ -87,6 +87,8 @@ def make_sensibull_ctx(pcr=1.0, atm_iv=20.0, days_to_expiry=5,
         "historical_data": pd.DataFrame(),
         "oi_chain": None,
         "oi_chain_history": [],
+        "iv_chart_history": pd.DataFrame(),
+        "oi_history": pd.DataFrame(),
     }
 
 
@@ -119,6 +121,54 @@ def make_oi_chain(strikes=None, spot=20000.0, expiry="2024-01-25"):
         "max_strike": max(strikes),
         "underlying_token": 256265,
     }
+
+
+def make_oi_history(n=10, call_oi_start=10_000_000, put_oi_start=8_000_000,
+                    futures_oi_start=15_000_000, pcr_start=0.8,
+                    call_trend="up", put_trend="flat", futures_trend="up"):
+    """
+    Build a minimal oi_history DataFrame (n rows of daily OI data).
+
+    Trends:
+        "up"   — each bar increases by ~5%
+        "down" — each bar decreases by ~5%
+        "flat" — each bar stays constant
+    """
+    import datetime
+
+    def _series(start, trend, count):
+        vals = [start]
+        for _ in range(count - 1):
+            if trend == "up":
+                vals.append(int(vals[-1] * 1.05))
+            elif trend == "down":
+                vals.append(int(vals[-1] * 0.95))
+            else:
+                vals.append(vals[-1])
+        return vals
+
+    call_ois   = _series(call_oi_start,    call_trend,    n)
+    put_ois    = _series(put_oi_start,     put_trend,     n)
+    fut_ois    = _series(futures_oi_start, futures_trend, n)
+    pcrs       = [round(put_ois[i] / call_ois[i], 3) for i in range(n)]
+    call_chgs  = [0] + [call_ois[i] - call_ois[i - 1] for i in range(1, n)]
+    put_chgs   = [0] + [put_ois[i]  - put_ois[i - 1]  for i in range(1, n)]
+    fut_chgs   = [0] + [fut_ois[i]  - fut_ois[i - 1]  for i in range(1, n)]
+    base_date  = datetime.date(2026, 4, 1)
+    dates      = [(base_date + datetime.timedelta(days=i)).isoformat() for i in range(n)]
+    spots      = [20000.0] * n
+
+    return pd.DataFrame({
+        "date":             dates,
+        "spot":             spots,
+        "call_oi":          call_ois,
+        "put_oi":           put_ois,
+        "futures_oi":       fut_ois,
+        "call_oi_change":   call_chgs,
+        "put_oi_change":    put_chgs,
+        "future_oi_change": fut_chgs,
+        "pcr":              pcrs,
+    })
 
 
 # ── Mode context patches ──────────────────────────────────────────────────────
