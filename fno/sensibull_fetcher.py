@@ -39,8 +39,9 @@ class SensibullFetcher:
         "https://oxide.sensibull.com/v1/compute/cache/insights/stock_info"
         "?tradingsymbol={symbol}"
     )
-    _OI_CHAIN_URL  = "https://oxide.sensibull.com/v1/compute/1/oi_graphs/oi_chart"
-    _IV_CHART_URL  = "https://oxide.sensibull.com/v1/compute/iv_chart/{symbol}"
+    _OI_CHAIN_URL   = "https://oxide.sensibull.com/v1/compute/1/oi_graphs/oi_chart"
+    _IV_CHART_URL   = "https://oxide.sensibull.com/v1/compute/iv_chart/{symbol}"
+    _OI_HISTORY_URL = "https://oxide.sensibull.com/v1/compute/compute_intraday"
 
     # ------------------------------------------------------------------
     # Public API
@@ -330,6 +331,173 @@ class SensibullFetcher:
             logger.error(f"[IV_CHART] Request error fetching iv_chart for {stock.stock_symbol}: {e}")
         except Exception as e:
             logger.error(f"[IV_CHART] Unexpected error for {stock.stock_symbol}: {e}")
+        return None
+
+    def fetch_oi_history(self, stock: "Stock") -> Optional[object]:
+        """
+        Fetch daily OI history (options + futures) from Sensibull compute_intraday API
+        and store it in ``stock.sensibull_ctx["oi_history"]``.
+
+        Uses interval="1D" which returns ~181 trading days (~9 months) of data.
+        Each row contains: date, spot, call_oi, put_oi, futures_oi,
+                           call_oi_change, put_oi_change, future_oi_change, pcr.
+
+        Requires ``fetch_data()`` to have been called first so that
+        ``sensibull_ctx["current"]["per_expiry_map"]`` is populated (for expiry selection).
+
+        Skips the fetch if oi_history is already populated (fetch once per day).
+
+        Returns:
+            DataFrame with daily OI history, or None on failure.
+        """
+        import pandas as pd
+
+        ctx = stock.sensibull_ctx
+        existing = ctx.get("oi_history")
+        if existing is not None and not existing.empty:
+            logger.debug(
+                f"[OI_HISTORY] {stock.stock_symbol} — already fetched "
+                f"({len(existing)} rows), skipping"
+            )
+            return existing
+
+        try:
+            # Build expiry lists from per_expiry_map
+            per_expiry_map = ctx.get("current", {}).get("per_expiry_map") or {}
+            sorted_expiries = sorted(per_expiry_map.keys())
+            if not sorted_expiries:
+                logger.warning(
+                    f"[OI_HISTORY] {stock.stock_symbol} — no expiry data available, "
+                    "call fetch_data() first"
+                )
+                return None
+
+            nearest_options_expiry  = sorted_expiries[0]
+            # Use next available expiry for futures if there are multiple, else nearest
+            futures_expiry = sorted_expiries[1] if len(sorted_expiries) > 1 else sorted_expiries[0]
+
+            options_expiries_body = {
+                exp: {"enabled": exp == nearest_options_expiry}
+                for exp in sorted_expiries
+            }
+            futures_expiries_body = {
+                exp: {"enabled": exp == futures_expiry}
+                for exp in sorted_expiries
+            }
+
+            payload = {
+                "underlying": stock.stock_symbol,
+                "interval": "1D",
+                "chart_keys": [
+                    "oi_options",
+                    "oi_futures",
+                    "oi_change_options",
+                    "oi_change_futures",
+                    "pcr",
+                ],
+                "client_atm_strikes_map": {},
+                "offset": None,
+                "oi_options": {
+                    "strikes_below_atm": "all",
+                    "strikes_above_atm": "all",
+                    "expiries": options_expiries_body,
+                    "is_custom": False,
+                    "custom_strikes": [],
+                    "strike_range_min": 0,
+                    "strike_range_max": 999999,
+                },
+                "oi_futures": {
+                    "expiries": futures_expiries_body,
+                },
+                "oi_change_options": {
+                    "strikes_below_atm": "all",
+                    "strikes_above_atm": "all",
+                    "expiries": options_expiries_body,
+                    "is_custom": False,
+                    "custom_strikes": [],
+                    "strike_range_min": 0,
+                    "strike_range_max": 999999,
+                },
+                "oi_change_futures": {
+                    "expiries": futures_expiries_body,
+                },
+                "pcr": {
+                    "strikes_below_atm": "all",
+                    "strikes_above_atm": "all",
+                    "expiries": options_expiries_body,
+                    "is_custom": False,
+                    "automatic_expiry": False,
+                    "custom_strikes": [],
+                    "strike_range_min": 0,
+                    "strike_range_max": 999999,
+                },
+            }
+
+            logger.info(
+                f"[OI_HISTORY] Fetching daily OI history for {stock.stock_symbol} "
+                f"(options_expiry={nearest_options_expiry} futures_expiry={futures_expiry})"
+            )
+            response = requests.post(self._OI_HISTORY_URL, json=payload, timeout=20)
+            response.raise_for_status()
+            data = response.json()
+
+            if not (data.get("success") and "payload" in data):
+                logger.warning(
+                    f"[OI_HISTORY] Sensibull compute_intraday returned unsuccessful "
+                    f"response for {stock.stock_symbol}"
+                )
+                return None
+
+            chart_data = data["payload"].get("chart_data", {})
+            if not chart_data:
+                logger.warning(f"[OI_HISTORY] Empty chart_data for {stock.stock_symbol}")
+                return None
+
+            rows = []
+            for dt_str, entry in chart_data.items():
+                oi_opt  = entry.get("oi_options",         {}) or {}
+                oi_fut  = entry.get("oi_futures",         {}) or {}
+                chg_opt = entry.get("oi_change_options",  {}) or {}
+                chg_fut = entry.get("oi_change_futures",  {}) or {}
+                pcr_d   = entry.get("pcr_data",           {}) or {}
+
+                rows.append({
+                    "date":              dt_str[:10],  # "YYYY-MM-DD"
+                    "spot":              entry.get("spot"),
+                    "call_oi":           oi_opt.get("call_oi"),
+                    "put_oi":            oi_opt.get("put_oi"),
+                    "futures_oi":        oi_fut.get("futures_oi"),
+                    "call_oi_change":    chg_opt.get("call_oi_change"),
+                    "put_oi_change":     chg_opt.get("put_oi_change"),
+                    "future_oi_change":  chg_fut.get("future_oi_change"),
+                    "pcr":               pcr_d.get("pcr"),
+                })
+
+            if not rows:
+                logger.warning(f"[OI_HISTORY] No rows parsed for {stock.stock_symbol}")
+                return None
+
+            df = (
+                pd.DataFrame(rows)
+                .sort_values("date")
+                .reset_index(drop=True)
+                .dropna(subset=["call_oi", "put_oi"])
+            )
+
+            ctx["oi_history"] = df
+            logger.info(
+                f"[OI_HISTORY] {stock.stock_symbol} — stored {len(df)} daily OI rows "
+                f"({df['date'].iloc[0]} → {df['date'].iloc[-1]})"
+            )
+            return df
+
+        except requests.exceptions.Timeout:
+            logger.error(f"[OI_HISTORY] Timeout fetching OI history for {stock.stock_symbol}")
+        except requests.exceptions.RequestException as e:
+            logger.error(f"[OI_HISTORY] Request error for {stock.stock_symbol}: {e}")
+        except Exception as e:
+            logger.error(f"[OI_HISTORY] Unexpected error for {stock.stock_symbol}: {e}")
+            logger.error(__import__("traceback").format_exc())
         return None
 
     # ------------------------------------------------------------------
