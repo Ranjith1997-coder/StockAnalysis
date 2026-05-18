@@ -317,20 +317,33 @@ def _fmt_pvo(data, trend):
 
 @MessageFormatter.register("PCR_EXTREME")
 def _fmt_pcr_extreme(data, trend):
+    confirmed_str = " ✓confirmed" if getattr(data, "confirmed", False) else ""
     return [f"  PCR Extreme: <b>{data.zone}</b> "
-            f"PCR=<code>{data.pcr_value:.3f}</code> - <i>{data.signal}</i>"]
+            f"PCR=<code>{data.pcr_value:.3f}</code>{confirmed_str} - <i>{data.signal}</i>"]
 
 
 @MessageFormatter.register("PCR_BIAS")
 def _fmt_pcr_bias(data, trend):
-    return [f"  PCR Bias: <b>{data.bias}</b> PCR=<code>{data.total_pcr:.3f}</code>"]
+    strength  = getattr(data, "strength", "")
+    trend_dir = getattr(data, "trend_direction", "")
+    suffix    = f" [{strength}/{trend_dir}]" if strength else ""
+    return [f"  PCR Bias: <b>{data.bias}</b> PCR=<code>{data.total_pcr:.3f}</code>{suffix}"]
 
 
 @MessageFormatter.register("PCR_TREND")
 def _fmt_pcr_trend(data, trend):
+    abs_str = f" abs={data.pcr_change_abs:+.3f}" if hasattr(data, "pcr_change_abs") else ""
     return [f"  PCR Trend: <b>{data.trend}</b> "
             f"PCR=<code>{data.pcr_current:.3f}</code> "
-            f"Δ=<code>{data.pcr_change_pct:.2f}%</code>"]
+            f"Δ=<code>{data.pcr_change_pct:.2f}%</code>{abs_str}"]
+
+
+@MessageFormatter.register("PCR_INTRADAY_TREND")
+def _fmt_pcr_intraday_trend(data, trend):
+    return [f"  PCR Intraday Trend: <b>{data.trend}</b> "
+            f"<code>{data.pcr_first:.3f}→{data.pcr_last:.3f}</code> "
+            f"Δ=<code>{data.pcr_change_pct:+.2f}%</code> "
+            f"over {data.snapshots} snapshots"]
 
 
 @MessageFormatter.register("PCR_REVERSAL")
@@ -339,6 +352,16 @@ def _fmt_pcr_reversal(data, trend):
         f"  PCR Reversal: <b>{data.reversal_type}</b> "
         f"{data.previous_zone}→{data.current_zone}",
         f"    PCR: <code>{data.previous_pcr:.3f}</code> → "
+        f"<code>{data.current_pcr:.3f}</code> | <i>{data.signal}</i>",
+    ]
+
+
+@MessageFormatter.register("PCR_POS_REVERSAL")
+def _fmt_pcr_pos_reversal(data, trend):
+    return [
+        f"  PCR Pos Reversal: <b>{data.reversal_type}</b> "
+        f"{data.previous_zone}→{data.current_zone}",
+        f"    3d avg: <code>{data.previous_pcr:.3f}</code> → "
         f"<code>{data.current_pcr:.3f}</code> | <i>{data.signal}</i>",
     ]
 
