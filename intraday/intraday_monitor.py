@@ -1676,15 +1676,15 @@ def init():
         update_zerodha_option_chain(args.stock, args.index)
     orchestrator = AnalyserOrchestrator()
     if not LIVE_OPTIONS_ONLY:
-        # orchestrator.register(VolumeAnalyser())
-        # orchestrator.register(TechnicalAnalyser())
-        # orchestrator.register(CandleStickAnalyser())
-        # orchestrator.register(IVAnalyser())
-        # orchestrator.register(FuturesAnalyser())
-        # orchestrator.register(PCRAnalyser())
-        # orchestrator.register(MaxPainAnalyser())
+        orchestrator.register(VolumeAnalyser())
+        orchestrator.register(TechnicalAnalyser())
+        orchestrator.register(CandleStickAnalyser())
+        orchestrator.register(IVAnalyser())
+        orchestrator.register(FuturesAnalyser())
+        orchestrator.register(PCRAnalyser())
+        orchestrator.register(MaxPainAnalyser())
         orchestrator.register(OIChainAnalyser())
-        # orchestrator.register(PanicModeAnalyser())    # MUST be last -- reads stock.analysis
+        orchestrator.register(PanicModeAnalyser())    # MUST be last -- reads stock.analysis
     if ENABLE_ZERODHA_API:
         logger.info("Zerodha API enabled")
         userName = os.getenv(constant.ENV_ZERODHA_USERNAME)

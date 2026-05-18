@@ -1112,10 +1112,12 @@ class OIChainAnalyser(BaseAnalyzer):
                 else:
                     put_shift = "BELOW_PRICE"  # Puts below CMP → normal/neutral
             
+            call_center_str = f"{call_weighted_avg:.0f} ({call_shift})" if call_weighted_avg is not None else "N/A"
+            put_center_str  = f"{put_weighted_avg:.0f} ({put_shift})"  if put_weighted_avg  is not None else "N/A"
             logger.debug(
                 f"[OI_SHIFT] {stock.stock_symbol} | "
-                f"call_center={call_weighted_avg:.0f} ({call_shift}) "
-                f"put_center={put_weighted_avg:.0f} ({put_shift}) | "
+                f"call_center={call_center_str} "
+                f"put_center={put_center_str} | "
                 f"CONDITION center_thresh={OIChainAnalyser.OI_SHIFT_CENTER_THRESHOLD_PCT}% "
                 f"writing_ratio_min={OIChainAnalyser.OI_SHIFT_MIN_WRITING_RATIO}x"
             )
