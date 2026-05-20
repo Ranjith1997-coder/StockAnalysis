@@ -394,6 +394,7 @@ class SensibullFetcher:
                     "oi_change_options",
                     "oi_change_futures",
                     "pcr",
+                    "max_pain",
                 ],
                 "client_atm_strikes_map": {},
                 "offset": None,
@@ -431,6 +432,10 @@ class SensibullFetcher:
                     "strike_range_min": 0,
                     "strike_range_max": 999999,
                 },
+                "max_pain": {
+                    "expiries": options_expiries_body,
+                    "automatic_expiry": False,
+                },
             }
 
             logger.info(
@@ -460,6 +465,7 @@ class SensibullFetcher:
                 chg_opt = entry.get("oi_change_options",  {}) or {}
                 chg_fut = entry.get("oi_change_futures",  {}) or {}
                 pcr_d   = entry.get("pcr_data",           {}) or {}
+                mp_d    = entry.get("max_pain_data",       {}) or {}
 
                 rows.append({
                     "date":              dt_str[:10],  # "YYYY-MM-DD"
@@ -471,6 +477,7 @@ class SensibullFetcher:
                     "put_oi_change":     chg_opt.get("put_oi_change"),
                     "future_oi_change":  chg_fut.get("future_oi_change"),
                     "pcr":               pcr_d.get("pcr"),
+                    "max_pain":          mp_d.get("max_pain"),
                 })
 
             if not rows:

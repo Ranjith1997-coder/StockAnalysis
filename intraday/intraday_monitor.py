@@ -854,6 +854,9 @@ def report_commodity_data():
     if not commodity_objs:
         return
     
+    _COMMODITY_CURRENCY_SYMBOL = {"USDINR": "\u20B9"}
+    _DEFAULT_CURRENCY_SYMBOL   = "$"
+
     report = "\U0001F6E2\uFE0F <b>Commodity Report</b>\n"
     for commodity in commodity_objs:
         try:
@@ -868,25 +871,26 @@ def report_commodity_data():
                 if close_prices.empty:
                     logger.warning(f"No valid price data for {commodity.stock_symbol}")
                     continue
-                    
+
                 current_price = close_prices.iloc[-1]
-                
+
                 if pd.isna(current_price) or not isinstance(current_price, (int, float)):
                     logger.warning(f"Invalid price for {commodity.stock_symbol}: {current_price} (type={type(current_price).__name__})")
                     continue
-                
+
                 prev_close = None
                 if commodity.prevDayOHLCV and commodity.prevDayOHLCV.get("CLOSE") and pd.notna(commodity.prevDayOHLCV["CLOSE"]):
                     prev_close = commodity.prevDayOHLCV["CLOSE"]
                 elif len(close_prices) >= 2:
                     prev_close = close_prices.iloc[-2]
 
+                currency_sym = _COMMODITY_CURRENCY_SYMBOL.get(commodity.stock_symbol, _DEFAULT_CURRENCY_SYMBOL)
                 if prev_close is not None and pd.notna(prev_close) and prev_close != 0:
                     change_percent = percentageChange(current_price, prev_close)
                     dot = "\U0001F7E2" if change_percent >= 0 else "\U0001F534"
-                    report += f"  {dot} <b>{commodity.stock_symbol}</b>: <code>${current_price:.2f}</code> ({change_percent:+.2f}%)\n"
+                    report += f"  {dot} <b>{commodity.stock_symbol}</b>: <code>{currency_sym}{current_price:.2f}</code> ({change_percent:+.2f}%)\n"
                 else:
-                    report += f"  <b>{commodity.stock_symbol}</b>: <code>${current_price:.2f}</code>\n"
+                    report += f"  <b>{commodity.stock_symbol}</b>: <code>{currency_sym}{current_price:.2f}</code>\n"
         except Exception as e:
             logger.error(f"Error while getting commodity data for {commodity.stock_symbol}: {e}")
     
@@ -1676,15 +1680,15 @@ def init():
         update_zerodha_option_chain(args.stock, args.index)
     orchestrator = AnalyserOrchestrator()
     if not LIVE_OPTIONS_ONLY:
-        orchestrator.register(VolumeAnalyser())
-        orchestrator.register(TechnicalAnalyser())
-        orchestrator.register(CandleStickAnalyser())
-        orchestrator.register(IVAnalyser())
-        orchestrator.register(FuturesAnalyser())
-        orchestrator.register(PCRAnalyser())
+        # orchestrator.register(VolumeAnalyser())
+        # orchestrator.register(TechnicalAnalyser())
+        # orchestrator.register(CandleStickAnalyser())
+        # orchestrator.register(IVAnalyser())
+        # orchestrator.register(FuturesAnalyser())
+        # orchestrator.register(PCRAnalyser())
         orchestrator.register(MaxPainAnalyser())
-        orchestrator.register(OIChainAnalyser())
-        orchestrator.register(PanicModeAnalyser())    # MUST be last -- reads stock.analysis
+        # orchestrator.register(OIChainAnalyser())
+        # orchestrator.register(PanicModeAnalyser())    # MUST be last -- reads stock.analysis
     if ENABLE_ZERODHA_API:
         logger.info("Zerodha API enabled")
         userName = os.getenv(constant.ENV_ZERODHA_USERNAME)
