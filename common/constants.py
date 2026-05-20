@@ -120,7 +120,9 @@ ANALYSIS_WEIGHTS = {
     "PCR_EXTREME": 14,
     "PCR_BIAS": 10,
     "PCR_TREND": 12,
-    "PCR_REVERSAL": 16,          # PCR zone crossover or trend reversal
+    "PCR_INTRADAY_TREND": 13,    # Intraday PCR momentum across session snapshots
+    "PCR_REVERSAL": 16,          # PCR zone crossover or trend reversal (intraday)
+    "PCR_POS_REVERSAL": 17,      # Multi-day PCR reversal using 3-day averages (positional)
     "PCR_DIVERGENCE": 14,
     "IV_SPIKE": 12,
     "IV_TREND": 10,
@@ -210,8 +212,9 @@ TECHNICAL_ANALYSES = {"RSI", "MACD", "EMA_CROSSOVER",
                       "Triple_candle_stick_pattern", "Triple_candle_reversal_pattern",
                       "Triple_candle_continuation_pattern",
                       "SUPERTREND", "RSI_DIVERGENCE", "STOCHASTIC", "OBV", "PIVOT_POINTS"}
-OPTIONS_ANALYSES = {"MAX_PAIN", "MAX_PAIN_TREND", "MAX_PAIN_ALIGNMENT", 
-                    "PCR_EXTREME", "PCR_BIAS", "PCR_TREND", "PCR_REVERSAL", "PCR_DIVERGENCE",
+OPTIONS_ANALYSES = {"MAX_PAIN", "MAX_PAIN_TREND", "MAX_PAIN_ALIGNMENT",
+                    "PCR_EXTREME", "PCR_BIAS", "PCR_TREND", "PCR_INTRADAY_TREND",
+                    "PCR_REVERSAL", "PCR_POS_REVERSAL", "PCR_DIVERGENCE",
                     "IV_SPIKE", "IV_TREND", "IV_RANK", "IV_RANK_EXTREME",
                     "OI_BUILDUP", "OI_SUPPORT_RESISTANCE", "OI_WALL", "OI_SHIFT",
                     "OI_INTRADAY_TREND", "OI_SR_SHIFT",
@@ -231,7 +234,7 @@ FUTURES_ANALYSES = {"FUTURES_PREMIUM", "FUTURE_ACTION", "FUTURE_ACTION_LONG_BUIL
 NEUTRAL_EXCLUDE_FROM_SCORE = {
     "MAX_PAIN_ALIGNMENT",   # When DIVERGENT - conflicting signals
     "MAX_PAIN_TREND",       # When DIVERGING - price moving away from max pain
-    "PCR_DIVERGENCE",       # Term structure divergence - uncertainty (always NEUTRAL)
+    # PCR_DIVERGENCE removed — now emits directional BEARISH/BULLISH signals
     "OI_SUPPORT_RESISTANCE",# When neutral - just informational S/R levels
     "OI_SR_SHIFT",          # When neutral - range squeeze/expand is informational
 }
