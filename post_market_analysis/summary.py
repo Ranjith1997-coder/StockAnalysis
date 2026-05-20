@@ -45,7 +45,7 @@ class FiiDiiSummaryFormatter(BaseSummaryFormatter):
             f"\U0001F4B0 <b>FII/DII Flows</b> ({analysis.get('date')})\n"
             f"  {_val_dot(fii_cash)} FII Cash: <code>{fii_cash}</code>  "
             f"{_val_dot(dii_cash)} DII Cash: <code>{dii_cash}</code>\n"
-            f"  5d FII: <code>{analysis.get('fii_cash_5d_sum')}</code>  "
+            f"  5d FII: <code>{round(analysis['fii_cash_5d_sum'], 2) if analysis.get('fii_cash_5d_sum') is not None else 'NA'}</code>  "
             f"Idx Fut: <code>{analysis.get('fii_index_fut_net')}</code>  "
             f"Idx Opt: <code>{analysis.get('fii_index_opt_net')}</code>"
         )
