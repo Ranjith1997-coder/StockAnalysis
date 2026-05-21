@@ -2,333 +2,310 @@
 
 ## Project Overview
 
-StockAnalysis is a comprehensive automated stock market analysis tool designed for Indian equity markets (NSE). It supports both intraday (5-minute intervals) and positional (daily) trading strategies, leveraging multiple data sources and technical analysis techniques to identify trends, generate insights, and provide real-time notifications via Telegram.
+StockAnalysis is an automated analysis system for Indian equity and derivatives markets (NSE). It targets NIFTY weekly options traders using live Zerodha WebSocket data for real-time tick-level analysis, Sensibull for OI chain and PCR data, and yfinance for historical price data.
 
-## Features
+---
 
-### Analysis Modes
-- **Intraday Analysis**: Real-time monitoring during market hours (9:15 AM - 3:30 PM) with 5-minute interval data
-- **Positional/EOD Analysis**: End-of-day analysis starting at 4:00 PM with daily data spanning 2 years
+## Operating Modes
 
-### Data Sources & Integration
-- **Yahoo Finance**: Primary source for historical and real-time price data
-- **NSE (National Stock Exchange)**: Derivatives data including futures and options
-- **Zerodha API**: Option chain data and futures metadata for enhanced derivatives analysis
-- **StockEdge API**: Post-market analysis including FII/DII flows, sector performance, F&O participant OI, and index returns
+The system runs in two primary modes, orchestrated from `intraday/intraday_monitor.py`:
 
-### Analysis Modules
-- **Volume Analysis**: Detects unusual volume patterns and breakouts
-- **Technical Analysis**: Uses multiple technical indicators (RSI, MACD, moving averages, etc.)
-- **Candlestick Pattern Analysis**: Identifies key reversal and continuation patterns
-- **Implied Volatility (IV) Analysis**: Monitors option chain IV changes
-- **Put-Call Ratio (PCR) Analysis**: Monitors PCR changes for market sentiment
-- **Max Pain Analysis**: Calculates the max pain strike price where option writers have minimum losses
-- **Futures Analysis**: Analyzes futures rollover, OI changes, and premium/discount
+| Mode | When | Data Interval | Loop |
+|------|------|---------------|------|
+| **INTRADAY** | 9:15 AM – 3:30 PM | 5-min candles (yfinance) + live WebSocket ticks (Zerodha) | Every ~310 seconds |
+| **POSITIONAL** | After 4:00 PM (EOD) | Daily candles — 90-day daily for futures, 2-year daily for equity | Single run |
+| **LIVE OPTIONS** | 9:15 AM – 3:30 PM (opt-in) | Per WebSocket tick (~ms) for NIFTY/BANKNIFTY options | Continuous |
 
-### Automated Reports
-- **Top Gainers and Losers**: Top 5 stocks by percentage change
-- **Index Reports**: Real-time updates on major Indian indices (Nifty 50, Bank Nifty, Fin Nifty, etc.)
-- **Global Indices Reports**: Monitors major international indices
-  - **USA**: S&P 500, Dow Jones, NASDAQ
-  - **Europe**: FTSE 100, DAX, CAC 40
-  - **Asia**: Nikkei 225, Hang Seng, Shanghai Composite, KOSPI
-- **Commodity Reports**: Tracks precious metals (Gold, Silver, Platinum, Copper), Crude Oil, and USD/INR
-- **52-Week High/Low**: Tracks stocks hitting new 52-week highs or lows
-- **Post-Market Analysis**: 
-  - FII/DII cash and derivatives flows (last 5 days)
-  - Sector performance (top 5 gainers/losers)
-  - F&O participant OI breakdown
-  - NSE Index returns (top 10 gainers/losers)
+Mode selection in production (`PRODUCTION=1`) is time-based. In dev mode, `DEV_INTRADAY=1` or `DEV_POSITIONAL=1` select manually.
 
-### Notification System
-- **Three Telegram Channels**: Intraday alerts, positional/EOD alerts, and a dedicated real-time options channel
-- **Interactive Bot**: Command Router architecture — `/ltp`, `/gainers`, `/losers`, `/watchlist`, `/holidays`, `/straddle`, `/walls`, `/status`, `/enctoken`
-- **System Health Dashboard** (`/status`): live feed lag, RAM usage, LLM token budget
-- **Options Seller Commands**: `/straddle` (ATM premium, ±1SD range, PCR) and `/walls` (OI walls with tick-level and session delta)
+---
 
-### Additional Features
-- **Modular Architecture**: Easily extensible analyzer and data source framework
-- **Parallel Processing**: ThreadPoolExecutor for efficient multi-stock analysis
-- **Automated Scheduling**: Can auto-start at market open and shutdown system after EOD
-- **Selective Analysis**: Command-line arguments to analyze specific stocks or indices
-- **Environment-based Configuration**: Feature flags for enabling/disabling components
-- **Intelligence Layer**: Cross-layer signal confluence detection (live + intraday + positional) via `SignalCorrelator`; LLM-powered trade narratives via Google Gemini Flash (`ENABLE_INTELLIGENCE`, `ENABLE_NARRATOR`)
-- **Holiday-aware Deployment**: `make service-stop` exits early on non-trading days; SSH retry-poll connects the moment the instance is reachable instead of a fixed sleep
+## Architecture
 
-## Getting Started
+```
+intraday/intraday_monitor.py          ← Main entry point & orchestrator
+         |
+         ├── create_stock_and_index_objects()   yfinance daily data download
+         ├── update_zerodha_option_chain()       Kite instruments API → zerodha_ctx
+         ├── FuturesFetcher.fetch()              Kite historical API → futures_data
+         ├── SensibullFetcher.fetch_data()       Sensibull insights → sensibull_ctx
+         ├── SensibullFetcher.fetch_oi_chain()   Sensibull OI chain → sensibull_ctx
+         ├── SensibullFetcher.fetch_iv_chart()   (positional only) daily IV history
+         ├── SensibullFetcher.fetch_oi_history() (positional only) daily OI/PCR history
+         └── AnalyserOrchestrator.run_all_*()    Runs registered analysers
+                   |
+                   ├── VolumeAnalyser           (active)
+                   ├── TechnicalAnalyser        (active)
+                   ├── CandleStickAnalyser      (active)
+                   ├── IVAnalyser               (active)
+                   ├── FuturesAnalyser          (active)
+                   ├── PCRAnalyser              (active)
+                   ├── MaxPainAnalyser          (active)
+                   ├── OIChainAnalyser          (active)
+                   └── PanicModeAnalyser        (active — MUST be last)
+```
 
-### Prerequisites
+---
 
-- Python 3.7 or higher
-- Virtual environment (recommended)
-- Required Python packages (listed in `requirements.txt`)
+## Data Sources
+
+| Source | What is fetched | Module |
+|--------|-----------------|--------|
+| **Zerodha Kite API** (historical) | Futures OHLCV + OI (daily 90-day, 5-min intraday) | `zerodha/futures_fetcher.py` |
+| **Zerodha WebSocket** | Live equity/index ticks, option chain ticks, futures ticks | `zerodha/zerodha_analysis.py` |
+| **Sensibull** | OI chain per-strike, PCR, ATM IV, max pain, IV chart history, daily OI/PCR history | `fno/sensibull_fetcher.py` |
+| **yfinance** | Equity/index OHLCV — 1y daily at startup, 5-min intraday during market hours, 2y daily for positional | `intraday/intraday_monitor.py` |
+
+---
+
+## Analyser Modules
+
+| Analyser | File | What it detects |
+|----------|------|-----------------|
+| **FuturesAnalyser** | `analyser/Futures_Analyser.py` | Long/short buildup, short covering, long unwinding; PVO patterns; ORB breakout; positional OI trend; cost of carry / backwardation; rollover pressure; intraday OI buildup from open |
+| **TechnicalAnalyser** | `analyser/TechnicalAnalyser.py` | RSI, MACD, EMA crossover, Bollinger Bands, VWAP, ATR, Supertrend, RSI divergence, Stochastic, Pivot Points |
+| **VolumeAnalyser** | `analyser/VolumeAnalyser.py` | Volume breakout (2x MA + price confirm), OBV divergence, volume climax (3x spike) |
+| **CandleStickAnalyser** | `analyser/candleStickPatternAnalyser.py` | Marubozu, Hammer/Shooting Star, Engulfing/Piercing/Dark Cloud, Morning/Evening Star, continuation patterns |
+| **IVAnalyser** | `analyser/IVAnalyser.py` | IV spike, IV trend, IV rank (IVP percentile), IV vs historical volatility |
+| **PCRAnalyser** | `analyser/PCRAnalyser.py` | PCR extreme zones (contrarian), PCR directional bias, PCR trend (5-day), PCR intraday trend, PCR reversal, positional PCR reversal |
+| **MaxPainAnalyser** | `analyser/MaxPainAnalyser.py` | Max pain deviation (moderate/strong), max pain trend (converging/diverging), max pain alignment with PCR |
+| **OIChainAnalyser** | `analyser/OIChainAnalyser.py` | OI support/resistance, OI buildup, OI wall (statistical outlier), OI shift, intraday OI trend, intraday S/R shift, OI capitulation (positional), OI wall migration (positional), positional OI trend, OI acceleration |
+| **PanicModeAnalyser** | `analyser/PanicModeAnalyser.py` | PANIC_MODE (≥4/6 conditions aligned), PANIC_EXHAUSTION (≥3/4 contrarian conditions) — reads all earlier analysers' output, **must be last** |
+| **LiveOIAnalyser** | `analyser/LiveOIAnalyser.py` | Real-time: PCR crossover, PCR extreme, PCR sustained trend, OI wall breach |
+| **LiveStraddleAnalyser** | `analyser/LiveStraddleAnalyser.py` | Real-time: IV expanding/compressing, implied move boundary, IV skew reversal |
+
+---
+
+## Live Options Engine (opt-in)
+
+When `ENABLE_LIVE_OPTIONS=1`, the system subscribes to NIFTY and BANKNIFTY weekly option chains via Zerodha WebSocket. Zone-based subscription keeps token count manageable (94 tokens per index across 3 zones):
+
+| Zone | Distance from ATM | WebSocket mode |
+|------|--------------------|----------------|
+| CORE | ±1% | FULL (OI + depth) |
+| ACTIVE | 1–3% | FULL |
+| PERIPHERAL | 3–5% | QUOTE |
+
+Dynamic re-centering fires when spot moves ≥ 50 pts (1 strike gap): unsubscribes far strikes, subscribes new ones.
+
+Live alerts go to a dedicated `LIVE_OPTIONS_CHAT_ID` Telegram channel with per-type cooldowns (10–30 min) to prevent flooding.
+
+---
+
+## Signal Scoring System
+
+Every cycle, each fired signal contributes a weight to a total score:
+
+```
+total_score = base_score + alignment_bonus
+```
+
+- **Base score**: sum of `ANALYSIS_WEIGHTS[signal_type]` for all BULLISH or BEARISH signals
+- **Alignment bonus**: applied when signals span multiple categories (TECHNICAL + OPTIONS = 1.5× on base)
+- **Notification gate**: `total_score >= MIN_NOTIFICATION_SCORE (110)` to send Telegram alert
+- **Priority tiers**: LOW (≥35), MEDIUM (≥60), HIGH (≥90), CRITICAL (≥130)
+- **Confidence**: `dominant_side_score / total_score × 100`
+
+---
+
+## Intelligence Layer (opt-in)
+
+When `ENABLE_INTELLIGENCE=1`:
+- **SignalBus**: thread-safe pub/sub event bus — all analysers emit `Signal` objects
+- **SignalCorrelator**: detects cross-layer confluence (LIVE + INTRADAY + POSITIONAL alignment)
+- **Morning bias**: runs positional analysers at startup on 1y daily data, seeds correlator buffer
+- **LiveStockEngine**: per-tick VWAP cross, bid/ask imbalance, ORB, day high/low break signals
+
+When `ENABLE_NARRATOR=1` (requires `GEMINI_API_KEY`):
+- **MarketNarrator**: LLM-powered trade thesis via Google Gemini Flash
+- Triggered only on HIGH confluences (3+ layers aligned) with 30-min per-symbol cooldown
+- Also generates EOD positional briefing after ~4 PM positional run
+
+---
+
+## Configuration (.env)
+
+### Core
+
+| Variable | Purpose |
+|----------|---------|
+| `PRODUCTION` | `1` = production mode (time-based mode selection), `0` = dev |
+| `SHUTDOWN` | `1` = shutdown system after EOD analysis |
+| `DEV_INTRADAY` | `1` = dev intraday mode |
+| `DEV_POSITIONAL` | `1` = dev positional mode |
+| `NO_OF_STOCKS` | Max stocks to analyze (`-1` = all) |
+| `NO_OF_INDEX` | Max indices to analyze (`-1` = all) |
+| `DEV_MAX_CYCLES` | Max intraday loop cycles in dev mode (`0` = unlimited) |
+| `DEV_LOOP_WAIT_TIME` | Seconds between dev cycles (`-1` = use production wait) |
+
+### Telegram
+
+| Variable | Purpose |
+|----------|---------|
+| `TELEGRAM_INTRADAY_TOKEN` | Bot token for intraday channel |
+| `TELEGRAM_INTRADAY_CHAT_ID` | Chat ID for intraday alerts |
+| `TELEGRAM_POSITIONAL_TOKEN` | Bot token for positional/EOD channel |
+| `TELEGRAM_POSITIONAL_CHAT_ID` | Chat ID for positional/EOD alerts |
+| `TELEGRAM_LIVE_OPTIONS_TOKEN` | Bot token for live options channel |
+| `TELEGRAM_LIVE_OPTIONS_CHAT_ID` | Chat ID for real-time options alerts |
+
+### Zerodha
+
+| Variable | Purpose |
+|----------|---------|
+| `ZERODHA_USER` | Zerodha user ID |
+| `ZERODHA_PASS` | Zerodha password |
+| `ZERODHA_ENC_TOKEN` | Enctoken for API auth (expires — refresh via `/enctoken` bot command) |
+
+### Feature Flags
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `ENABLE_ZERODHA_API` | `0` | Enable WebSocket connection + enctoken auth |
+| `ENABLE_ZERODHA_DERIVATIVES` | `0` | Enable Zerodha Kite historical futures data fetch |
+| `ENABLE_TELEGRAM_BOT` | `0` | Enable interactive Telegram bot |
+| `ENABLE_POST_MARKET` | `0` | Enable post-market analysis pipeline |
+| `ENABLE_LIVE_OPTIONS` | `0` | Enable real-time option chain tracking |
+| `LIVE_OPTIONS_ONLY` | `0` | Skip all regular analysis — WebSocket live options only |
+| `ENABLE_INTELLIGENCE` | `0` | Enable SignalBus + Correlator + morning bias |
+| `ENABLE_NARRATOR` | `0` | Enable LLM trade narratives (requires `GEMINI_API_KEY`) |
+| `OPTIONS_SOURCE` | `zerodha` | `zerodha` or `sensibull` for live option tick source |
+| `HEALTHCHECK_URL` | (empty) | Dead-man's switch ping URL (e.g., healthchecks.io) |
+
+---
+
+## How to Run
 
 ### Installation
 
-1. **Clone the Repository**
-   ```bash
-   git clone https://github.com/yourusername/StockAnalysis.git
-   cd StockAnalysis
-   ```
+```bash
+git clone https://github.com/yourusername/StockAnalysis.git
+cd StockAnalysis
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.template .env   # fill in your credentials
+```
 
-2. **Set Up Virtual Environment**
-   ```bash
-   python -m venv .venv
-   source .venv/bin/activate  # On Windows use `.venv\Scripts\activate`
-   ```
+### Run
 
-3. **Install Dependencies**
-   ```bash
-   pip install -r requirements.txt
-   ```
+```bash
+# Intraday (dev mode)
+# Set DEV_INTRADAY=1, PRODUCTION=0 in .env
+python intraday/intraday_monitor.py
 
-### Configuration
+# Positional EOD (dev mode)
+# Set DEV_POSITIONAL=1, PRODUCTION=0 in .env
+python intraday/intraday_monitor.py
 
-Create a `.env` file in the project root with the following environment variables:
+# Production (auto time-based mode selection)
+# Set PRODUCTION=1 in .env
+python intraday/intraday_monitor.py
 
-#### Core Configuration
-- `ENV_PRODUCTION`: Set to `1` for production mode, `0` for development mode
-- `ENV_SHUTDOWN`: Set to `1` to enable automatic system shutdown after EOD analysis
+# Analyze specific stock or index
+python intraday/intraday_monitor.py --stock RELIANCE
+python intraday/intraday_monitor.py --index NIFTY
+```
 
-#### Mode Selection (Development Only)
-- `ENV_DEV_INTRADAY`: Set to `1` to run intraday analysis in dev mode
 ### Makefile targets
-
-A `Makefile` wraps all common workflows:
 
 ```bash
 make venv              # Create .venv/
 make install           # Install production dependencies
-make install-dev       # Install prod + dev/test tools
-make install-deploy    # Install deploy tools (boto3, paramiko)
-make env-check         # Verify required .env vars are set
-
 make run-prod          # PRODUCTION=1 intraday monitor
 make run-dev           # PRODUCTION=0 intraday monitor (safe)
-make run-premarket     # Global cues + pre-open report
 make run-postmarket    # Post-market analysis pipeline
 make deploy            # git pull + restart service on EC2 via SSH
 make service-stop      # Start EC2 (if stopped) + stop service; exits early on holidays
-make service-stop-force  # Same but bypasses holiday guard (dev/debugging)
-
 make test              # Full test suite
-make test-fast         # Stop on first failure
-make test-cov          # Coverage report
 make lint              # ruff check
-make format            # ruff format
-make typecheck         # pyright
-make logs              # Tail logs/monitor.log (last 50 lines)
 make logs-follow       # Follow logs/monitor.log live
-make clean             # Remove __pycache__, .pyc, pytest cache
 ```
 
-#### Basic Usage
-Run the main analysis script:
-```bash
-python intraday/intraday_monitor.py
-```
+---
 
-The script automatically determines the mode based on:
-- **Production mode**: Uses current time to decide (intraday if before 3:30 PM, positional after)
-- **Development mode**: Uses `ENV_DEV_INTRADAY` or `ENV_DEV_POSITIONAL` flags
-
-#### Analyze Specific Stock, Index, or Commodity
-```bash
-# Analyze a specific stock
-python intraday/intraday_monitor.py --stock RELIANCE
-
-# Analyze a specific index
-python intraday/intraday_monitor.py --index NIFTY
-
-# Analyze a specific commodity
-python intraday/intraday_monitor.py --commodity GOLD
-
-# Analyze a specific global index
-python intraday/intraday_monitor.py --global-index SPX
-Extending the Project
-
-### Adding a New Analyzer
-1. Create a new class inheriting from the analyzer base in `analyser/`
-2. Implement the required analysis methods
-3. Register it in `intraday_monitor.py` with `orchestrator.register(YourAnalyzer())`
-
-### Adding a New Post-Market Data Source
-1. Create a new source file in `post_market_analysis/` inheriting from `PostMarketSource`
-2. Implement `fetch_raw()` and `normalize()` methods
-3. Add analysis logic in `analysis.py` (`analyse_your_source()`)
-4. Create a summary formatter in `summary.py`
-5. Register in `registry.py`'s `SOURCE_CLASSES` list
-
-### Example: Adding Custom Indicator
-```python
-from analyser.BaseAnalyser import BaseAnalyser
-
-class CustomAnalyser(BaseAnalyser):
-    def analyse_positional(self, stock):
-        # Your analysis logic
-        if condition_met:
-            stock.add_analysis_reason("Custom signal detected")
-            return True
-        return False
-```
-
-## Known Limitations
-
-- Requires active internet connection for data fetching
-- Yahoo Finance data may have occasional delays or gaps
-- NSE website structure changes may break derivatives data fetching
-- Zerodha enctoken expires and needs manual refresh
-- Post-market APIs are third-party and subject to rate limits
-
-## Troubleshooting
-
-### No Data Available
-- Check internet connection
-- Verify Yahoo Finance is accessible
-- Ensure stock symbols are correct (use NSE symbols, not BSE)
-
-### Telegram Notifications Not Working
-- Verify bot token and chat ID are correct
-- Ensure `ENV_PRODUCTION=1` for notifications to be sent
-- Check bot has permission to send messages to the chat
-
-### Zerodha Integration Issues
-- Enctoken expires regularly - need to login to Zerodha and extract new token
-- Ensure `ENV_ENABLE_ZERODHA_API=1` or `ENV_ENABLE_ZERODHA_DERIVATIVES=1`
-
-## Contributing
-
-Contributions are welcome! Please:
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes with appropriate tests
-4. Submit a pull request with a clear description
-
-## License
-
-This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
-
-## Disclaimer
-
-This tool is for educational and informational purposes only. It is not financial advice. Always do your own research and consult with a qualified financial advisor before making investment decisions. The authors are not responsible for any financial losses incurred from using this tool.
-
-## Contact
-
-For questions or support, please open an issue on GitHub
-**Intraday (single run):**
-```bash
-# Set ENV_DEV_INTRADAY=1 and ENV_PRODUCTION=0 in .env
-python intraday/intraday_monitor.py
-```
-
-**Positional:**
-```bash
-# Set ENV_DEV_POSITIONAL=1 and ENV_PRODUCTION=0 in .env
-python intraday/intraday_monitor.py
-```
-
-#### Production Deployment
-In production mode (`ENV_PRODUCTION=1`):
-1. Script waits until 9:15 AM if started before market open
-2. Runs intraday analysis from 9:15 AM to 3:30 PM (every 5 minutes)
-3. Waits until 4:00 PM and runs EOD positional analysis
-4. Optionally shuts down the system if `ENV_SHUTDOWN=1`
-
-#### With Telegram Bot
-Enable interactive bot mode:
-```bash
-# Set ENV_ENABLE_TELEGRAM_BOT=1 in .env
-python intraday/intraday_monitor.py
-```
-This runs the analysis in a separate thread while keeping the bot listener active for commands.
-
-### Project Structure
+## Project Structure
 
 ```
 StockAnalysis/
-├── analyser/              # Analysis modules (Volume, Technical, IV, PCR, Max Pain, Futures,
-│                        #   OI Chain, Candlestick, LiveOI, LiveStraddle, PanicMode)
-├── backtest/              # Backtesting framework + Optuna optimizer
-├── common/                # Shared utilities, constants, scoring, logging, market calendar
-├── configs/               # custom_holidays.json, ml_config.yaml
-├── data/                  # final_derivatives_list.json, backtest results, models
-├── docs/                  # DESIGN.md — full architectural reference
-├── fno/                   # SensibullFetcher, OptionWriteStandardDeviation
-├── intelligence/          # SignalBus, SignalCorrelator, MarketNarrator, GeminiClient
-├── intraday/              # intraday_monitor.py — main entry point
-├── notification/
-│   ├── Notification.py      # Telegram sender (3 channels)
-│   ├── bot_listener.py      # Thin entry point — registers commands, schedules jobs
-│   └── commands/            # Command Router: account, market, system modules
-├── nse/                   # NSE API wrappers, date helpers
+├── analyser/          # All analyser classes (11 files)
+├── backtest/          # Backtesting framework + Optuna optimizer
+├── common/            # Stock.py, shared.py, constants.py, scoring.py, token_registry.py
+├── configs/           # custom_holidays.json, ml_config.yaml
+├── data/              # final_derivatives_list.json, backtest results
+├── docs/              # DESIGN.md, DATA_SCHEMA.md
+├── fno/               # SensibullFetcher, sensibull_feed.py (OPTIONS_SOURCE=sensibull path)
+├── intelligence/      # SignalBus, SignalCorrelator, MarketNarrator, GeminiClient
+├── intraday/          # intraday_monitor.py — main entry point
+├── ml_pipeline/       # ML prediction pipeline (XGBoost, LightGBM, RF, Ensemble)
+├── notification/      # Telegram sender + bot commands (Command Router pattern)
+├── nse/               # NSE API wrappers + market calendar helpers
 ├── post_market_analysis/  # FII/DII, sector perf, F&O OI, index returns pipeline
-├── premarket/             # Global cues, bonds, commodities, pre-open report
-├── scripts/
-│   ├── deploy.py            # git pull + restart via SSH
-│   └── service_stop.py      # Start EC2 + stop service (holiday-aware, SSH retry-poll)
-├── sentiment/             # FinBERT news sentiment
-├── tests/                 # 951 tests across 41 files
-├── zerodha/               # WebSocket lifecycle, TickStore, LiveOptionsEngine, LiveStockEngine
-├── Makefile               # All common targets (see above)
-└── .env.template          # Copy to .env and fill in your credentials
+├── premarket/         # Global cues, bonds, commodities, pre-open report
+├── scripts/           # deploy.py, service_stop.py (holiday-aware)
+├── sentiment/         # FinBERT news sentiment
+├── tests/             # 951 tests across 41 files
+├── zerodha/           # WebSocket lifecycle, TickStore, FuturesFetcher, LiveOptionsEngine
+├── Makefile
+└── .env.template
 ```
 
 ### Key Files
-- `intraday/intraday_monitor.py`: Main entry point for analysis
-- `post_market_analysis/runner.py`: Post-market analysis pipeline
-- `common/Stock.py`: Stock data model and price data management
-- `analyser/Analyser.py`: Orchestrator for running multiple analyzers
-- `notification/Notification.py`: Telegram notification sender
-- `notification/bot_listener.py`: Interactive Telegram bot
-- `TELEGRAM_POSITIONAL_CHAT_ID`: Chat ID for positional channel
 
-#### Zerodha Configuration (if enabled)
-- `ENV_ZERODHA_USERNAME`: Zerodha user ID
-- `ENV_ZERODHA_PASSWORD`: Zerodha password
-- `ENV_ZERODHA_ENC_TOKEN`: Zerodha enctoken for API authentication
+| File | Purpose |
+|------|---------|
+| `intraday/intraday_monitor.py` | Main entry point, orchestration loop, observability layers |
+| `common/Stock.py` | Core data model; delegates live ticks to TickStore |
+| `common/constants.py` | ANALYSIS_WEIGHTS, priority thresholds, env var names, category sets |
+| `common/shared.py` | AppContext singleton, Mode enum, global state |
+| `common/scoring.py` | Score calculation, alignment bonus, should_notify() |
+| `analyser/Analyser.py` | BaseAnalyzer (decorator framework) + AnalyserOrchestrator |
+| `zerodha/futures_fetcher.py` | FuturesFetcher — Kite historical futures data |
+| `fno/sensibull_fetcher.py` | SensibullFetcher — Sensibull API (insights, OI chain, IV chart, OI history) |
+| `notification/Notification.py` | Telegram message sender (3 channels, retry logic) |
+| `notification/bot_listener.py` | Telegram bot entry point (Command Router) |
 
-#### Stock/Index Selection
-- `NO_OF_STOCKS`: Limit number of stocks to analyze (use `-1` for all in production)
-- `NO_OF_INDEX`: Limit number of indices to analyze (use `-1` for all in production)
+---
 
-### Usage
+## Telegram Bot Commands
 
-- **Run Intraday Analysis**
-  ```bash
-  python intraday/intraday_monitor.py
-  ```
+| Command | Description |
+|---------|-------------|
+| `/help` | All available commands |
+| `/status` | System Health Dashboard — feed lag, RAM, LLM budget |
+| `/ltp <SYMBOL>` | Last traded price + % change |
+| `/gainers` | Top 5 gainers by % change |
+| `/losers` | Top 5 losers by % change |
+| `/watchlist` | WebSocket subscription overview, options zones, futures LTP/OI |
+| `/holidays` | Today's status + upcoming NSE holidays (next 30 days) |
+| `/straddle <SYMBOL>` | Live ATM straddle: premium, ±1SD range, CE/PE LTPs, PCR |
+| `/walls <SYMBOL>` | OI walls: CE/PE max-OI strikes, tick delta, session delta, Iron Condor zone |
+| `/enctoken <token>` | Update Zerodha enctoken in `.env` + reconnect WebSocket |
 
-- **Run Positional Analysis**
-  ```bash
-  python intraday/intraday_monitor.py
-  ```
+---
 
-### Example
+## Post-Market Analysis
 
-The project includes example scripts and configurations to help you get started quickly. Modify the parameters in `intraday_monitor.py` to suit your analysis needs.
+After EOD positional analysis, the pipeline fetches and formats:
+- FII/DII cash and derivatives flows (last 5 days)
+- Sector performance (top 5 gaining/losing)
+- F&O participant OI breakdown (Client/DII/FII/Pro)
+- NSE index returns
 
-## Contributing
+All are sent as HTML-formatted Telegram messages to the positional channel.
 
-Contributions are welcome! Please fork the repository and submit a pull request for any enhancements or bug fixes.
+---
 
-## License
+## Observability
 
-This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
+Three fail-silent layers injected in `intraday_monitor.py`:
 
-## Contact
+1. **Crash handler** (`sys.excepthook`): sends fatal tracebacks to Telegram with `html.escape()`
+2. **Heartbeat** (`HEALTHCHECK_URL`): pings dead-man's switch at end of every analysis cycle
+3. **Zombie watchdog**: detects stale WebSocket options data (>120s), sends one-time alert per symbol
 
-For questions or support, please contact [yourname@domain.com](mailto:yourname@domain.com).
+---
 
-```
+## Disclaimer
 
-### Explanation:
-- **Project Overview**: Provides a brief introduction to the project and its purpose.
-- **Features**: Lists the key features of the project.
-- **Getting Started**: Includes prerequisites, installation steps, and configuration details.
-- **Usage**: Describes how to run the analysis scripts.
-- **Example**: Mentions the availability of example scripts.
-- **Contributing**: Encourages contributions from the community.
-- **License**: States the licensing information.
-- **Contact**: Provides contact information for support or inquiries.
-
-Feel free to customize the content to better fit your project's specifics and your personal or organizational preferences.
+This tool is for educational and informational purposes only. It is not financial advice. The authors are not responsible for any financial losses.
