@@ -1,6 +1,6 @@
 # StockAnalysis - Comprehensive Design Document
 
-> **Last Updated**: May 2026 (Command Router bot refactor, /straddle + /walls commands, System Health Dashboard /status, LLM budget alert job, service-stop + service-stop-force Makefile targets, SSH retry-poll, `last_equity_tick_time` feed health, `llm_budget_warned` daily flag)
+> **Last Updated**: May 2026 (All 9 analysers now active; FuturesAnalyser new positional/intraday methods + fixes; Sensibull OI history fetch; PCRAnalyser positional PCR reversal + intraday trend; OIChainAnalyser extended positional methods; MIN_NOTIFICATION_SCORE raised to 110; updated ANALYSIS_WEIGHTS; `options_source` + `sensibull_feed` in AppContext; `oi_history` in sensibull_ctx)
 > **Purpose**: Complete architectural reference for the Indian Stock Market Analysis System targeting NSE (National Stock Exchange) equities. This document captures the entire codebase: architecture, data flows, module interactions, signal processing, scoring, notifications, and deployment details.
 
 ---
@@ -299,8 +299,12 @@ class AppContext:
     stock_token_obj_dict: dict    # {instrument_token: Stock} for equities
     index_token_obj_dict: dict    # {instrument_token: Stock} for indices
     commodity_token_obj_dict: dict
-    global_indices_obj_dict: dict
-    stockExpires: list            # F&O expiry dates
+    global_indices_token_obj_dict: dict
+    stocks_list: list             # list of stock trading symbols
+    index_list: list              # list of index trading symbols
+    commodity_list: list
+    global_indices_list: list
+    stockExpires: list            # F&O expiry dates (seeded from first index with valid expiries)
     mode: Mode                    # Current operating mode
     zd_ticker_manager             # ZerodhaTickerManager reference
     zd_kc                         # KiteConnect instance
@@ -312,6 +316,8 @@ class AppContext:
                                   # Set by ZerodhaTickerManager.on_ticks(); used by /status
     llm_budget_warned: bool       # True once 80% LLM budget alert fires today;
                                   # prevents duplicate alerts; reset at midnight via callback
+    options_source: str           # "zerodha" (default) or "sensibull" — live option tick source
+    sensibull_feed                # SensibullFeed instance when OPTIONS_SOURCE=sensibull
 
 # Global singleton
 app_ctx = AppContext()
@@ -483,15 +489,20 @@ All IV signals are always classified as **NEUTRAL** (IV is directionally ambiguo
 
 ### 7.5 PCRAnalyser (`analyser/PCRAnalyser.py`)
 
-Uses Sensibull data for Put-Call Ratio analysis.
+Uses Sensibull data for Put-Call Ratio analysis. Data sources differ by method:
+- `historical_data` (rolling intraday snapshots) → intraday methods
+- `oi_history` (daily rows from compute_intraday 1D) → positional trend/reversal
+- `oi_chain` (latest OI chain snapshot) → extreme/bias methods
 
-| Method | Signal Type | Logic |
-|--------|-------------|-------|
-| `analyse_pcr_extreme_zones` | PCR_EXTREME | Contrarian: PCR < 0.3 = Bullish, PCR > 1.5 = Bearish |
-| `analyse_pcr_directional_bias` | PCR_BIAS | PCR < 0.5 = Bearish, PCR > 1.2 = Bullish |
-| `analyse_pcr_trend` | PCR_TREND | 3-day consistent rising (Bullish) or falling (Bearish), >10% change |
-| `analyse_pcr_divergence` | PCR_DIVERGENCE | Near vs far month PCR diff > 1.2 = NEUTRAL uncertainty signal |
-| `analyse_pcr_reversal` | PCR_REVERSAL | Zone crossover or trend direction reversal (intraday only) |
+| Method | Signal Type | Mode | Logic |
+|--------|-------------|------|-------|
+| `analyse_pcr_extreme_zones` | PCR_EXTREME | @both | Contrarian: PCR < 0.3 = Bullish, PCR > 1.5 = Bearish |
+| `analyse_pcr_directional_bias` | PCR_BIAS | @both | PCR < 0.5 = Bearish, PCR > 1.2 = Bullish (WEAK/MODERATE/STRONG tiers) |
+| `analyse_pcr_trend` | PCR_TREND | @positional | 5-day window from `oi_history`; OI must change >= 8% and >= 0.08 absolute |
+| `analyse_pcr_intraday_trend` | PCR_INTRADAY_TREND | @intraday | Multi-snapshot PCR trend from `oi_chain_history`; min 3 snapshots, >= 5% change |
+| `analyse_pcr_divergence` | PCR_DIVERGENCE | @both | Near vs far expiry PCR diff > 0.35 |
+| `analyse_pcr_reversal` | PCR_REVERSAL | @intraday | Zone crossover or trend direction reversal; min 4 snapshots |
+| `analyse_pcr_pos_reversal` | PCR_POS_REVERSAL | @positional | Multi-day PCR reversal from `oi_history`; min 6 daily rows, 3-day average comparison |
 
 ### 7.6 MaxPainAnalyser (`analyser/MaxPainAnalyser.py`)
 
@@ -505,34 +516,73 @@ Uses Sensibull pre-calculated max pain data.
 
 ### 7.7 OIChainAnalyser (`analyser/OIChainAnalyser.py`, ~68KB)
 
-Per-strike OI chain analysis from Sensibull.
+Per-strike OI chain analysis from Sensibull. Uses `sensibull_ctx["oi_chain"]` and `oi_chain_history` for intraday methods; `prev_call_oi` / `prev_put_oi` in `per_strike_data` for positional overnight-comparison methods.
 
-| Method | Signal Type | Description |
-|--------|-------------|-------------|
-| `analyse_oi_support_resistance` | OI_SUPPORT_RESISTANCE | Identifies S/R from OI concentration (proximity gate to current price) |
-| `analyse_oi_buildup` | OI_BUILDUP | Fresh writing detection with dominant ratio (call vs put) |
-| `analyse_oi_wall` | OI_WALL | Statistical outlier detection for massive OI at specific strikes |
-| `analyse_oi_shift` | OI_SHIFT | Tracks movement of OI concentration between strikes |
-| `analyse_intraday_oi_trend` | OI_INTRADAY_TREND | Multi-snapshot PCR trend within the day (intraday only) |
-| `analyse_intraday_oi_sr_shift` | OI_SR_SHIFT | Monitors when key S/R levels shift intraday (intraday only) |
+| Method | Signal Type | Mode | Description |
+|--------|-------------|------|-------------|
+| `analyse_oi_support_resistance` | OI_SUPPORT_RESISTANCE | @both | Identifies S/R from OI concentration; requires proximity ≤1.0% (intraday) / 1.5% (positional); strike OI ≥ 1.5× average |
+| `analyse_oi_buildup` | OI_BUILDUP | @both | Fresh writing detection; call/put OI ratio ≥ 2.5×; min 3 significant strikes; total OI change ≥ 3% (intraday) / 5% (positional) |
+| `analyse_oi_wall` | OI_WALL | @both | Statistical outlier: OI > mean + 1.8×std (intraday) / 2.0×std (positional); within 3%/5% of price |
+| `analyse_oi_shift` | OI_SHIFT | @both | Tracks movement of OI concentration; 4×/5× imbalance ratio required |
+| `analyse_intraday_oi_trend` | OI_INTRADAY_TREND | @intraday | Multi-snapshot PCR trend; min 5 snapshots; PCR change ≥ 8%; single-side OI change ≥ 5% |
+| `analyse_intraday_oi_sr_shift` | OI_SR_SHIFT | @intraday | S/R level migration; min 5 snapshots; must shift ≥ 2 strike widths |
+| `analyse_oi_capitulation` | OI_CAPITULATION | @positional | Institutional OI unwinding; uses `prev_call_oi`/`prev_put_oi`; strike OI drop ≥ 30% AND ≥ 50K contracts; min 2 qualifying strikes; ≥ 8% of that side's total OI; within ±8% of spot |
+| `analyse_oi_wall_migration` | OI_WALL_MIGRATION | @positional | Overnight wall migration; detects ≥ 1 strike width movement using `prev_*_oi` for yesterday's wall vs today's; guarded against expiry-day total OI drop >80% |
+| `analyse_positional_oi_trend` | OI_POSITIONAL_TREND | @positional | Multi-day call/put OI build-up from `oi_history`; look-back 5 days; one side must grow ≥ 15%; leading side must exceed lagging by ≥ 10% |
+| `analyse_oi_acceleration` | OI_ACCELERATION | @positional | Sudden 2×+ jump in daily OI writing velocity from `oi_history`; recent 3-day velocity ≥ 2× prior 3-day; recent mean daily change ≥ 2M contracts; prior base ≥ 500K |
 
 ### 7.8 FuturesAnalyser (`analyser/Futures_Analyser.py`)
 
-Enhanced with dynamic thresholds and multi-timeframe analysis.
+Enhanced with dynamic thresholds, multi-timeframe analysis, and new positional/intraday methods.
 
-| Method | Signal Type | Description |
-|--------|-------------|-------------|
-| `analyse_futures_action` | FUTURES_ACTION | Detects: long_buildup, short_buildup, short_covering, long_unwinding. Reads from `stock.zerodha_ctx["futures_data"]["current"]` DataFrame |
-| PVO patterns | PVO | Price-Volume-OI pattern detection |
-| ORB breakout | ORB | Opening Range Breakout with OI + volume confirmation |
+| Method | Signal Type | Mode | Description |
+|--------|-------------|------|-------------|
+| `analyse_intraday_check_future_action` | FUTURE_ACTION | @both | Detects long_buildup, short_buildup, short_covering, long_unwinding from `futures_data["current"]` and `"next"` DataFrames |
+| `analyse_intraday_price_volume_oi_pattern` | FUTURE_PVO_PATTERN | @both | Price-Volume-OI pattern detection (10 patterns including directional and divergence) |
+| `analyse_intraday_breakout_oi_confirmation` | FUTURE_BREAKOUT_PATTERN | @intraday | Opening Range Breakout (ORB candles 3–5) with OI + volume confirmation; fires once per direction per session |
+| `analyse_positional_oi_trend` | FUTURE_OI_TREND | @positional | Multi-day OI buildup/unwinding trend using 10-day and 20-day windows on the 55-row positional dataset |
+| `analyse_positional_cost_of_carry` | FUTURE_COST_OF_CARRY | @both | Basis (futures-spot); BACKWARDATION (<-0.05%) valid in both modes; HIGH_COST_OF_CARRY (ann CoC >15%) and BASIS_EXPANDING positional only |
+| `analyse_positional_rollover_pressure` | FUTURE_ROLLOVER | @positional | curr/next OI ratio detection; ROLLOVER_ACTIVE (<2x), ROLLOVER_STARTING (2–4x + falling trend) |
+| `analyse_intraday_oi_buildup_from_open` | FUTURE_OI_FROM_OPEN | @intraday | Compares current OI vs session-open OI (threshold: ≥1.5%); session-open OI cached in `_session_open_oi` |
 
-**Dynamic Thresholds**:
-- ATR-based price threshold (adapts to volatility)
-- OI-volatility-based OI threshold
-- Multi-timeframe: 5-candle short-term + 15-candle medium-term analysis
+**Session State Flags** (class-level, reset on mode change):
 
-**Signal Scoring System** (100-point internal score):
-- OI component, Volume component, Trend component, Momentum component, Time component, Risk-reward component
+| Flag | Purpose |
+|------|---------|
+| `_orb_fired_up` | Prevents ORB upside from re-firing every cycle |
+| `_orb_fired_down` | Prevents ORB downside from re-firing every cycle |
+| `_orb_open_time_warned` | Logs only once if first bar is not at 09:15 |
+| `_session_open_oi` | Cached session-open OI for OI-from-open analysis |
+| `_session_date` | Date string to detect new session and reset `_session_open_oi` |
+| `_last_reset_mode` | Prevents repeated `reset_constants()` calls in same mode |
+
+**Dynamic Thresholds** (computed per stock per call):
+- ATR-based price threshold: `max(ATR% × 0.5, MIN_PRICE_THRESHOLD)`
+- OI-volatility-based threshold: `max(oi_std × 1.5, MIN_OI_THRESHOLD)`, with:
+  - Intraday: floored at `base × 0.5`, no cap
+  - Positional: floored at `base`, capped at `base × 3` (prevents overloose std suppressing real moves)
+- Startup noise filter: OI rows below 5% of contract max are skipped before computing std
+
+**6-Component Signal Score** (0–100 internal score, determines FUTURE_SIGNAL_SCORE_* weight used):
+
+| Component | Max pts | Source |
+|-----------|---------|--------|
+| OI confirmation | 20 | OI change > threshold |
+| Volume confirmation | 20 | Volume > 1.2× rolling average |
+| Multi-timeframe alignment | 15 | Short (6 candles) + medium (18 candles) trend aligned |
+| Momentum | 15 | RSI-like momentum + ROC |
+| Time filter | 10 | Market open (0), lunch (5), close (7.5), prime hours (10) |
+| Risk/reward | 20 | ORB range vs distance past level; or price+OI magnitude |
+
+**Mode thresholds** (set by `reset_constants()`):
+
+| Parameter | Intraday | Positional |
+|-----------|----------|------------|
+| `FUTURE_PRICE_CHANGE_PERCENTAGE` | 0.15% | 1.0% |
+| `FUTURE_OI_INCREASE_PERCENTAGE` | 0.10% | 3.0% |
+| `ORB_CANDLES` | 3 | 3 (unused) |
+| `SHORT_TERM_CANDLES` | 6 (30 min) | 5 (1 week) |
+| `MEDIUM_TERM_CANDLES` | 18 (90 min) | 15 (3 weeks) |
 
 ---
 
@@ -610,29 +660,42 @@ FUTURES_ANALYSES = {
 ```python
 def should_notify(score_result):
     return (
-        score_result.total_score >= MIN_NOTIFICATION_SCORE  # 75
+        score_result.total_score >= MIN_NOTIFICATION_SCORE  # 110
         and score_result.confidence_pct >= 65               # 65% alignment gate
     )
 ```
 
+> `MIN_NOTIFICATION_SCORE` was raised from 75 to 110 to reduce noise after the analyser pool was expanded (Supertrend, RSI Divergence, Stochastic, OBV, Pivot Points, enhanced candlestick pattern weights). 110 sits between HIGH (90) and CRITICAL (130) thresholds.
+
 ### `common/constants.py` - ANALYSIS_WEIGHTS
 
-Contains ~50 signal types with weights, e.g.:
+Contains ~60 signal types with weights. See `DATA_SCHEMA.md` Section 12 for the full dict. Key values:
+
 ```python
 ANALYSIS_WEIGHTS = {
-    "RSI": 15,
-    "MACD": 12,
-    "EMA_CROSSOVER": 10,
-    "BOLLINGER_BANDS": 10,
-    "SUPERTREND": 14,
-    "FUTURES_ACTION": 18,
-    "OI_WALL": 16,
-    "PCR_EXTREME": 12,
-    "MAX_PAIN": 10,
-    # ... etc
+    # Technical
+    "RSI": 15, "MACD": 15, "SUPERTREND": 15, "RSI_DIVERGENCE": 18,
+    # Candlestick (backtest-optimised)
+    "Double_candle_stick_pattern": 18,  # Engulfing — most reliable
+    "Single_candle_stick_pattern": 6,   # Marubozu — reduced, not reliable
+    # Futures
+    "FUTURE_ACTION_LONG_BUILDUP": 16, "FUTURE_BREAKOUT_MTF_ALIGNED": 20,
+    "FUTURE_OI_TREND": 16, "FUTURE_OI_FROM_OPEN": 15,
+    # OI Chain
+    "OI_ACCELERATION": 17, "OI_CAPITULATION": 16, "OI_POSITIONAL_TREND": 16,
+    # Panic composite
+    "PANIC_MODE": 22, "PANIC_EXHAUSTION": 25,
 }
 
-NEUTRAL_EXCLUDE_FROM_SCORE = {"IV_SPIKE", "IV_TREND"}  # Don't count toward directional score
+NEUTRAL_EXCLUDE_FROM_SCORE = {
+    "MAX_PAIN_ALIGNMENT",    # When DIVERGENT
+    "MAX_PAIN_TREND",        # When DIVERGING
+    "OI_SUPPORT_RESISTANCE", # Informational S/R
+    "OI_SR_SHIFT",           # Informational range
+    "FUTURE_ROLLOVER",       # Context only
+}
+
+MIN_NOTIFICATION_SCORE = 110   # Raised from 75 — expanded analyser pool
 ```
 
 ---
@@ -643,7 +706,10 @@ NEUTRAL_EXCLUDE_FROM_SCORE = {"IV_SPIKE", "IV_TREND"}  # Don't count toward dire
 
 This is the production entry point that orchestrates the entire system.
 
-#### Registered Analyzers
+#### Registered Analyzers (current state)
+
+All 9 analysers are active. Registration order matters — `PanicModeAnalyser` must always be last because it reads `stock.analysis` populated by all preceding analysers.
+
 ```python
 orchestrator.register(VolumeAnalyser())
 orchestrator.register(TechnicalAnalyser())
@@ -655,6 +721,18 @@ orchestrator.register(MaxPainAnalyser())
 orchestrator.register(OIChainAnalyser())
 orchestrator.register(PanicModeAnalyser())    # MUST be last — reads stock.analysis
 ```
+
+| Order | Analyser | Signal categories | Mode |
+|---|---|---|---|
+| 1 | VolumeAnalyser | VOLUME, VOLUME_BREAKOUT, OBV_DIVERGENCE, VOLUME_CLIMAX | both |
+| 2 | TechnicalAnalyser | RSI, MACD, EMA_CROSSOVER, SUPERTREND, RSI_DIVERGENCE, STOCHASTIC, BOLLINGERBAND, VWAP, PIVOT_POINTS | both |
+| 3 | CandleStickAnalyser | Single/Double/Triple candle patterns | both |
+| 4 | IVAnalyser | IV_SPIKE, IV_TREND, IV_RANK, IV_RANK_EXTREME, IV_PREMIUM | both |
+| 5 | FuturesAnalyser | FUTURE_ACTION, FUTURE_PVO_PATTERN, FUTURE_BREAKOUT_PATTERN, FUTURE_OI_TREND, FUTURE_COST_OF_CARRY, FUTURE_ROLLOVER, FUTURE_OI_FROM_OPEN | both/positional/intraday |
+| 6 | PCRAnalyser | PCR_EXTREME, PCR_BIAS, PCR_TREND, PCR_INTRADAY_TREND, PCR_REVERSAL, PCR_POS_REVERSAL, PCR_DIVERGENCE | both |
+| 7 | MaxPainAnalyser | MAX_PAIN, MAX_PAIN_TREND, MAX_PAIN_ALIGNMENT | both |
+| 8 | OIChainAnalyser | OI_SUPPORT_RESISTANCE, OI_BUILDUP, OI_WALL, OI_SHIFT, OI_INTRADAY_TREND, OI_SR_SHIFT, OI_CAPITULATION, OI_WALL_MIGRATION, OI_POSITIONAL_TREND, OI_ACCELERATION | both |
+| 9 | PanicModeAnalyser | PANIC_MODE, PANIC_EXHAUSTION | both — **must be last** |
 
 #### Production Daily Timeline
 
@@ -859,8 +937,12 @@ class FuturesFetcher:
     def __init__(self, kite_connect): ...
 
     def fetch(stock, mode="positional", is_next_expiry_required=False) -> Tuple[DataFrame, DataFrame]:
-        # mode="positional": daily data, last 5 business days
-        # mode="intraday":   5-min data, today only
+        # mode="positional": daily OHLCV+OI, 90-day lookback (continuous=False, no rollover artifacts)
+        #                    always fetches next expiry too (for rollover analysis)
+        #                    ~55 clean rows after 5% startup noise filter
+        # mode="intraday":   5-min OHLCV+OI, today only — appends 1 row per cycle
+        #                    accumulates through the session in futures_data["current"]
+        # Both modes populate underlying_price from stock.priceData daily closes (spot_map)
         # Reads/writes stock.zerodha_ctx["futures_data"]["current"] and "next" DataFrames
 ```
 
@@ -889,10 +971,26 @@ class SensibullFetcher:
     def fetch_data(stock, mode="positional") -> Optional[DataFrame]:
         # Fetches insights (underlying_info, stats, per_expiry_map, nse_stats)
         # Stores in stock.sensibull_ctx["current"] and "historical_data"
+        # historical_data: rolling 30 rows (positional) or 5-day window (intraday)
 
-    def fetch_oi_chain(stock, mode="positional") -> Optional[list]:
-        # Fetches per-strike OI chain
+    def fetch_oi_chain(stock, mode="positional") -> Optional[dict]:
+        # Fetches per-strike OI chain (requires fetch_data() first for expiry selection)
         # Stores in stock.sensibull_ctx["oi_chain"] and "oi_chain_history"
+        # oi_chain_history: max 15 snapshots (intraday), single entry (positional)
+
+    def fetch_iv_chart(stock) -> Optional[DataFrame]:
+        # Fetches 2yr daily ATM IV history (fetch-once guard per day)
+        # Stores in stock.sensibull_ctx["iv_chart_history"] [date, iv_close, price_close]
+        # Called in positional mode only
+
+    def fetch_oi_history(stock) -> Optional[DataFrame]:
+        # Fetches ~181 daily OI rows from compute_intraday 1D (fetch-once guard per day)
+        # Requires fetch_data() first for expiry selection
+        # Stores in stock.sensibull_ctx["oi_history"]
+        # [date, spot, call_oi, put_oi, futures_oi, call_oi_change, put_oi_change,
+        #  future_oi_change, pcr, max_pain]
+        # Used by PCRAnalyser (pcr_trend, pcr_pos_reversal) and OIChainAnalyser (positional methods)
+        # Called in positional mode only
 ```
 
 ### `zerodha_connect.py` - Modified KiteConnect
@@ -1261,11 +1359,11 @@ Morning bias is skipped in POSITIONAL mode (EOD analysis already runs positional
 
 | Layer | Source | When | Score Gate |
 |-------|--------|------|------------|
-| POSITIONAL | `intraday_monitor.compute_morning_bias()` | Once at startup | `score >= MIN_NOTIFICATION_SCORE (75)` |
-| INTRADAY | `AnalyserOrchestrator.run_all_intraday()` | Every 5-min cycle, per stock | `score >= MIN_NOTIFICATION_SCORE (75)` |
+| POSITIONAL | `intraday_monitor.compute_morning_bias()` | Once at startup | `score >= MIN_NOTIFICATION_SCORE (110)` |
+| INTRADAY | `AnalyserOrchestrator.run_all_intraday()` | Every 5-min cycle, per stock | `score >= MIN_NOTIFICATION_SCORE (110)` |
 | LIVE | `LiveOptionsEngine.on_option_tick()` | Per tick (via LiveOI/LiveStraddle analysers) | None — always emitted |
 
-**Score gate rationale:** All 8 analysers for a stock run sequentially to completion on the same candle. `_emit_signals()` is only called if `score_result.total_score >= 75`. Stocks that fire only 1-2 weak indicators never reach the correlator. LIVE signals bypass the gate because they originate from per-tick WebSocket data and have no batch score context — latency is the priority.
+**Score gate rationale:** All analysers for a stock run sequentially to completion on the same candle. `_emit_signals()` is only called if `score_result.total_score >= MIN_NOTIFICATION_SCORE (110)`. Stocks that fire only 1-2 weak indicators never reach the correlator. LIVE signals bypass the gate because they originate from per-tick WebSocket data and have no batch score context — latency is the priority.
 
 **Emission is already effectively batched for INTRADAY/POSITIONAL:** all analysers finish before `_emit_signals()` is called, so there is no intra-cycle race condition between individual indicators (RSI vs MACD etc.). The "race condition" concern only applies to LIVE signals, which are genuinely independent per-tick.
 
