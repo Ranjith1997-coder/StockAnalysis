@@ -1684,9 +1684,9 @@ def init():
         # orchestrator.register(TechnicalAnalyser())
         # orchestrator.register(CandleStickAnalyser())
         # orchestrator.register(IVAnalyser())
-        # orchestrator.register(FuturesAnalyser())
+        orchestrator.register(FuturesAnalyser())
         # orchestrator.register(PCRAnalyser())
-        orchestrator.register(MaxPainAnalyser())
+        # orchestrator.register(MaxPainAnalyser())
         # orchestrator.register(OIChainAnalyser())
         # orchestrator.register(PanicModeAnalyser())    # MUST be last -- reads stock.analysis
     if ENABLE_ZERODHA_API:
