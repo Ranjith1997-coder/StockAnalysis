@@ -102,8 +102,12 @@ class FuturesFetcher:
     ):
         interval = "day"
         end_date = datetime.datetime.now()
-        business_days = pd.bdate_range(end=end_date, periods=5).to_pydatetime()
-        start_date = business_days[0]
+        # 90-day lookback gives full single-contract life (~55 rows).
+        # continuous=False keeps OI clean — no rollover artifacts.
+        start_date = end_date - datetime.timedelta(days=90)
+        # Rollover analysis always needs next expiry OI, so always fetch it
+        # in positional mode regardless of the caller's flag.
+        is_next_expiry_required = True
 
         def _fetch_with_retry(token):
             for attempt in range(3):
@@ -114,6 +118,7 @@ class FuturesFetcher:
                         to_date=end_date.strftime("%Y-%m-%d"),
                         interval=interval,
                         oi=True,
+                        continuous=False,
                     )
                 except Exception as e:
                     if "Too many requests" in str(e):
@@ -127,12 +132,20 @@ class FuturesFetcher:
             logger.error(f"Failed to fetch futures data for token {token} after 3 attempts")
             raise Exception(f"Too many requests for futures token {token}")
 
+        # Build a date → spot_price lookup from stock.priceData so each daily
+        # futures row gets the correct underlying_price (fixes the basis=0 bug).
+        spot_map: dict = {}
+        if stock.priceData is not None and not stock.priceData.empty:
+            for ts, row in stock.priceData.iterrows():
+                day_key = ts.strftime("%Y-%m-%d") if hasattr(ts, "strftime") else str(ts)[:10]
+                spot_map[day_key] = float(row.get("Close", row.get("close", 0)) or 0)
+
         futures_data_current = pd.DataFrame()
         if futures_mdata_current is not None:
             token = futures_mdata_current["instrument_token"].values[0]
             hist_data = _fetch_with_retry(token)
             if hist_data:
-                futures_data_current = self._candles_to_df(hist_data)
+                futures_data_current = self._candles_to_df(hist_data, spot_map=spot_map)
                 logger.info(
                     f"Futures data for {stock.stock_symbol} (current expiry) "
                     f"fetched for {len(futures_data_current)} rows."
@@ -143,7 +156,7 @@ class FuturesFetcher:
             token_next = futures_mdata_next["instrument_token"].values[0]
             hist_data_next = _fetch_with_retry(token_next)
             if hist_data_next:
-                futures_data_next = self._candles_to_df(hist_data_next)
+                futures_data_next = self._candles_to_df(hist_data_next, spot_map=spot_map)
                 logger.info(
                     f"Futures data for {stock.stock_symbol} (next expiry) "
                     f"fetched for {len(futures_data_next)} rows."
@@ -193,7 +206,10 @@ class FuturesFetcher:
                         else new_df
                     )
                     logger.info(
-                        f"Futures data for {stock.stock_symbol} (current) at {dt}: {row}"
+                        f"Futures data for {stock.stock_symbol} (current) at {dt}: "
+                        f"O={row['open']:.2f} H={row['high']:.2f} L={row['low']:.2f} "
+                        f"C={row['close']:.2f} vol={row['volume']:,} oi={row.get('oi', 0):,} "
+                        f"spot={float(row.get('underlying_price') or 0):.2f}"
                     )
 
         # ── Next expiry ───────────────────────────────────────────────────
@@ -261,7 +277,7 @@ class FuturesFetcher:
         raise Exception(f"Too many requests for futures token {token} at {dt}")
 
     @staticmethod
-    def _candles_to_df(hist_data: list) -> pd.DataFrame:
+    def _candles_to_df(hist_data: list, spot_map: dict | None = None) -> pd.DataFrame:
         rows = []
         for candle in hist_data:
             dt = (
@@ -269,6 +285,11 @@ class FuturesFetcher:
                 .tz_convert("Asia/Kolkata")
                 .replace(hour=5, minute=30, second=0)
             )
+            day_key = dt.strftime("%Y-%m-%d")
+            spot = (spot_map or {}).get(day_key) or 0
+            # Fall back to futures close only when spot is unavailable (intraday
+            # callers pass no spot_map; positional callers pass priceData map).
+            underlying = spot if spot > 0 else candle["close"]
             rows.append({
                 "date": dt,
                 "open": candle["open"],
@@ -277,7 +298,7 @@ class FuturesFetcher:
                 "close": candle["close"],
                 "volume": candle["volume"],
                 "oi": candle.get("oi"),
-                "underlying_price": candle["close"],
+                "underlying_price": underlying,
             })
         return pd.DataFrame(rows).set_index("date")
 

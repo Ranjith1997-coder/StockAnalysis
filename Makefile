@@ -1,6 +1,7 @@
 SHELL := /bin/bash
 PYTHON := .venv/bin/python
 PIP    := .venv/bin/pip
+SERVER := hacker@100.92.21.31
 
 .DEFAULT_GOAL := help
 
@@ -52,6 +53,15 @@ help:
 	@echo "    logs-follow   Follow logs/monitor.log live"
 	@echo "    clean         Remove __pycache__, .pyc, pytest cache"
 	@echo "    clean-all     clean + remove .venv"
+	@echo ""
+	@echo "  Server (hacker@100.92.21.31)"
+	@echo "    server-ssh          Open interactive SSH session"
+	@echo "    server-logs         Tail last 50 lines of service log on server"
+	@echo "    server-logs-follow  Live-follow service log on server"
+	@echo "    server-status       Show stock_analysis.service status"
+	@echo "    server-restart      Restart stock_analysis.service"
+	@echo "    server-pull         git pull on server repo"
+	@echo "    server-df           Disk usage on server"
 	@echo "────────────────────────────────────────────────────────────"
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -222,3 +232,34 @@ update-derivatives:
 clean-all: clean
 	rm -rf .venv
 	@echo ".venv removed. Run 'make venv && make install' to rebuild."
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Server
+# ──────────────────────────────────────────────────────────────────────────────
+.PHONY: server-ssh
+server-ssh:
+	ssh $(SERVER)
+
+.PHONY: server-logs
+server-logs:
+	ssh $(SERVER) "journalctl -u stock_analysis.service -n 50 --no-pager"
+
+.PHONY: server-logs-follow
+server-logs-follow:
+	ssh $(SERVER) "journalctl -u stock_analysis.service -f"
+
+.PHONY: server-status
+server-status:
+	ssh $(SERVER) "systemctl status stock_analysis.service"
+
+.PHONY: server-restart
+server-restart:
+	ssh $(SERVER) "sudo systemctl restart stock_analysis.service"
+
+.PHONY: server-pull
+server-pull:
+	ssh $(SERVER) "cd ~/StockAnalysis && git pull"
+
+.PHONY: server-df
+server-df:
+	ssh $(SERVER) "df -h"

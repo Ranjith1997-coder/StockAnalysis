@@ -145,6 +145,11 @@ ANALYSIS_WEIGHTS = {
     "FUTURE_SIGNAL_SCORE_HIGH": 20,       # High confidence futures signal (score >= 70)
     "FUTURE_SIGNAL_SCORE_MEDIUM": 15,     # Medium confidence futures signal (score >= 50)
     "FUTURE_SIGNAL_SCORE_LOW": 10,        # Low confidence futures signal (score >= 30)
+    # New futures signals
+    "FUTURE_OI_TREND": 16,                # Positional: multi-day OI buildup/unwinding trend
+    "FUTURE_COST_OF_CARRY": 14,           # Positional: basis backwardation / high CoC
+    "FUTURE_ROLLOVER": 8,                 # Positional: rollover pressure (NEUTRAL — context only)
+    "FUTURE_OI_FROM_OPEN": 15,            # Intraday: sustained OI buildup from session open
     
     # OI Chain Analysis (per-strike data from Sensibull OI endpoint)
     "OI_SUPPORT_RESISTANCE": 14,  # OI-based support/resistance levels
@@ -222,12 +227,13 @@ OPTIONS_ANALYSES = {"MAX_PAIN", "MAX_PAIN_TREND", "MAX_PAIN_ALIGNMENT",
                     "OI_POSITIONAL_TREND", "OI_ACCELERATION",
                     "IV_PREMIUM",
                     "PANIC_MODE", "PANIC_EXHAUSTION"}
-FUTURES_ANALYSES = {"FUTURES_PREMIUM", "FUTURE_ACTION", "FUTURE_ACTION_LONG_BUILDUP", 
-                     "FUTURE_ACTION_SHORT_BUILDUP", "FUTURE_ACTION_SHORT_COVERING", 
-                     "FUTURE_ACTION_LONG_UNWINDING", "FUTURE_BREAKOUT_PATTERN", 
+FUTURES_ANALYSES = {"FUTURES_PREMIUM", "FUTURE_ACTION", "FUTURE_ACTION_LONG_BUILDUP",
+                     "FUTURE_ACTION_SHORT_BUILDUP", "FUTURE_ACTION_SHORT_COVERING",
+                     "FUTURE_ACTION_LONG_UNWINDING", "FUTURE_BREAKOUT_PATTERN",
                      "FUTURE_BREAKOUT_CONFIRMED", "FUTURE_BREAKOUT_MTF_ALIGNED",
                      "FUTURE_PVO_PATTERN", "FUTURE_PVO_BUILDUP",
-                     "FUTURE_SIGNAL_SCORE_HIGH", "FUTURE_SIGNAL_SCORE_MEDIUM", "FUTURE_SIGNAL_SCORE_LOW"}
+                     "FUTURE_SIGNAL_SCORE_HIGH", "FUTURE_SIGNAL_SCORE_MEDIUM", "FUTURE_SIGNAL_SCORE_LOW",
+                     "FUTURE_OI_TREND", "FUTURE_COST_OF_CARRY", "FUTURE_ROLLOVER", "FUTURE_OI_FROM_OPEN"}
 
 # NEUTRAL signals that should NOT contribute to score
 # These indicate uncertainty/mixed signals rather than actionable info
@@ -237,6 +243,7 @@ NEUTRAL_EXCLUDE_FROM_SCORE = {
     # PCR_DIVERGENCE removed — now emits directional BEARISH/BULLISH signals
     "OI_SUPPORT_RESISTANCE",# When neutral - just informational S/R levels
     "OI_SR_SHIFT",          # When neutral - range squeeze/expand is informational
+    "FUTURE_ROLLOVER",      # Rollover pressure is context — not a directional signal
 }
 
 # NEUTRAL signals that SHOULD contribute to score (informational but valuable)
