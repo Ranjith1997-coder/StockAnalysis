@@ -62,6 +62,8 @@ help:
 	@echo "    server-restart      Restart stock_analysis.service"
 	@echo "    server-pull         git pull on server repo"
 	@echo "    server-df           Disk usage on server"
+	@echo "    update-enctoken     Update ZERODHA_ENC_TOKEN on server .env:"
+	@echo "                          make update-enctoken TOKEN=<your_enc_token>"
 	@echo "────────────────────────────────────────────────────────────"
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -263,3 +265,10 @@ server-pull:
 .PHONY: server-df
 server-df:
 	ssh $(SERVER) "df -h"
+
+# Usage: make update-enctoken TOKEN=<your_enc_token>
+TOKEN ?=
+.PHONY: update-enctoken
+update-enctoken:
+	@test -n "$(TOKEN)" || { echo "ERROR: TOKEN is required. Usage: make update-enctoken TOKEN=<enc_token>"; exit 1; }
+	ssh $(SERVER) "sed -i 's|^ZERODHA_ENC_TOKEN=.*|ZERODHA_ENC_TOKEN=$(TOKEN)|' ~/StockAnalysis/.env && echo 'ZERODHA_ENC_TOKEN updated on server'"
