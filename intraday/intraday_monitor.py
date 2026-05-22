@@ -1793,6 +1793,10 @@ def start_stock_analysis():
 
         logger.info("shutting down the system.")
         TELEGRAM_NOTIFICATIONS.send_notification("\U0001F6D1 <b>System Shutdown</b> \U0001F6D1", parse_mode="HTML")
+        # Stop the Telegram bot so run_polling() unblocks and the process exits
+        if ENABLE_TELEGRAM_BOT:
+            from notification.bot_listener import stop_telegram_bot
+            stop_telegram_bot()
         # Shutdown system
         if SHUTDOWN_SYSTEM:
             from subprocess import run
@@ -1817,6 +1821,10 @@ def start_stock_analysis():
             positional_analysis()
 
         _shutdown_background_services()
+        # Stop the Telegram bot in dev mode too so the process exits cleanly
+        if ENABLE_TELEGRAM_BOT:
+            from notification.bot_listener import stop_telegram_bot
+            stop_telegram_bot()
 
 def _shutdown_background_services():
     """
