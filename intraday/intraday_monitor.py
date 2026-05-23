@@ -22,6 +22,7 @@ from analyser.PCRAnalyser import PCRAnalyser
 from analyser.MaxPainAnalyser import MaxPainAnalyser
 from analyser.OIChainAnalyser import OIChainAnalyser
 from analyser.PanicModeAnalyser import PanicModeAnalyser
+from analyser.OptionSellerCompositeAnalyser import OptionSellerCompositeAnalyser
 from common.logging_util import logger
 from typing import List, Tuple, Optional
 from enum import Enum
@@ -183,6 +184,7 @@ class Trend (Enum):
 thread_pool = None
 orchestrator : AnalyserOrchestrator =  None
 PRODUCTION = False
+DEV_NOTIFY = False      # True = send Telegram alerts even in dev mode (DEV_NOTIFY=1)
 SHUTDOWN_SYSTEM = False
 ENABLE_ZERODHA_DERIVATIVES = False
 ENABLE_ZERODHA_API = False
@@ -212,12 +214,24 @@ def monitor(stock: Stock) -> Tuple[MonitorResult, bool, Optional[str]]:
     """
     if stock.is_price_data_empty():
         return MonitorResult.NO_DATA, False, f"{stock.stock_symbol} data not available"
-    
+
     try:
         stock.reset_analysis()
         stock.update_latest_data()
 
         analysis_type = "positional" if shared.app_ctx.mode == shared.Mode.POSITIONAL else "intraday"
+
+        # Positional: require a minimum absolute price move before running any analysis.
+        # Stocks with tiny moves (<0.75%) produce mechanical signals (BASIS_EXPANDING,
+        # PCR noise, OI drift) that are not actionable — skip them entirely.
+        if shared.app_ctx.mode == shared.Mode.POSITIONAL:
+            MIN_POSITIONAL_MOVE_PCT = 0.75
+            if stock.ltp_change_perc is not None and abs(stock.ltp_change_perc) < MIN_POSITIONAL_MOVE_PCT:
+                logger.debug(
+                    f"[monitor] {stock.stock_symbol} skipped — price move "
+                    f"{stock.ltp_change_perc:+.2f}% < ±{MIN_POSITIONAL_MOVE_PCT}%"
+                )
+                return MonitorResult.SUCCESS, False, None
         logger.debug(f"{analysis_type} analysis for {stock.stockName} started.")
         
         if ENABLE_ZERODHA_DERIVATIVES:
@@ -1565,6 +1579,7 @@ def init():
     global ENABLE_LIVE_OPTIONS
     global LIVE_OPTIONS_ONLY
     global ENABLE_INTELLIGENCE
+    global DEV_NOTIFY
 
 
     if os.getenv(constant.ENV_PRODUCTION, "0") == "1":
@@ -1574,6 +1589,10 @@ def init():
     else:
         logger.info("Running in development mode")
         PRODUCTION = False
+        if os.getenv(constant.ENV_DEV_NOTIFY, "0") == "1":
+            DEV_NOTIFY = True
+            TELEGRAM_NOTIFICATIONS.dev_notify = True
+            logger.info("DEV_NOTIFY=1 — Telegram alerts enabled in dev mode")
     
     if os.getenv(constant.ENV_SHUTDOWN, "0") == "1":
         logger.info("Shutdown mode enabled")
@@ -1688,7 +1707,8 @@ def init():
         orchestrator.register(PCRAnalyser())
         orchestrator.register(MaxPainAnalyser())
         orchestrator.register(OIChainAnalyser())
-        orchestrator.register(PanicModeAnalyser())    # MUST be last -- reads stock.analysis
+        orchestrator.register(PanicModeAnalyser())
+        orchestrator.register(OptionSellerCompositeAnalyser())  # MUST be last -- reads PANIC_EXHAUSTION
     if ENABLE_ZERODHA_API:
         logger.info("Zerodha API enabled")
         userName = os.getenv(constant.ENV_ZERODHA_USERNAME)

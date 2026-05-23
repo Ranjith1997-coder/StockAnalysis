@@ -1115,6 +1115,23 @@ class FuturesAnalyser(BaseAnalyzer):
             if not action:
                 return False
 
+            # Near expiry (≤4 days): LONG_UNWINDING is routine position closure,
+            # not a genuine bearish signal — suppress to avoid false alerts.
+            days_to_exp = None
+            try:
+                fmdata_ctx = stock.zerodha_ctx.get("futures_mdata", {}).get("current")
+                if fmdata_ctx is not None and not fmdata_ctx.empty and "expiry" in fmdata_ctx.columns:
+                    from datetime import date as _date
+                    days_to_exp = (fmdata_ctx["expiry"].iloc[0] - _date.today()).days
+            except Exception:
+                pass
+            if action == "LONG_UNWINDING_TREND" and days_to_exp is not None and days_to_exp <= 4:
+                logger.debug(
+                    f"[FUT_POS_OI] {stock.stock_symbol} — LONG_UNWINDING_TREND suppressed "
+                    f"(days_to_expiry={days_to_exp} ≤ 4, routine expiry closure)"
+                )
+                return False
+
             import math
             OITrendTuple = namedtuple("FuturesOITrend", [
                 "action", "oi_chg_10d", "oi_chg_20d",
@@ -1214,6 +1231,10 @@ class FuturesAnalyser(BaseAnalyzer):
             action    = None
             sentiment = None
 
+            # Near-expiry week (≤4 days): basis convergence is mechanical, not a signal.
+            # Suppress BASIS_EXPANDING entirely; emit as NEUTRAL if basis_trend is positive.
+            near_expiry = days_to_expiry is not None and days_to_expiry <= 4
+
             if curr_basis_pct < -0.05:
                 # Futures below spot — backwardation. Valid in both modes.
                 action = "BACKWARDATION"
@@ -1225,9 +1246,10 @@ class FuturesAnalyser(BaseAnalyzer):
             elif (is_positional
                   and days_to_expiry is not None and days_to_expiry <= 10
                   and basis_trend > 0.05 and curr_basis_pct > 0.10):
-                # Basis expanding approaching expiry = conviction — positional only
+                # Basis expanding approaching expiry = conviction (positional only).
+                # In the final 4 days this is mechanical convergence — emit as NEUTRAL.
                 action = "BASIS_EXPANDING"
-                sentiment = "BULLISH"
+                sentiment = "NEUTRAL" if near_expiry else "BULLISH"
 
             logger.debug(
                 f"[FUT_COC] {stock.stock_symbol} | CONDITION "

@@ -221,21 +221,57 @@ def calculate_score(analysis: Dict) -> ScoreResult:
     )
 
 
-def should_notify(analysis: Dict, min_priority: NotificationPriority = NotificationPriority.LOW) -> Tuple[bool, ScoreResult]:
+def should_notify(
+    analysis: Dict,
+    min_priority: NotificationPriority = NotificationPriority.LOW,
+    min_score: float | None = None,
+) -> Tuple[bool, ScoreResult]:
     """
     Determine if a notification should be sent based on analysis score.
-    
+
     Args:
         analysis: Stock analysis dictionary
         min_priority: Minimum priority level required to notify
-    
+        min_score: Override minimum score threshold (defaults to MIN_NOTIFICATION_SCORE)
+
     Returns:
         Tuple of (should_notify: bool, score_result: ScoreResult)
+
+    PRIORITY_OVERRIDE:
+        OptionSellerCompositeAnalyser writes analysis["PRIORITY_OVERRIDE"] = NotificationPriority.*
+        when a composite setup fires (GAMMA_TRAP → CRITICAL, RANGE_BOUND/SKEW_FADE → HIGH).
+        When this field is set we bypass the score gate and the alignment gate entirely —
+        composite setups emit into NEUTRAL so they would never reach the score threshold
+        on their own, but they are high-conviction by construction (3–5 conditions aligned).
+        The override forces the priority label on the returned ScoreResult so the Telegram
+        formatter shows the correct urgency tier.
     """
+    # ── Composite setup fast-path ─────────────────────────────────────────────
+    override: NotificationPriority | None = analysis.get("PRIORITY_OVERRIDE")
+    if override is not None:
+        score_result = calculate_score(analysis)
+        # Force the priority field to the override value so the Telegram header
+        # and emoji reflect the composite urgency, not the raw numeric score.
+        score_result = ScoreResult(
+            total_score=score_result.total_score,
+            base_score=score_result.base_score,
+            alignment_bonus=score_result.alignment_bonus,
+            priority=override,
+            signal_alignment=score_result.signal_alignment,
+            breakdown=score_result.breakdown,
+            dominant_sentiment=score_result.dominant_sentiment,
+            confidence_pct=score_result.confidence_pct,
+        )
+        logger.debug(
+            f"[should_notify] PRIORITY_OVERRIDE={override.value} — bypassing score gate"
+        )
+        return True, score_result
+
     score_result = calculate_score(analysis)
-    
+
     # Check minimum score threshold
-    if score_result.total_score < constants.MIN_NOTIFICATION_SCORE:
+    threshold = min_score if min_score is not None else constants.MIN_NOTIFICATION_SCORE
+    if score_result.total_score < threshold:
         return False, score_result
     
     # Check alignment gate: dominant trend must have >= 65% confidence
