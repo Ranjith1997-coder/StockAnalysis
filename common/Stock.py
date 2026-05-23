@@ -64,11 +64,14 @@ class Stock:
             "oi_history": pd.DataFrame(),        # Daily OI history from compute_intraday 1D (fetched once)
         }
 
-        self.analysis = {"Timestamp" : None,
-                        "BULLISH":{},
-                        "BEARISH":{},
-                        "NEUTRAL":{},
+        self.analysis = {"Timestamp": None,
+                        "BULLISH":  {},
+                        "BEARISH":  {},
+                        "NEUTRAL":  {},
                         "NoOfTrends": 0,
+                        # Set by OptionSellerCompositeAnalyser to force-pass the score gate.
+                        # None = use normal scoring; NotificationPriority value = bypass.
+                        "PRIORITY_OVERRIDE": None,
                         }
 
     def set_prev_day_ohlcv(self, open, close, high, low, volume):
@@ -195,11 +198,12 @@ class Stock:
             shared.ticker_52_week_high_list.remove(self)
         if self in shared.ticker_52_week_low_list:
             shared.ticker_52_week_low_list.remove(self)
-        self.analysis = {"Timestamp" : None,
-                            "BULLISH":{},
-                            "BEARISH":{},
-                            "NEUTRAL":{},
+        self.analysis = {"Timestamp": None,
+                            "BULLISH":  {},
+                            "BEARISH":  {},
+                            "NEUTRAL":  {},
                             "NoOfTrends": 0,
+                            "PRIORITY_OVERRIDE": None,
                         }
     
     def reset_price_data(self):

@@ -24,6 +24,7 @@ help:
 	@echo "    run-prod           Intraday monitor — PRODUCTION=1"
 	@echo "    run-dev            Dev intraday — PRODUCTION=0 DEV_INTRADAY=1"
 	@echo "    run-dev-positional Dev positional (EOD) — PRODUCTION=0 DEV_POSITIONAL=1"
+	@echo "                       Append DEV_NOTIFY=1 to either run-dev target to send Telegram alerts in dev mode"
 	@echo "    run-dev-stock-intraday   Dev single stock intraday:   make run-dev-stock-intraday STOCK=RELIANCE"
 	@echo "    run-dev-stock-positional Dev single stock positional: make run-dev-stock-positional STOCK=RELIANCE"
 	@echo "    run-dev-index-intraday   Dev single index intraday:   make run-dev-index-intraday INDEX=NIFTY"

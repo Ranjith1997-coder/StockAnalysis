@@ -30,6 +30,7 @@ INDEX_ANALYSIS_EXCLUDE = {"INDIA_VIX", "FINNIFTY"}
 #DEV ENVIRONMENTS
 ENV_DEV_INTRADAY = "DEV_INTRADAY"
 ENV_DEV_POSITIONAL = "DEV_POSITIONAL"
+ENV_DEV_NOTIFY = "DEV_NOTIFY"    # Set to "1" to send Telegram alerts in dev mode
 ENV_NO_OF_STOCKS = "NO_OF_STOCKS"
 ENV_NO_OF_INDEX  = "NO_OF_INDEX"
 ENV_DEV_MAX_CYCLES = "DEV_MAX_CYCLES"        # Max intraday loop cycles in dev mode (0 = unlimited)
@@ -169,6 +170,14 @@ ANALYSIS_WEIGHTS = {
     "PANIC_MODE": 22,             # Active panic -- price + IV + OI + futures + volume + PCR aligned
     "PANIC_EXHAUSTION": 25,       # Panic exhaustion -- IV extreme + contrarian PCR + volume climax + OI wall
 
+    # Option-seller composite setups (OptionSellerCompositeAnalyser)
+    # Weight = 0 intentionally: these setups bypass the score gate via PRIORITY_OVERRIDE
+    # so they never need to accumulate score themselves. A non-zero weight here would
+    # artificially inflate scores for stocks where these fire alongside regular signals.
+    "RANGE_BOUND_SETUP": 0,  # Iron Condor / Strangle — range-trapped + overpriced vol
+    "SKEW_FADE_SETUP":   0,  # Directional credit spread — panic exhaustion at OI wall
+    "GAMMA_TRAP":        0,  # Kill-switch — close short positions, directional breach
+
     # Price Levels
     "52-week-high": 8,
     "52-week-low": 8,
@@ -196,11 +205,13 @@ NOTIFICATION_PRIORITY = {
     "CRITICAL": 130  # Score >= 130: Overwhelming conviction across 3+ categories
 }
 
-# Minimum score required to send any notification
-# Lowered from 75 → 60 to include MEDIUM-priority signals, since the expanded
-# technical pool (Supertrend, RSI Divergence, Stochastic, OBV, Pivot Points,
-# enhanced candlestick patterns) provides higher confidence at moderate scores
-MIN_NOTIFICATION_SCORE = 110
+# Minimum score required to send any notification, split by mode.
+# Intraday: 110 — 5-min cycles need a lower bar since fewer analysers fire per tick.
+# Positional: 150 — runs on 50+ stocks once/day; near-expiry week inflates scores
+#   mechanically (BASIS_EXPANDING, LONG_UNWINDING each fire on 40-50% of stocks).
+#   A score of 150 requires genuine cross-category alignment (futures + options + technical).
+MIN_NOTIFICATION_SCORE = 110           # intraday default (also used as fallback)
+MIN_NOTIFICATION_SCORE_POSITIONAL = 150
 
 # Bonus multipliers for signal alignment
 SIGNAL_ALIGNMENT_BONUS = {
@@ -244,6 +255,12 @@ NEUTRAL_EXCLUDE_FROM_SCORE = {
     "OI_SUPPORT_RESISTANCE",# When neutral - just informational S/R levels
     "OI_SR_SHIFT",          # When neutral - range squeeze/expand is informational
     "FUTURE_ROLLOVER",      # Rollover pressure is context — not a directional signal
+    # Option-seller composite keys — weight=0 above, also excluded here for safety
+    # so the zero-weight fallback path in calculate_score cannot accidentally score them
+    "RANGE_BOUND_SETUP",
+    "SKEW_FADE_SETUP",
+    "GAMMA_TRAP",
+    "GAMMA_TRAP_ACTIVE",    # Boolean suppression flag written by Gamma Trap
 }
 
 # NEUTRAL signals that SHOULD contribute to score (informational but valuable)
