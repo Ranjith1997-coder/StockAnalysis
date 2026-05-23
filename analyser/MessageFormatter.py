@@ -279,16 +279,21 @@ def _fmt_c3_cont(data, trend):
 
 # ── Futures ───────────────────────────────────────────────────────────────────
 
-@MessageFormatter.register("FUTURE_ACTION")
-def _fmt_future_action(data, trend):
+def _fmt_one_future_action(d) -> str:
     _ae = {"long_buildup": "🟢", "short_buildup": "🔴",
            "short_covering": "🟢", "long_unwinding": "🔴"}
-    e    = _ae.get(data.action, "")
-    line = (f"  Futures: {e} <b>{data.action}</b> "
-            f"p%:<code>{data.price_percentage:.2f}</code> "
-            f"oi%:<code>{data.oi_percentage:.2f}</code>")
-    line += _score_suffix(data)
-    return [line]
+    e    = _ae.get(d.action, "")
+    line = (f"  Futures: {e} <b>{d.action}</b> "
+            f"p%:<code>{d.price_percentage:.2f}</code> "
+            f"oi%:<code>{d.oi_percentage:.2f}</code>")
+    line += _score_suffix(d)
+    return line
+
+
+@MessageFormatter.register("FUTURE_ACTION")
+def _fmt_future_action(data, trend):
+    items = data if isinstance(data, list) else [data]
+    return [_fmt_one_future_action(d) for d in items]
 
 
 @MessageFormatter.register("FUTURE_BREAKOUT_PATTERN")
@@ -655,3 +660,178 @@ def _fmt_panic_exhaustion(data, trend):
         f"{ivp_str} ({data.conditions_count}/4 confirmed)",
         f"    {conditions}",
     ]
+
+
+# ── Option-Seller Composite Setups ────────────────────────────────────────────
+# These render as structured trade cards rather than single signal lines.
+# Each card has: a bold header with trade type, numbered condition lines,
+# and a mode footer so the trader knows whether this is a 0DTE scalp or
+# an overnight/weekend hold.
+
+def _mode_tag(mode_str) -> str:
+    """Convert mode name to a human-readable trade-duration label."""
+    if "intraday" in str(mode_str).lower():
+        return "0DTE / Weekly Theta scalp"
+    return "Overnight / Weekend decay hold"
+
+
+@MessageFormatter.register("GAMMA_TRAP")
+def _fmt_gamma_trap(data, trend):
+    """
+    GAMMA_TRAP — Kill-switch card.
+    Rendered with maximum urgency: red header, bold directive, condition list.
+    """
+    items = data if isinstance(data, list) else [data]
+    lines = []
+    for d in items:
+        dir_arrow = "⬆️" if d.direction == "BULLISH" else "⬇️"
+        conds = ", ".join(d.conditions_detail)
+        vol_str = f" | Vol: <b>{d.volume_signal}</b>" if d.volume_signal else ""
+
+        lines += [
+            f"  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+            f"  🚨 <b>GAMMA TRAP — CLOSE SHORTS NOW</b>",
+            f"  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+            f"  Direction: {dir_arrow} <b>{d.direction}</b> breakout confirmed",
+            f"  Breach: <b>{d.breach_signal}</b>{vol_str}",
+            f"  Conditions: <code>{d.conditions_met}/4</code> — {conds}",
+            f"  ⏱ Mode: <i>{_mode_tag(d.mode)}</i>",
+        ]
+    return lines
+
+
+@MessageFormatter.register("RANGE_BOUND_SETUP")
+def _fmt_range_bound(data, trend):
+    """
+    RANGE_BOUND_SETUP — Iron Condor / Strangle trade card.
+    Shows the box range (walls), IV context, max pain proximity, and conditions.
+    """
+    # Human-readable labels for each condition code
+    _cond_labels = {
+        "OVERPRICED_VOL":   "IV overpriced (sell premium)",
+        "CEILING_AND_FLOOR": "Put wall floor + Call wall ceiling in place",
+        "NEUTRAL_MOMENTUM": "No breakout signal — price momentum flat",
+        "NO_INSTIT_PUSH":   "No institutional futures buildup (no directional bias)",
+        "MAX_PAIN_MAGNET":  "Price inside max pain gravity zone",
+    }
+
+    # Human-readable setup type
+    _setup_labels = {
+        "IRON_CONDOR": "Iron Condor",
+        "STRANGLE":    "Strangle",
+    }
+
+    items = data if isinstance(data, list) else [data]
+    lines = []
+    for d in items:
+        setup_label = _setup_labels.get(d.setup_type, d.setup_type)
+
+        # ── Box range line ────────────────────────────────────────────────────
+        if d.put_wall_strike and d.call_wall_strike:
+            box_width_pct = (d.call_wall_strike - d.put_wall_strike) / d.put_wall_strike * 100
+            range_line = (
+                f"  📦 Box:    <code>{d.put_wall_strike:.0f}</code> ←──→ "
+                f"<code>{d.call_wall_strike:.0f}</code>  "
+                f"(<code>{box_width_pct:.1f}%</code> wide)"
+            )
+        elif d.put_wall_strike:
+            range_line = f"  📦 Floor:  <code>{d.put_wall_strike:.0f}</code> (put wall — ceiling not detected)"
+        elif d.call_wall_strike:
+            range_line = f"  📦 Ceiling: <code>{d.call_wall_strike:.0f}</code> (call wall — floor not detected)"
+        else:
+            range_line = "  📦 Box: walls present (strikes unavailable)"
+
+        # ── IV line: IV Percentile + what it means for option sellers ─────────
+        if d.iv_percentile is not None:
+            ivp = d.iv_percentile
+            if ivp >= 85:
+                iv_context = "extremely overpriced — strong edge to sell"
+            elif ivp >= 70:
+                iv_context = "overpriced — good edge to sell"
+            else:
+                iv_context = "elevated"
+            iv_line = (
+                f"  📊 IV:     IVP <code>{ivp:.0f}th</code> percentile — {iv_context}"
+            )
+        else:
+            iv_line = "  📊 IV:     Premium confirmed overpriced"
+
+        # ── Max pain line ─────────────────────────────────────────────────────
+        if d.max_pain_dev_pct is not None:
+            dev = d.max_pain_dev_pct
+            direction_word = "above" if dev > 0 else "below"
+            mp_line = (
+                f"  🧲 MaxPain: <code>{abs(dev):.1f}%</code> {direction_word} max pain "
+                f"— price likely to gravitate back"
+            )
+        else:
+            mp_line = "  🧲 MaxPain: Within gravity zone"
+
+        # ── Conditions: translate each code to plain English ─────────────────
+        cond_lines = [
+            f"  {'✅' if c in d.conditions_detail else '❌'} {_cond_labels.get(c, c)}"
+            for c in ("OVERPRICED_VOL", "CEILING_AND_FLOOR", "NEUTRAL_MOMENTUM",
+                      "NO_INSTIT_PUSH", "MAX_PAIN_MAGNET")
+        ]
+
+        lines += [
+            f"  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+            f"  🎯 <b>RANGE PREMIUM — {setup_label}</b>  "
+            f"[<code>{d.conditions_met}/5</code> conditions]",
+            f"  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+            range_line,
+            iv_line,
+            mp_line,
+            f"  ─────────────────────────────────",
+            *cond_lines,
+            f"  ⏱ Mode: <i>{_mode_tag(d.mode)}</i>",
+        ]
+    return lines
+
+
+@MessageFormatter.register("SKEW_FADE_SETUP")
+def _fmt_skew_fade(data, trend):
+    """
+    SKEW_FADE_SETUP — Directional credit spread trade card.
+    Shows the fade direction, exhaustion context, the SR wall being tested,
+    the confirming candle, and the PCR trap that completes the setup.
+    """
+    items = data if isinstance(data, list) else [data]
+    lines = []
+    for d in items:
+        fade_arrow  = "⬆️" if d.fade_direction == "BULLISH" else "⬇️"
+        panic_arrow = "⬇️" if d.panic_direction == "BEARISH" else "⬆️"
+
+        # Human-readable candle key
+        _candle_labels = {
+            "Double_candle_stick_pattern":    "Engulfing/Piercing (2-bar reversal)",
+            "Single_candle_reversal_pattern": "Hammer/Shooting Star",
+            "Triple_candle_stick_pattern":    "Morning/Evening Star (3-bar reversal)",
+            "Triple_candle_reversal_pattern": "Triple reversal pattern",
+        }
+        candle_label = _candle_labels.get(d.candle_key, d.candle_key)
+
+        # Human-readable PCR signal
+        _pcr_labels = {
+            "PCR_REVERSAL":       "PCR zone crossover (intraday)",
+            "PCR_POS_REVERSAL":   "PCR 3-day avg reversal (positional)",
+            "PCR_INTRADAY_TREND": "PCR intraday momentum shift",
+        }
+        pcr_label = _pcr_labels.get(d.pcr_signal, d.pcr_signal)
+
+        lines += [
+            f"  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+            f"  ⚔️ <b>SKEW FADE — {d.fade_direction} CREDIT SPREAD</b>  "
+            f"[3/3]",
+            f"  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+            f"  Exhaust:  {panic_arrow} <b>{d.panic_direction}</b> panic burning out "
+            f"[<b>{d.exhaustion_confidence}</b>]",
+            f"  Wall:     {fade_arrow} SR at <code>{d.sr_level:.0f}</code> "
+            f"(<code>{d.sr_proximity_pct:.2f}%</code> away) | "
+            f"Candle: <i>{candle_label}</i>",
+            f"  PCR Trap: {pcr_label}",
+            f"  Trade:    Sell {d.panic_direction.lower()} side → "
+            f"<b>{d.fade_direction}</b> credit spread",
+            f"  ⏱ Mode: <i>{_mode_tag(d.mode)}</i>",
+        ]
+    return lines

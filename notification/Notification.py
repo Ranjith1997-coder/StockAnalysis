@@ -20,6 +20,7 @@ from common.logging_util import logger
 class TELEGRAM_NOTIFICATIONS:
     is_production = 0
     is_intraday = True
+    dev_notify = False   # Set to True (via DEV_NOTIFY=1) to send alerts in dev mode
     @classmethod
     def pushbullet_notif(cls,title, body):
     
@@ -44,7 +45,7 @@ class TELEGRAM_NOTIFICATIONS:
             parse_mode: Optional. 'HTML' or 'Markdown' for rich formatting.
                         None sends as plain text (backward-compatible default).
         """
-        if not cls.is_production:
+        if not cls.is_production and not cls.dev_notify:
             return
         TELEGRAM_CHAT_ID = ""
         TELEGRAM_TOKEN = ""
@@ -97,7 +98,7 @@ class TELEGRAM_NOTIFICATIONS:
     @classmethod
     def send_live_options_notification(cls, message, parse_mode="HTML"):
         """Send a real-time options alert to the dedicated live options Telegram channel."""
-        if not cls.is_production:
+        if not cls.is_production and not cls.dev_notify:
             return
         if not TELEGRAM_LIVE_OPTIONS_TOKEN or not TELEGRAM_LIVE_OPTIONS_CHAT_ID:
             logger.debug("TELEGRAM_LIVE_OPTIONS_TOKEN/CHAT_ID not configured — skipping live options alert")

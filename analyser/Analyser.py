@@ -144,7 +144,11 @@ class AnalyserOrchestrator:
             should_send, score_result = should_notify(stock.analysis, min_priority)
             stock.analysis["ScoreResult"] = score_result
             logger.debug(f"Score for {stock.stock_symbol}: {score_result.total_score} ({score_result.priority.value})")
-            if score_result.total_score >= constant.MIN_NOTIFICATION_SCORE:
+            # Emit to SignalBus if the score threshold is met OR a composite setup
+            # bypassed the score gate via PRIORITY_OVERRIDE (composite setups have
+            # weight=0 so their raw score never reaches MIN_NOTIFICATION_SCORE).
+            if (score_result.total_score >= constant.MIN_NOTIFICATION_SCORE
+                    or stock.analysis.get("PRIORITY_OVERRIDE") is not None):
                 self._emit_signals(stock, Layer.INTRADAY)
             else:
                 logger.debug(f"[SignalBus] Skipping intraday emit for {stock.stock_symbol} — score {score_result.total_score} < {constant.MIN_NOTIFICATION_SCORE}")
@@ -176,13 +180,14 @@ class AnalyserOrchestrator:
         logger.debug("All analyses complete for stock {}".format(stock.stock_symbol))
         
         if use_scoring:
-            should_send, score_result = should_notify(stock.analysis, min_priority)
+            pos_threshold = constant.MIN_NOTIFICATION_SCORE_POSITIONAL
+            should_send, score_result = should_notify(stock.analysis, min_priority, min_score=pos_threshold)
             stock.analysis["ScoreResult"] = score_result
             logger.debug(f"Score for {stock.stock_symbol}: {score_result.total_score} ({score_result.priority.value})")
-            if score_result.total_score >= constant.MIN_NOTIFICATION_SCORE:
+            if score_result.total_score >= pos_threshold:
                 self._emit_signals(stock, Layer.POSITIONAL)
             else:
-                logger.debug(f"[SignalBus] Skipping positional emit for {stock.stock_symbol} — score {score_result.total_score} < {constant.MIN_NOTIFICATION_SCORE}")
+                logger.debug(f"[SignalBus] Skipping positional emit for {stock.stock_symbol} — score {score_result.total_score} < {pos_threshold}")
             return should_send, score_result
         else:
             # Legacy behavior
@@ -190,7 +195,25 @@ class AnalyserOrchestrator:
             return found_trend, None
 
     def generate_analysis_message(self, stock, include_score=True):
-        """Generate an HTML-formatted analysis message for Telegram."""
+        """
+        Generate an HTML-formatted analysis message for Telegram.
+
+        Mutual Exclusion (Winner-Takes-All) rule
+        ─────────────────────────────────────────
+        When OptionSellerCompositeAnalyser has written a PRIORITY_OVERRIDE, a composite
+        trade setup has fired.  In that case we return ONLY the relevant trade card —
+        the standard BULLISH/BEARISH/NEUTRAL indicator loops are skipped entirely.
+        This eliminates noise: the trader receives one clean, actionable card with no
+        RSI/MACD/PCR clutter underneath it.
+
+        Priority of composite keys (highest urgency rendered first):
+            GAMMA_TRAP        → CRITICAL  (kill-switch)
+            SKEW_FADE_SETUP   → HIGH      (directional credit spread)
+            RANGE_BOUND_SETUP → HIGH      (iron condor / strangle)
+
+        If NO override is present the method falls through to the legacy loop which
+        renders every individual indicator signal as before.
+        """
         score_result = stock.analysis.get("ScoreResult")
 
         priority_emoji = {
@@ -200,27 +223,57 @@ class AnalyserOrchestrator:
             NotificationPriority.CRITICAL: "🚨",
         }
 
-        # ── Header ────────────────────────────────────────────────────────────
-        if include_score and score_result:
-            emoji   = priority_emoji.get(score_result.priority, "📊")
-            chg_dot = "🟢" if stock.ltp_change_perc >= 0 else "🔴"
-            message_parts = [
-                f"{emoji} <b>[{score_result.priority.value}] {stock.stock_symbol}</b>: "
-                f"<code>{stock.ltp:.2f}</code> {chg_dot} ({stock.ltp_change_perc:+.2f}%)",
-                f"Score: <b>{score_result.total_score}</b> | "
-                f"<b>{score_result.dominant_sentiment}</b> ({score_result.confidence_pct}%)",
-            ]
-            if score_result.alignment_bonus > 0:
-                message_parts.append(
-                    f"Alignment: {score_result.signal_alignment} "
-                    f"(+{score_result.alignment_bonus} bonus)")
-        else:
-            message_parts = [
+        # ── Shared header builder (used by both paths) ────────────────────────
+        def _header() -> list[str]:
+            if include_score and score_result:
+                emoji   = priority_emoji.get(score_result.priority, "📊")
+                chg_dot = "🟢" if (stock.ltp_change_perc or 0) >= 0 else "🔴"
+                parts = [
+                    f"{emoji} <b>[{score_result.priority.value}] {stock.stock_symbol}</b>: "
+                    f"<code>{stock.ltp:.2f}</code> {chg_dot} ({stock.ltp_change_perc:+.2f}%)",
+                ]
+                # Composite path: omit the raw score line — the trade card is the signal.
+                # Standard path (no override): keep the full score / alignment lines.
+                if stock.analysis.get("PRIORITY_OVERRIDE") is None:
+                    parts.append(
+                        f"Score: <b>{score_result.total_score}</b> | "
+                        f"<b>{score_result.dominant_sentiment}</b> ({score_result.confidence_pct}%)"
+                    )
+                    if score_result.alignment_bonus > 0:
+                        parts.append(
+                            f"Alignment: {score_result.signal_alignment} "
+                            f"(+{score_result.alignment_bonus} bonus)"
+                        )
+                return parts
+            return [
                 f"📊 <b>{stock.stock_symbol}</b>: "
                 f"<code>{stock.ltp:.2f}</code> ({stock.ltp_change_perc:.2f}%)",
             ]
 
-        # ── Directional trends ────────────────────────────────────────────────
+        # ── Winner-Takes-All: composite path ─────────────────────────────────
+        # Checked in priority order: Gamma Trap first (CRITICAL), then the HIGH setups.
+        _COMPOSITE_KEYS = ("GAMMA_TRAP", "SKEW_FADE_SETUP", "RANGE_BOUND_SETUP")
+
+        if stock.analysis.get("PRIORITY_OVERRIDE") is not None:
+            neutral = stock.analysis.get("NEUTRAL", {})
+            for composite_key in _COMPOSITE_KEYS:
+                data = neutral.get(composite_key)
+                if data is not None:
+                    message_parts = _header()
+                    message_parts.extend(
+                        MessageFormatter.format(composite_key, data, "NEUTRAL")
+                    )
+                    return "\n".join(message_parts)
+            # PRIORITY_OVERRIDE was set but no matching key found in NEUTRAL —
+            # fall through to the standard path rather than returning an empty message.
+            logger.warning(
+                f"[generate_analysis_message] {stock.stock_symbol}: PRIORITY_OVERRIDE set "
+                f"but no composite key found in NEUTRAL — falling back to standard render"
+            )
+
+        # ── Standard path: render all individual indicator signals ────────────
+        message_parts = _header()
+
         for trend in ("BULLISH", "BEARISH"):
             if not stock.analysis[trend]:
                 continue
@@ -229,10 +282,12 @@ class AnalyserOrchestrator:
             for analysis_type, data in stock.analysis[trend].items():
                 message_parts.extend(MessageFormatter.format(analysis_type, data, trend))
 
-        # ── Neutral signals ───────────────────────────────────────────────────
         if stock.analysis["NEUTRAL"]:
             message_parts.append("\n⚪ <b>NEUTRAL</b>:")
             for analysis_type, data in stock.analysis["NEUTRAL"].items():
+                # Skip internal composite infrastructure keys — not user-facing
+                if analysis_type in ("GAMMA_TRAP_ACTIVE",):
+                    continue
                 message_parts.extend(MessageFormatter.format(analysis_type, data, "NEUTRAL"))
 
         return "\n".join(message_parts)
