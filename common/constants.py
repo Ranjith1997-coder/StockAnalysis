@@ -16,14 +16,13 @@ ENV_ENABLE_INTELLIGENCE = "ENABLE_INTELLIGENCE"   # Toggle SignalBus + Correlato
 ENV_ENABLE_NARRATOR     = "ENABLE_NARRATOR"       # Toggle LLM-powered trade narratives (requires GEMINI_API_KEY)
 ENV_OPTIONS_SOURCE      = "OPTIONS_SOURCE"         # "zerodha" (default) or "sensibull"
 
-# Indices for which live option chains are subscribed via WebSocket.
-# Only weekly-traded, high-liquidity indices. Keeping this small avoids the 500-token limit.
-LIVE_OPTIONS_INDICES = ["NIFTY", "BANKNIFTY"]
+# Indices for which live option chains are subscribed via WebSocket (both Zerodha and Sensibull).
+# SENSEX uses BFO segment on Zerodha (BSE derivatives); NIFTY/BANKNIFTY use NFO (NSE derivatives).
+LIVE_OPTIONS_INDICES = ["NIFTY", "BANKNIFTY", "SENSEX"]
 
 # Indices excluded from all analysis (fetch + orchestrator).
-# INDIA_VIX  — volatility index, has no options chain; Sensibull API returns 500 for it.
-# FINNIFTY   — Sensibull insights API returns 500; low retail relevance.
-# SENSEX     — BSE index; Zerodha NSE instrument setup does not apply to it.
+# INDIA_VIX — volatility index, has no options chain; Sensibull API returns 500 for it.
+# FINNIFTY  — Sensibull insights API returns 500; low retail relevance.
 INDEX_ANALYSIS_EXCLUDE = {"INDIA_VIX", "FINNIFTY"}
 
 

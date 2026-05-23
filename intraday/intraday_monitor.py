@@ -395,8 +395,8 @@ def update_zerodha_option_chain(stockName = None, indexName = None):
 
     kc = KiteConnect(constant.DUMMY_API_KEY_ZERODHA)
     all_instruments_df = pd.DataFrame(kc.instruments())
-    all_options_df= all_instruments_df[(all_instruments_df['segment'] == 'NFO-OPT')]
-    all_futures_df= all_instruments_df[(all_instruments_df['segment'] == 'NFO-FUT')]
+    all_options_df = all_instruments_df[all_instruments_df['segment'].isin(['NFO-OPT', 'BFO-OPT'])]
+    all_futures_df = all_instruments_df[all_instruments_df['segment'].isin(['NFO-FUT', 'BFO-FUT'])]
     count = 0
     for stock in shared.app_ctx.stock_token_obj_dict.values():
         if not PRODUCTION and constant.NO_OF_STOCKS != -1 and count >= constant.NO_OF_STOCKS:
@@ -1310,16 +1310,13 @@ def _start_sensibull_feed(live_options_engine) -> None:
     from fno.sensibull_adapter import SensibullAdapter
     from notification.Notification import TELEGRAM_NOTIFICATIONS
 
-    # Symbols to subscribe via Sensibull WS
-    _SENSIBULL_SYMBOLS = {"NIFTY", "BANKNIFTY", "SENSEX"}
-
     adapter = SensibullAdapter()
     feeds: list[SensibullFeed] = []
     started_symbols: list[str] = []
 
     for underlying_token, index_stock in shared.app_ctx.index_token_obj_dict.items():
         symbol = index_stock.stock_symbol
-        if symbol not in _SENSIBULL_SYMBOLS:
+        if symbol not in constant.LIVE_OPTIONS_INDICES:
             continue
 
         expiry = _get_nearest_expiry_str(index_stock)
@@ -1699,16 +1696,16 @@ def init():
         update_zerodha_option_chain(args.stock, args.index)
     orchestrator = AnalyserOrchestrator()
     if not LIVE_OPTIONS_ONLY:
-        orchestrator.register(VolumeAnalyser())
-        orchestrator.register(TechnicalAnalyser())
-        orchestrator.register(CandleStickAnalyser())
-        orchestrator.register(IVAnalyser())
+        # orchestrator.register(VolumeAnalyser())
+        # orchestrator.register(TechnicalAnalyser())
+        # orchestrator.register(CandleStickAnalyser())
+        # orchestrator.register(IVAnalyser())
         orchestrator.register(FuturesAnalyser())
-        orchestrator.register(PCRAnalyser())
-        orchestrator.register(MaxPainAnalyser())
-        orchestrator.register(OIChainAnalyser())
-        orchestrator.register(PanicModeAnalyser())
-        orchestrator.register(OptionSellerCompositeAnalyser())  # MUST be last -- reads PANIC_EXHAUSTION
+        # orchestrator.register(PCRAnalyser())
+        # orchestrator.register(MaxPainAnalyser())
+        # orchestrator.register(OIChainAnalyser())
+        # orchestrator.register(PanicModeAnalyser())
+        # orchestrator.register(OptionSellerCompositeAnalyser())  # MUST be last -- reads PANIC_EXHAUSTION
     if ENABLE_ZERODHA_API:
         logger.info("Zerodha API enabled")
         userName = os.getenv(constant.ENV_ZERODHA_USERNAME)
