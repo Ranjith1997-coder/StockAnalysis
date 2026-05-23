@@ -1,0 +1,106 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# /etc/systemd/system/stockanalysis-auth.service
+#
+# Refreshes the Zerodha enc_token via TOTP login.
+# Run once at startup — writes the new token into .env before the monitor starts.
+# ──────────────────────────────────────────────────────────────────────────────
+[Unit]
+Description=Zerodha Auth — refresh enc_token before market open
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=hacker
+WorkingDirectory=/home/hacker/StockAnalysis
+EnvironmentFile=/home/hacker/StockAnalysis/.env
+Environment=PYTHONPATH=/home/hacker/StockAnalysis
+ExecStart=/home/hacker/StockAnalysis/.venv/bin/python auth/auth_login.py
+StandardOutput=append:/home/hacker/StockAnalysis/logs/stock_monitor.log
+StandardError=append:/home/hacker/StockAnalysis/logs/stock_monitor.log
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# /etc/systemd/system/stockanalysis.service
+#
+# Intraday monitor — runs during market hours (9:00 AM–3:30 PM IST).
+# Depends on stockanalysis-auth.service completing successfully first.
+# ──────────────────────────────────────────────────────────────────────────────
+[Unit]
+Description=Stock Analysis Intraday
+After=network-online.target stockanalysis-auth.service
+Wants=network-online.target
+Requires=stockanalysis-auth.service
+
+[Service]
+Type=simple
+User=hacker
+WorkingDirectory=/home/hacker/StockAnalysis
+EnvironmentFile=/home/hacker/StockAnalysis/.env
+Environment=PYTHONPATH=/home/hacker/StockAnalysis
+ExecStart=/home/hacker/StockAnalysis/.venv/bin/python intraday/intraday_monitor.py
+Restart=no
+StandardOutput=append:/home/hacker/StockAnalysis/logs/stock_monitor.log
+StandardError=append:/home/hacker/StockAnalysis/logs/stock_monitor.log
+
+[Install]
+WantedBy=multi-user.target
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# /etc/systemd/system/stockanalysis.timer
+#
+# Triggers the intraday service at 9:00 AM IST (03:30 UTC) Mon–Fri.
+# ──────────────────────────────────────────────────────────────────────────────
+[Unit]
+Description=Stock Analysis at 9:00 AM IST Mon-Fri
+
+[Timer]
+OnCalendar=Mon-Fri 03:30:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# /etc/systemd/system/stockanalysis-positional.service
+#
+# EOD positional analysis — runs after market close (8:00 PM IST).
+# Auth runs before this too via the same Requires dependency.
+# ──────────────────────────────────────────────────────────────────────────────
+[Unit]
+Description=Stock Analysis Positional EOD
+After=network-online.target stockanalysis-auth.service
+Wants=network-online.target
+Requires=stockanalysis-auth.service
+
+[Service]
+Type=simple
+User=hacker
+WorkingDirectory=/home/hacker/StockAnalysis
+EnvironmentFile=/home/hacker/StockAnalysis/.env
+Environment=PYTHONPATH=/home/hacker/StockAnalysis
+ExecStart=/home/hacker/StockAnalysis/.venv/bin/python intraday/intraday_monitor.py
+Restart=no
+StandardOutput=append:/home/hacker/StockAnalysis/logs/stock_monitor.log
+StandardError=append:/home/hacker/StockAnalysis/logs/stock_monitor.log
+
+[Install]
+WantedBy=multi-user.target
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# /etc/systemd/system/stockanalysis-positional.timer
+#
+# Triggers the positional service at 8:00 PM IST (14:30 UTC) Mon–Fri.
+# ──────────────────────────────────────────────────────────────────────────────
+[Unit]
+Description=Stock Analysis Positional at 8:00 PM IST Mon-Fri
+
+[Timer]
+OnCalendar=Mon-Fri 14:30:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target
