@@ -649,10 +649,12 @@ class OIChainAnalyser(BaseAnalyzer):
                 f"(need >={OIChainAnalyser.OI_BUILDUP_MIN_STRIKES} with "
                 f">={OIChainAnalyser.OI_BUILDUP_MIN_CHANGE_PCT}% change)"
             )
+            _cp_ratio = total_call_oi_change / total_put_oi_change if total_put_oi_change > 0 else float('inf')
+            _pc_ratio = total_put_oi_change / total_call_oi_change if total_call_oi_change > 0 else float('inf')
             logger.debug(
                 f"[OI_BUILDUP] {stock.stock_symbol} | "
-                f"CONDITION ratio: call_put_ratio={total_call_oi_change / total_put_oi_change if total_put_oi_change > 0 else 'inf':.2f} "
-                f"put_call_ratio={total_put_oi_change / total_call_oi_change if total_call_oi_change > 0 else 'inf':.2f} | "
+                f"CONDITION ratio: call_put_ratio={_cp_ratio:.2f} "
+                f"put_call_ratio={_pc_ratio:.2f} | "
                 f"thresholds: heavy={OIChainAnalyser.OI_BUILDUP_HEAVY_RATIO}x "
                 f"dominant={OIChainAnalyser.OI_BUILDUP_DOMINANT_RATIO}x "
                 f"min_strikes={OIChainAnalyser.OI_BUILDUP_MIN_STRIKES}"

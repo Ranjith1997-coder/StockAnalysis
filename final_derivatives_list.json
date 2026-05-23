@@ -14,16 +14,16 @@
                 "instrument_token": 260105
             },
             {
-                "name": "Nifty FINANCIAL SERVICES",
-                "tradingsymbol": "FINNIFTY",
-                "yfinancetradingsymbol": "NIFTY_FIN_SERVICE.NS",
-                "instrument_token": 257801
-            },
-            {
                 "name": "BSE SENSEX",
                 "tradingsymbol": "SENSEX",
                 "yfinancetradingsymbol": "^BSESN",
                 "instrument_token": 265
+            },
+            {
+                "name": "Nifty FINANCIAL SERVICES",
+                "tradingsymbol": "FINNIFTY",
+                "yfinancetradingsymbol": "NIFTY_FIN_SERVICE.NS",
+                "instrument_token": 257801
             },
             {
                 "name": "Nifty NEXT 50",
