@@ -14,7 +14,7 @@ The system runs in two primary modes, orchestrated from `intraday/intraday_monit
 |------|------|---------------|------|
 | **INTRADAY** | 9:15 AM – 3:30 PM | 5-min candles (yfinance) + live WebSocket ticks (Zerodha) | Every ~310 seconds |
 | **POSITIONAL** | After 4:00 PM (EOD) | Daily candles — 90-day daily for futures, 2-year daily for equity | Single run |
-| **LIVE OPTIONS** | 9:15 AM – 3:30 PM (opt-in) | Per WebSocket tick (~ms) for NIFTY/BANKNIFTY options | Continuous |
+| **LIVE OPTIONS** | 9:15 AM – 3:30 PM (opt-in) | Per WebSocket tick (~ms) for NIFTY/BANKNIFTY/SENSEX options | Continuous |
 
 Mode selection in production (`PRODUCTION=1`) is time-based. In dev mode, `DEV_INTRADAY=1` or `DEV_POSITIONAL=1` select manually.
 
@@ -42,7 +42,8 @@ intraday/intraday_monitor.py          ← Main entry point & orchestrator
                    ├── PCRAnalyser              (active)
                    ├── MaxPainAnalyser          (active)
                    ├── OIChainAnalyser          (active)
-                   └── PanicModeAnalyser        (active — MUST be last)
+                   ├── PanicModeAnalyser        (active — MUST be last before composite)
+                   └── OptionSellerCompositeAnalyser  (active — MUST be registered after PanicModeAnalyser)
 ```
 
 ---
@@ -70,7 +71,8 @@ intraday/intraday_monitor.py          ← Main entry point & orchestrator
 | **PCRAnalyser** | `analyser/PCRAnalyser.py` | PCR extreme zones (contrarian), PCR directional bias, PCR trend (5-day), PCR intraday trend, PCR reversal, positional PCR reversal |
 | **MaxPainAnalyser** | `analyser/MaxPainAnalyser.py` | Max pain deviation (moderate/strong), max pain trend (converging/diverging), max pain alignment with PCR |
 | **OIChainAnalyser** | `analyser/OIChainAnalyser.py` | OI support/resistance, OI buildup, OI wall (statistical outlier), OI shift, intraday OI trend, intraday S/R shift, OI capitulation (positional), OI wall migration (positional), positional OI trend, OI acceleration |
-| **PanicModeAnalyser** | `analyser/PanicModeAnalyser.py` | PANIC_MODE (≥4/6 conditions aligned), PANIC_EXHAUSTION (≥3/4 contrarian conditions) — reads all earlier analysers' output, **must be last** |
+| **PanicModeAnalyser** | `analyser/PanicModeAnalyser.py` | PANIC_MODE (≥4/6 conditions aligned), PANIC_EXHAUSTION (≥3/4 contrarian conditions) — reads all earlier analysers' output, **must precede OptionSellerCompositeAnalyser** |
+| **OptionSellerCompositeAnalyser** | `analyser/OptionSellerCompositeAnalyser.py` | Three high-probability option-seller setups — GAMMA_TRAP (kill-switch: close shorts, directional breach confirmed), RANGE_BOUND_SETUP (Iron Condor / Strangle candidate: range-trapped + overpriced vol), SKEW_FADE_SETUP (directional credit spread: panic exhaustion at OI wall + reversal candle). All bypass score gate via `PRIORITY_OVERRIDE`. **Must be registered last** |
 | **LiveOIAnalyser** | `analyser/LiveOIAnalyser.py` | Real-time: PCR crossover, PCR extreme, PCR sustained trend, OI wall breach |
 | **LiveStraddleAnalyser** | `analyser/LiveStraddleAnalyser.py` | Real-time: IV expanding/compressing, implied move boundary, IV skew reversal |
 
@@ -78,7 +80,7 @@ intraday/intraday_monitor.py          ← Main entry point & orchestrator
 
 ## Live Options Engine (opt-in)
 
-When `ENABLE_LIVE_OPTIONS=1`, the system subscribes to NIFTY and BANKNIFTY weekly option chains via Zerodha WebSocket. Zone-based subscription keeps token count manageable (94 tokens per index across 3 zones):
+When `ENABLE_LIVE_OPTIONS=1`, the system subscribes to NIFTY, BANKNIFTY, and SENSEX weekly option chains via Zerodha WebSocket. SENSEX uses the BFO segment (BSE derivatives); NIFTY and BANKNIFTY use NFO (NSE derivatives). Zone-based subscription keeps token count manageable (94 tokens per index across 3 zones):
 
 | Zone | Distance from ATM | WebSocket mode |
 |------|--------------------|----------------|
@@ -102,9 +104,11 @@ total_score = base_score + alignment_bonus
 
 - **Base score**: sum of `ANALYSIS_WEIGHTS[signal_type]` for all BULLISH or BEARISH signals
 - **Alignment bonus**: applied when signals span multiple categories (TECHNICAL + OPTIONS = 1.5× on base)
-- **Notification gate**: `total_score >= MIN_NOTIFICATION_SCORE (110)` to send Telegram alert
+- **Notification gate**: `total_score >= MIN_NOTIFICATION_SCORE (110)` for intraday; `total_score >= MIN_NOTIFICATION_SCORE_POSITIONAL (150)` for EOD positional
 - **Priority tiers**: LOW (≥35), MEDIUM (≥60), HIGH (≥90), CRITICAL (≥130)
 - **Confidence**: `dominant_side_score / total_score × 100`
+- **Winner-takes-all (composite setups)**: When `OptionSellerCompositeAnalyser` fires, it sets `PRIORITY_OVERRIDE` on `stock.analysis` and the orchestrator's `generate_analysis_message()` returns **only** the composite trade card (GAMMA_TRAP, RANGE_BOUND_SETUP, or SKEW_FADE_SETUP), suppressing all individual indicator output. This eliminates noise — the trader receives one clean, actionable card with no RSI/MACD/PCR clutter.
+- **Positional price-move filter**: Stocks with `|ltp_change_perc| < 0.75%` are skipped entirely in positional mode to avoid mechanical signals (BASIS_EXPANDING, PCR noise) on flat days.
 
 ---
 
@@ -137,6 +141,7 @@ When `ENABLE_NARRATOR=1` (requires `GEMINI_API_KEY`):
 | `NO_OF_INDEX` | Max indices to analyze (`-1` = all) |
 | `DEV_MAX_CYCLES` | Max intraday loop cycles in dev mode (`0` = unlimited) |
 | `DEV_LOOP_WAIT_TIME` | Seconds between dev cycles (`-1` = use production wait) |
+| `DEV_NOTIFY` | `1` = send Telegram alerts even in dev mode |
 
 ### Telegram
 
@@ -155,7 +160,8 @@ When `ENABLE_NARRATOR=1` (requires `GEMINI_API_KEY`):
 |----------|---------|
 | `ZERODHA_USER` | Zerodha user ID |
 | `ZERODHA_PASS` | Zerodha password |
-| `ZERODHA_ENC_TOKEN` | Enctoken for API auth (expires — refresh via `/enctoken` bot command) |
+| `ZERODHA_TOTP_SECRET` | Base-32 TOTP secret for automated 2FA login (`auth/auth_login.py`) |
+| `ZERODHA_ENC_TOKEN` | Enctoken for API auth (auto-refreshed by `auth/auth_login.py`; also updatable via `/enctoken` bot command) |
 
 ### Feature Flags
 
@@ -171,6 +177,30 @@ When `ENABLE_NARRATOR=1` (requires `GEMINI_API_KEY`):
 | `ENABLE_NARRATOR` | `0` | Enable LLM trade narratives (requires `GEMINI_API_KEY`) |
 | `OPTIONS_SOURCE` | `zerodha` | `zerodha` or `sensibull` for live option tick source |
 | `HEALTHCHECK_URL` | (empty) | Dead-man's switch ping URL (e.g., healthchecks.io) |
+
+---
+
+## Automated Zerodha Authentication
+
+`auth/auth_login.py` performs a fully automated TOTP-based Zerodha login and writes the fresh `ZERODHA_ENC_TOKEN` directly into `.env`, removing the need for manual token updates.
+
+Requires `ZERODHA_USER`, `ZERODHA_PASS`, and `ZERODHA_TOTP_SECRET` in `.env`.
+
+```bash
+python auth/auth_login.py   # generates enctoken and writes it to .env
+```
+
+In production the `stockanalysis-auth.service` systemd unit (see `scripts/system_config`) runs this automatically at boot, **before** the intraday monitor starts. The `stockanalysis.service` and `stockanalysis-positional.service` both `Require=` the auth service, so a failed login halts the analysis service instead of running with an expired token.
+
+`scripts/system_config` contains all four systemd unit files needed for a full EC2 deployment:
+
+| Unit | Trigger | Purpose |
+|------|---------|--------|
+| `stockanalysis-auth.service` | At boot | TOTP login — writes fresh enctoken to `.env` |
+| `stockanalysis.service` | Via timer | Intraday monitor during market hours |
+| `stockanalysis.timer` | Mon–Fri 03:30 UTC (9:00 AM IST) | Triggers intraday service |
+| `stockanalysis-positional.service` | Via timer | EOD positional analysis |
+| `stockanalysis-positional.timer` | Mon–Fri 14:30 UTC (8:00 PM IST) | Triggers positional service |
 
 ---
 
@@ -210,16 +240,54 @@ python intraday/intraday_monitor.py --index NIFTY
 ### Makefile targets
 
 ```bash
-make venv              # Create .venv/
-make install           # Install production dependencies
-make run-prod          # PRODUCTION=1 intraday monitor
-make run-dev           # PRODUCTION=0 intraday monitor (safe)
-make run-postmarket    # Post-market analysis pipeline
-make deploy            # git pull + restart service on EC2 via SSH
-make service-stop      # Start EC2 (if stopped) + stop service; exits early on holidays
-make test              # Full test suite
-make lint              # ruff check
-make logs-follow       # Follow logs/monitor.log live
+# Setup
+make venv                          # Create .venv/
+make install                       # Install production dependencies
+make install-dev                   # Install prod + dev/test tools
+make install-deploy                # Install deploy tools (boto3, paramiko)
+make env-check                     # Verify required .env variables are set
+
+# Run
+make run-prod                      # PRODUCTION=1 intraday monitor
+make run-dev                       # DEV_INTRADAY=1 intraday monitor
+make run-dev-positional            # DEV_POSITIONAL=1 EOD analysis
+make run-dev-stock-intraday STOCK=RELIANCE   # Single stock intraday
+make run-dev-stock-positional STOCK=RELIANCE # Single stock positional
+make run-dev-index-intraday INDEX=NIFTY      # Single index intraday
+make run-dev-index-positional INDEX=NIFTY    # Single index positional
+make run-premarket                 # Global cues + pre-open reports
+make run-postmarket                # Post-market analysis pipeline
+make deploy                        # git pull + restart service on EC2 via SSH
+make service-stop                  # Start EC2 (if stopped) + stop service; exits early on holidays
+make service-stop-force            # Same but bypasses holiday guard (dev use)
+
+# Test
+make test                          # Full test suite
+make test-fast                     # Stop on first failure (-x)
+make test-cov                      # With coverage report
+make test-module MODULE=premarket  # Tests for a specific module
+
+# Code quality
+make lint                          # ruff check
+make format                        # ruff format (auto-fix)
+make typecheck                     # pyright type check
+
+# Maintenance
+make update-derivatives            # Refresh final_derivatives_list.json
+make logs                          # Tail last 50 lines of monitor.log
+make logs-follow                   # Follow logs/monitor.log live
+make clean                         # Remove __pycache__, .pyc, pytest cache
+make clean-all                     # clean + remove .venv
+
+# Server (hacker@100.92.21.31)
+make server-ssh                    # Open interactive SSH session
+make server-logs                   # Tail last 50 lines on server
+make server-logs-follow            # Live-follow service log on server
+make server-status                 # Show stock_analysis.service status
+make server-restart                # Restart stock_analysis.service
+make server-pull                   # git pull on server repo
+make server-df                     # Disk usage on server
+make update-enctoken TOKEN=<tok>   # Update ZERODHA_ENC_TOKEN on server .env
 ```
 
 ---
@@ -228,7 +296,8 @@ make logs-follow       # Follow logs/monitor.log live
 
 ```
 StockAnalysis/
-├── analyser/          # All analyser classes (11 files)
+├── analyser/          # All analyser classes (12 files incl. OptionSellerCompositeAnalyser)
+├── auth/              # auth_login.py — automated TOTP-based Zerodha enctoken refresh
 ├── backtest/          # Backtesting framework + Optuna optimizer
 ├── common/            # Stock.py, shared.py, constants.py, scoring.py, token_registry.py
 ├── configs/           # custom_holidays.json, ml_config.yaml
@@ -242,7 +311,7 @@ StockAnalysis/
 ├── nse/               # NSE API wrappers + market calendar helpers
 ├── post_market_analysis/  # FII/DII, sector perf, F&O OI, index returns pipeline
 ├── premarket/         # Global cues, bonds, commodities, pre-open report
-├── scripts/           # deploy.py, service_stop.py (holiday-aware)
+├── scripts/           # deploy.py, service_stop.py (holiday-aware), system_config (systemd units)
 ├── sentiment/         # FinBERT news sentiment
 ├── tests/             # 951 tests across 41 files
 ├── zerodha/           # WebSocket lifecycle, TickStore, FuturesFetcher, LiveOptionsEngine
@@ -259,6 +328,9 @@ StockAnalysis/
 | `common/constants.py` | ANALYSIS_WEIGHTS, priority thresholds, env var names, category sets |
 | `common/shared.py` | AppContext singleton, Mode enum, global state |
 | `common/scoring.py` | Score calculation, alignment bonus, should_notify() |
+| `analyser/OptionSellerCompositeAnalyser.py` | Option-seller composite setups: GAMMA_TRAP, RANGE_BOUND_SETUP, SKEW_FADE_SETUP |
+| `auth/auth_login.py` | Automated TOTP Zerodha login — writes fresh enctoken to `.env` |
+| `scripts/system_config` | systemd unit files for EC2 deployment (auth + intraday + positional services + timers) |
 | `analyser/Analyser.py` | BaseAnalyzer (decorator framework) + AnalyserOrchestrator |
 | `zerodha/futures_fetcher.py` | FuturesFetcher — Kite historical futures data |
 | `fno/sensibull_fetcher.py` | SensibullFetcher — Sensibull API (insights, OI chain, IV chart, OI history) |

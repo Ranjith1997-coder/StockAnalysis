@@ -859,6 +859,13 @@ ANALYSIS_WEIGHTS = {
     "PANIC_MODE":                   22,
     "PANIC_EXHAUSTION":             25,
 
+    # Option-seller composite setups (OptionSellerCompositeAnalyser)
+    # Weight = 0 intentionally: these bypass the score gate via PRIORITY_OVERRIDE.
+    # A non-zero weight would artificially inflate scores alongside regular signals.
+    "GAMMA_TRAP":                    0,   # Kill-switch — close short positions, directional breach
+    "RANGE_BOUND_SETUP":             0,   # Iron Condor / Strangle — range-trapped + overpriced vol
+    "SKEW_FADE_SETUP":               0,   # Directional credit spread — fade panic at OI wall
+
     # Price levels
     "52-week-high":                  8,
     "52-week-low":                   8,
@@ -871,7 +878,10 @@ ANALYSIS_WEIGHTS = {
 ### Scoring constants
 
 ```python
-MIN_NOTIFICATION_SCORE = 110    # Minimum score to send Telegram alert
+MIN_NOTIFICATION_SCORE = 110              # Minimum score to send intraday Telegram alert
+MIN_NOTIFICATION_SCORE_POSITIONAL = 150   # EOD positional mode (higher bar: 50+ stocks;
+                                          # near-expiry week inflates scores mechanically;
+                                          # 150 requires genuine cross-category alignment)
 
 NOTIFICATION_PRIORITY = {
     "LOW":      35,    # 3–4 aligned signals
@@ -893,6 +903,11 @@ NEUTRAL_EXCLUDE_FROM_SCORE = {
     "OI_SUPPORT_RESISTANCE", # When neutral — informational S/R
     "OI_SR_SHIFT",           # When neutral — range squeeze/expand is informational
     "FUTURE_ROLLOVER",       # Context only — not directional
+    # Composite option-seller setups — weight=0 above, also excluded here for safety
+    "RANGE_BOUND_SETUP",
+    "SKEW_FADE_SETUP",
+    "GAMMA_TRAP",
+    "GAMMA_TRAP_ACTIVE",     # Boolean suppression flag written by Gamma Trap
 }
 ```
 
