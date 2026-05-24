@@ -1,6 +1,6 @@
 # StockAnalysis - Comprehensive Design Document
 
-> **Last Updated**: May 2026 (All 9 analysers now active; FuturesAnalyser new positional/intraday methods + fixes; Sensibull OI history fetch; PCRAnalyser positional PCR reversal + intraday trend; OIChainAnalyser extended positional methods; MIN_NOTIFICATION_SCORE raised to 110; updated ANALYSIS_WEIGHTS; `options_source` + `sensibull_feed` in AppContext; `oi_history` in sensibull_ctx)
+> **Last Updated**: May 2026 (OptionSellerCompositeAnalyser added: GAMMA_TRAP, RANGE_BOUND_SETUP, SKEW_FADE_SETUP with PRIORITY_OVERRIDE / winner-takes-all message dispatch; SENSEX added to live options indices; auth/auth_login.py for automated TOTP enctoken refresh; scripts/system_config systemd units; MIN_NOTIFICATION_SCORE_POSITIONAL=150; positional price-move filter 0.75%)
 > **Purpose**: Complete architectural reference for the Indian Stock Market Analysis System targeting NSE (National Stock Exchange) equities. This document captures the entire codebase: architecture, data flows, module interactions, signal processing, scoring, notifications, and deployment details.
 
 ---
@@ -40,8 +40,8 @@
 An automated stock market analysis system for the Indian market (NSE) that:
 - Monitors stocks in **real-time during market hours** (intraday mode, 5-min intervals, 9:15 AM - 3:30 PM)
 - Performs **end-of-day positional analysis** (daily data, ~2 years history)
-- Tracks **live NIFTY/BANKNIFTY options per tick** via Zerodha WebSocket (zone-based subscription)
-- Runs **8 specialized analyzers** across technical, volume, candlestick, options, futures, IV, PCR, max pain, and OI chain domains
+- Tracks **live NIFTY, BANKNIFTY, and SENSEX options per tick** via Zerodha WebSocket (zone-based subscription; SENSEX uses BFO segment)
+- Runs **9 specialized analyzers** across technical, volume, candlestick, options, futures, IV, PCR, max pain, and OI chain domains, plus **1 composite analyser** (`OptionSellerCompositeAnalyser`) for high-probability option-seller setups
 - Runs **2 live options analyzers** (LiveOIAnalyser, LiveStraddleAnalyser) on real-time option ticks
 - Scores signals with a **weighted scoring engine** and sends alerts to **Telegram channels**
 - Generates **pre-market** and **post-market** summary reports
@@ -86,7 +86,10 @@ StockAnalysis/
 |   |-- LiveOptionsHistory.py        # In-memory per-symbol time-series (375 snapshots/day)
 |   |-- LiveAlertFormatter.py        # HTML builder for real-time Telegram alerts (F singleton)
 |   |-- MessageFormatter.py          # Registry-based formatter for batch analysis alerts
-|   |-- PanicModeAnalyser.py         # Composite analyser — panic detection & exhaustion (9th, must be last)
+|   |-- PanicModeAnalyser.py         # Composite analyser — panic detection & exhaustion (9th, must precede OptionSellerCompositeAnalyser)
+|   |-- OptionSellerCompositeAnalyser.py  # Option-seller composite setups (10th, MUST be last)
+|                                    # Emits GAMMA_TRAP / RANGE_BOUND_SETUP / SKEW_FADE_SETUP
+|                                    # Sets PRIORITY_OVERRIDE; bypasses score gate via winner-takes-all dispatch
 |
 |-- intelligence/
 |   |-- signal.py                    # Signal dataclass, Direction, Layer, SignalStrength enums
@@ -155,12 +158,23 @@ StockAnalysis/
 |   |-- sensibull_fetcher.py         # SensibullFetcher — Sensibull API fetcher (extracted from Stock)
 |   |-- OptionWriteStandardDeviation.py  # Legacy standard deviation writer
 |
+|-- auth/
+|   |-- auth_login.py               # Automated TOTP Zerodha login — writes fresh enctoken to .env
+|                                    # Requires ZERODHA_USER, ZERODHA_PASS, ZERODHA_TOTP_SECRET
+|                                    # Used by stockanalysis-auth.service on EC2
+|
 |-- ml_pipeline/                     # ML prediction pipeline (XGBoost, LightGBM, RF, Ensemble)
 |-- scripts/
 |   |-- deploy.py                    # SSH deploy: git pull + restart service on EC2
 |   |-- service_stop.py              # Start EC2 (if stopped) + stop stock_analysis.service
 |                                    # Holiday guard: exits early on non-trading days unless --force
 |                                    # SSH retry-poll replaces fixed 15s sleep
+|   |-- system_config               # systemd unit files for EC2 deployment:
+|                                    #   stockanalysis-auth.service  (TOTP login, Type=oneshot)
+|                                    #   stockanalysis.service        (intraday monitor)
+|                                    #   stockanalysis.timer          (Mon-Fri 03:30 UTC / 9:00 AM IST)
+|                                    #   stockanalysis-positional.service  (EOD analysis)
+|                                    #   stockanalysis-positional.timer    (Mon-Fri 14:30 UTC / 8:00 PM IST)
 |-- configs/                         # Configuration files
 |-- data/                            # Stock lists (final_derivatives_list.json, etc.)
 |-- docs/                            # Documentation
@@ -660,12 +674,28 @@ FUTURES_ANALYSES = {
 ```python
 def should_notify(score_result):
     return (
-        score_result.total_score >= MIN_NOTIFICATION_SCORE  # 110
+        score_result.total_score >= MIN_NOTIFICATION_SCORE  # 110 intraday
         and score_result.confidence_pct >= 65               # 65% alignment gate
     )
+# Positional mode uses MIN_NOTIFICATION_SCORE_POSITIONAL = 150
+# (EOD runs on 50+ stocks; near-expiry week inflates scores mechanically;
+#  150 requires genuine cross-category alignment: futures + options + technical)
 ```
 
-> `MIN_NOTIFICATION_SCORE` was raised from 75 to 110 to reduce noise after the analyser pool was expanded (Supertrend, RSI Divergence, Stochastic, OBV, Pivot Points, enhanced candlestick pattern weights). 110 sits between HIGH (90) and CRITICAL (130) thresholds.
+#### Composite Setup Override (Winner-Takes-All)
+
+`OptionSellerCompositeAnalyser` runs last and cross-reads `stock.analysis` populated by all 9 preceding analysers. When a composite setup fires it:
+
+1. Writes `stock.analysis["NEUTRAL"]["GAMMA_TRAP"]` / `RANGE_BOUND_SETUP` / `SKEW_FADE_SETUP` namedtuple.
+2. Sets `stock.analysis["PRIORITY_OVERRIDE"] = NotificationPriority.CRITICAL/HIGH` — **score gate is bypassed**.
+3. `generate_analysis_message()` detects `PRIORITY_OVERRIDE` and returns **only** the composite trade card; all individual RSI/MACD/PCR/etc. cards are suppressed.
+
+Priority of composite keys (highest urgency rendered first):
+- `GAMMA_TRAP` → CRITICAL (kill-switch: close short positions, directional breach)
+- `SKEW_FADE_SETUP` → HIGH (directional credit spread: fade a panic at an OI wall)
+- `RANGE_BOUND_SETUP` → HIGH (Iron Condor / Strangle: range-trapped + overpriced vol)
+
+Weights in `ANALYSIS_WEIGHTS` for all three are intentionally `0` so they never inflate batch scores.
 
 ### `common/constants.py` - ANALYSIS_WEIGHTS
 
@@ -685,6 +715,8 @@ ANALYSIS_WEIGHTS = {
     "OI_ACCELERATION": 17, "OI_CAPITULATION": 16, "OI_POSITIONAL_TREND": 16,
     # Panic composite
     "PANIC_MODE": 22, "PANIC_EXHAUSTION": 25,
+    # Composite option-seller setups — weight=0: bypass score gate via PRIORITY_OVERRIDE
+    "GAMMA_TRAP": 0, "RANGE_BOUND_SETUP": 0, "SKEW_FADE_SETUP": 0,
 }
 
 NEUTRAL_EXCLUDE_FROM_SCORE = {
@@ -693,9 +725,14 @@ NEUTRAL_EXCLUDE_FROM_SCORE = {
     "OI_SUPPORT_RESISTANCE", # Informational S/R
     "OI_SR_SHIFT",           # Informational range
     "FUTURE_ROLLOVER",       # Context only
+    "RANGE_BOUND_SETUP",     # Composite — score bypassed via PRIORITY_OVERRIDE
+    "SKEW_FADE_SETUP",
+    "GAMMA_TRAP",
+    "GAMMA_TRAP_ACTIVE",     # Boolean suppression flag set by Gamma Trap
 }
 
-MIN_NOTIFICATION_SCORE = 110   # Raised from 75 — expanded analyser pool
+MIN_NOTIFICATION_SCORE = 110              # intraday default
+MIN_NOTIFICATION_SCORE_POSITIONAL = 150   # EOD positional (higher bar for 50+ stock run)
 ```
 
 ---
@@ -708,7 +745,7 @@ This is the production entry point that orchestrates the entire system.
 
 #### Registered Analyzers (current state)
 
-All 9 analysers are active. Registration order matters — `PanicModeAnalyser` must always be last because it reads `stock.analysis` populated by all preceding analysers.
+All 10 analysers are active. Registration order matters — `PanicModeAnalyser` must run before `OptionSellerCompositeAnalyser` because the composite analyser reads `PANIC_EXHAUSTION` from `stock.analysis`.
 
 ```python
 orchestrator.register(VolumeAnalyser())
@@ -719,7 +756,8 @@ orchestrator.register(FuturesAnalyser())
 orchestrator.register(PCRAnalyser())
 orchestrator.register(MaxPainAnalyser())
 orchestrator.register(OIChainAnalyser())
-orchestrator.register(PanicModeAnalyser())    # MUST be last — reads stock.analysis
+orchestrator.register(PanicModeAnalyser())                  # 9th — reads all preceding
+orchestrator.register(OptionSellerCompositeAnalyser())      # 10th — MUST be last
 ```
 
 | Order | Analyser | Signal categories | Mode |
@@ -732,7 +770,8 @@ orchestrator.register(PanicModeAnalyser())    # MUST be last — reads stock.ana
 | 6 | PCRAnalyser | PCR_EXTREME, PCR_BIAS, PCR_TREND, PCR_INTRADAY_TREND, PCR_REVERSAL, PCR_POS_REVERSAL, PCR_DIVERGENCE | both |
 | 7 | MaxPainAnalyser | MAX_PAIN, MAX_PAIN_TREND, MAX_PAIN_ALIGNMENT | both |
 | 8 | OIChainAnalyser | OI_SUPPORT_RESISTANCE, OI_BUILDUP, OI_WALL, OI_SHIFT, OI_INTRADAY_TREND, OI_SR_SHIFT, OI_CAPITULATION, OI_WALL_MIGRATION, OI_POSITIONAL_TREND, OI_ACCELERATION | both |
-| 9 | PanicModeAnalyser | PANIC_MODE, PANIC_EXHAUSTION | both — **must be last** |
+| 9 | PanicModeAnalyser | PANIC_MODE, PANIC_EXHAUSTION | both — reads all 8 above |
+| 10 | OptionSellerCompositeAnalyser | GAMMA_TRAP, RANGE_BOUND_SETUP, SKEW_FADE_SETUP | both — reads all 9 above; sets PRIORITY_OVERRIDE |
 
 #### Production Daily Timeline
 

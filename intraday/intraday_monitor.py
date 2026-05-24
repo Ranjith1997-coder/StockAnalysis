@@ -1297,7 +1297,7 @@ def _get_nearest_expiry_str(index_stock) -> str | None:
     return None
 
 
-def _start_sensibull_feed(live_options_engine) -> None:
+def _start_sensibull_feed(live_options_engine, enrichment_only: bool = False) -> None:
     """
     Create one SensibullFeed per supported symbol and start them.
     The underlying token is read directly from index_token_obj_dict — the dict
@@ -1305,6 +1305,12 @@ def _start_sensibull_feed(live_options_engine) -> None:
     underlying identifier. No separate token mapping is needed.
     Expiry is resolved from the zerodha_ctx already populated at startup.
     Feeds are stored in ``shared.app_ctx.sensibull_feed``.
+
+    Args:
+        enrichment_only: When True (OPTIONS_SOURCE=both), Sensibull only writes
+                         Greeks/IV fields to existing Zerodha-subscribed strikes
+                         and does NOT trigger on_aggregate_updated. Zerodha is
+                         the authoritative tick source and engine trigger.
     """
     from fno.sensibull_feed import SensibullFeed
     from fno.sensibull_adapter import SensibullAdapter
@@ -1336,7 +1342,8 @@ def _start_sensibull_feed(live_options_engine) -> None:
         def make_callback(stock):
             def _on_snapshot(token: int, data: dict) -> None:
                 try:
-                    adapter.apply(stock, data, live_options_engine)
+                    adapter.apply(stock, data, live_options_engine,
+                                  enrichment_only=enrichment_only)
                 except Exception as exc:
                     logger.error(f"[Sensibull] snapshot error for {stock.stock_symbol}: {exc}")
             return _on_snapshot
@@ -1345,14 +1352,15 @@ def _start_sensibull_feed(live_options_engine) -> None:
         feed.start()
         feeds.append(feed)
         started_symbols.append(symbol)
-        logger.info(f"[Sensibull] feed started for {symbol} (underlying_token={underlying_token}, expiry={expiry})")
+        logger.info(f"[Sensibull] feed started for {symbol} (underlying_token={underlying_token}, expiry={expiry}, enrichment_only={enrichment_only})")
 
     if feeds:
         shared.app_ctx.sensibull_feed = feeds
+        mode_label = "Enrichment" if enrichment_only else "Primary"
         TELEGRAM_NOTIFICATIONS.send_live_options_notification(
-            f"📡 <b>Sensibull Live Feed Started</b> — {', '.join(started_symbols)}"
+            f"📡 <b>Sensibull Live Feed Started [{mode_label}]</b> — {', '.join(started_symbols)}"
         )
-        logger.info(f"[Sensibull] {len(feeds)} feed(s) running: {started_symbols}")
+        logger.info(f"[Sensibull] {len(feeds)} feed(s) running [{mode_label}]: {started_symbols}")
     else:
         logger.error("[Sensibull] no feeds started — check symbol/expiry configuration")
 
@@ -1380,8 +1388,9 @@ def live_options_analysis():
                 logger.info("Live options WebSocket connected")
                 from time import sleep as _sleep
                 _sleep(3)   # wait for first index ticks
-                if shared.app_ctx.options_source == "sensibull":
-                    _start_sensibull_feed(tm.live_options_engine)
+                if shared.app_ctx.options_source in ("sensibull", "both"):
+                    _enrichment_only = (shared.app_ctx.options_source == "both")
+                    _start_sensibull_feed(tm.live_options_engine, enrichment_only=_enrichment_only)
                 else:
                     from notification.bot_listener import _subscribe_registered_options
                     _subscribe_registered_options(tm)
@@ -1419,13 +1428,15 @@ def intraday_analysis(loop = True, loop_wait_time = 30, max_cycles = 0):
     # Start Sensibull live option chain feed independently of Zerodha WS.
     # Sensibull is a public WebSocket — no enctoken required.
     # Only start once (guard: sensibull_feed is None until first start).
+    _options_source = shared.app_ctx.options_source
     if (ENABLE_LIVE_OPTIONS
-            and shared.app_ctx.options_source == "sensibull"
+            and _options_source in ("sensibull", "both")
             and not shared.app_ctx.sensibull_feed):
         tm = shared.app_ctx.zd_ticker_manager
         if tm and tm.live_options_engine:
-            logger.info("[intraday] OPTIONS_SOURCE=sensibull — starting Sensibull feed")
-            _start_sensibull_feed(tm.live_options_engine)
+            _enrichment_only = (_options_source == "both")
+            logger.info(f"[intraday] OPTIONS_SOURCE={_options_source} — starting Sensibull feed (enrichment_only={_enrichment_only})")
+            _start_sensibull_feed(tm.live_options_engine, enrichment_only=_enrichment_only)
         else:
             logger.warning("[intraday] Cannot start Sensibull feed — LiveOptionsEngine not initialised")
 
