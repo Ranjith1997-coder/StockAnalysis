@@ -17,6 +17,12 @@ options_live[strike][CE/PE]:
 
 options_aggregate (Sensibull-only enrichment, patched after recompute):
   atm_iv, atm_iv_percentile, atm_ivp_type, max_pain_strike, future_price
+
+enrichment_only mode (OPTIONS_SOURCE=both):
+  Only Greeks/IV fields are written to options_live (via merge=True in
+  TickStore — silently skips far-OTM strikes not subscribed by Zerodha).
+  options_aggregate Sensibull fields are always patched.
+  on_aggregate_updated is NOT called (Zerodha is the authoritative trigger).
 """
 from __future__ import annotations
 
@@ -52,14 +58,23 @@ class SensibullAdapter:
         index_stock: "Stock",
         data: dict,
         live_options_engine: "LiveOptionsEngine",
+        enrichment_only: bool = False,
     ) -> None:
         """
         Process one Sensibull chain snapshot.
 
-        1. Update ``options_live`` for every strike/side.
-        2. Call ``recompute_options_aggregate`` (same as Zerodha path).
-        3. Patch Sensibull-only enrichment fields into ``options_aggregate``.
-        4. Call ``live_options_engine.on_aggregate_updated``.
+        Normal mode (enrichment_only=False):
+          1. Update ``options_live`` for every strike/side (full tick).
+          2. Call ``recompute_options_aggregate``.
+          3. Patch Sensibull-only enrichment fields into ``options_aggregate``.
+          4. Call ``live_options_engine.on_aggregate_updated``.
+
+        Enrichment-only mode (enrichment_only=True, OPTIONS_SOURCE=both):
+          1. Write only Greeks/IV fields to existing strikes (merge=True —
+             skips far-OTM strikes not yet written by Zerodha).
+          2. Patch Sensibull-only aggregate fields (atm_iv, ivp, max_pain…).
+          3. Does NOT call recompute_options_aggregate or on_aggregate_updated —
+             Zerodha is the authoritative tick source and engine trigger.
         """
         symbol = index_stock.stock_symbol
         chain: dict = data.get("chain", {})
@@ -123,21 +138,34 @@ class SensibullAdapter:
 
                 delta = call_delta if internal_side == "CE" else (call_delta - 1.0)
 
-                tick = {
-                    "last_price":           leg.get("last_price", 0),
-                    "oi":                   current_oi,
-                    "volume_traded":        leg.get("volume", 0),
-                    "total_buy_quantity":   leg.get("best_buy_price", 0),
-                    "total_sell_quantity":  leg.get("best_sell_price", 0),
-                    # greeks — per-strike from Sensibull
-                    "delta":    delta,
-                    "gamma":    gamma,
-                    "theta":    theta,
-                    "vega":     vega,
-                    "iv":       strike_iv_val,
-                    "iv_change": iv_change,
-                }
-                index_stock.update_option_tick(strike, internal_side, tick)
+                if enrichment_only:
+                    # Only write Greeks/IV — never touch ltp/oi/volume/buy_qty.
+                    # merge=True silently skips strikes not yet in options_live
+                    # (i.e. far-OTM strikes outside Zerodha's subscription zone).
+                    greek_tick = {
+                        "delta":     delta,
+                        "gamma":     gamma,
+                        "theta":     theta,
+                        "vega":      vega,
+                        "iv":        strike_iv_val,
+                        "iv_change": iv_change,
+                    }
+                    index_stock.update_option_tick(strike, internal_side, greek_tick, merge=True)
+                else:
+                    tick = {
+                        "last_price":           leg.get("last_price", 0),
+                        "oi":                   current_oi,
+                        "volume_traded":        leg.get("volume", 0),
+                        "total_buy_quantity":   leg.get("best_buy_price", 0),
+                        "total_sell_quantity":  leg.get("best_sell_price", 0),
+                        "delta":    delta,
+                        "gamma":    gamma,
+                        "theta":    theta,
+                        "vega":     vega,
+                        "iv":       strike_iv_val,
+                        "iv_change": iv_change,
+                    }
+                    index_stock.update_option_tick(strike, internal_side, tick)
 
             # Patch prev_oi using the snapshot taken before cache update.
             # TickStore.update_option_tick sets prev_oi = old entry["oi"] which
@@ -147,9 +175,12 @@ class SensibullAdapter:
             _patch_prev_oi(index_stock, strike, prev_oi_snapshot)
 
         # ── 2. Recompute aggregate (PCR, ATM strike, straddle, OI walls) ──────
-        index_stock.recompute_options_aggregate(spot if spot > 0 else None)
+        # Skipped in enrichment_only mode — Zerodha owns the aggregate trigger.
+        if not enrichment_only:
+            index_stock.recompute_options_aggregate(spot if spot > 0 else None)
 
         # ── 3. Patch Sensibull-only enrichment fields ─────────────────────────
+        # Always patched regardless of mode — Zerodha never writes these fields.
         agg = index_stock._tick_store.options_aggregate
         agg["atm_iv"]            = data.get("atm_iv", 0.0) or 0.0
         agg["atm_iv_percentile"] = data.get("atm_iv_percentile", 0.0) or 0.0
@@ -188,13 +219,15 @@ class SensibullAdapter:
                     agg["iv_skew"] = (pe_iv - ce_iv) * 100
 
         # ── 4. Notify the live options engine ─────────────────────────────────
-        if live_options_engine:
+        # Skipped in enrichment_only mode — Zerodha ticks are the authoritative
+        # engine trigger; Sensibull is a passive enrichment source only.
+        if live_options_engine and not enrichment_only:
             live_options_engine.on_aggregate_updated(index_stock, spot if spot > 0 else 0)
 
         logger.debug(
-            f"[SensibullAdapter] {symbol} updated — "
+            f"[SensibullAdapter] {symbol} {'enriched' if enrichment_only else 'updated'} — "
             f"strikes={len(chain)}, spot={spot}, "
-            f"pcr={agg.get('live_pcr', 0):.3f}, atm_iv={agg.get('atm_iv', 0):.3f}"
+            f"atm_iv={agg.get('atm_iv', 0):.3f}, ivp={agg.get('atm_iv_percentile', 0):.1f}"
         )
 
 

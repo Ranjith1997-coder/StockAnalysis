@@ -109,9 +109,25 @@ class TickStore:
     # Options ticks
     # ------------------------------------------------------------------
 
-    def update_option_tick(self, strike: float, option_type: str, tick: dict) -> None:
-        """Update live option data from a WebSocket tick."""
+    def update_option_tick(self, strike: float, option_type: str, tick: dict, merge: bool = False) -> None:
+        """Update live option data from a WebSocket tick.
+
+        Args:
+            merge: When True (enrichment-only mode), only writes keys present in
+                   ``tick`` without touching existing fields like ltp/oi/volume.
+                   The strike must already exist in options_live — if not, the
+                   update is silently skipped (Zerodha is the authoritative creator).
+                   Used by Sensibull in OPTIONS_SOURCE=both mode.
+        """
         with self._lock:
+            if merge:
+                # Enrichment-only: only update existing strikes (Zerodha-subscribed)
+                existing = self.options_live.get(strike, {}).get(option_type)
+                if existing is None:
+                    return
+                existing.update(tick)
+                return
+
             if strike not in self.options_live:
                 self.options_live[strike] = {}
 
