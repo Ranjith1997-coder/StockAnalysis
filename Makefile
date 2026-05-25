@@ -50,21 +50,27 @@ help:
 	@echo ""
 	@echo "  Maintenance"
 	@echo "    update-derivatives  Refresh final_derivatives_list.json from Zerodha + NSE"
-	@echo "    logs          Tail logs/monitor.log (last 50 lines)"
-	@echo "    logs-follow   Follow logs/monitor.log live"
+	@echo "    logs          Tail stock_monitor.log (last 50 lines)"
+	@echo "    logs-500      Tail stock_monitor.log (last 500 lines)"
+	@echo "    logs-follow   Follow stock_monitor.log live"
+	@echo "    logs-grep     Grep stock_monitor.log: make logs-grep Q=RELIANCE"
 	@echo "    clean         Remove __pycache__, .pyc, pytest cache"
 	@echo "    clean-all     clean + remove .venv"
 	@echo ""
 	@echo "  Server (hacker@100.92.21.31)"
 	@echo "    server-ssh          Open interactive SSH session"
-	@echo "    server-logs         Tail last 50 lines of service log on server"
-	@echo "    server-logs-follow  Live-follow service log on server"
+	@echo "    server-logs         Tail last 50 lines of stock_monitor.log on server"
+	@echo "    server-logs-500     Tail last 500 lines of stock_monitor.log on server"
+	@echo "    server-logs-follow  Live-follow stock_monitor.log on server"
 	@echo "    server-status       Show stock_analysis.service status"
 	@echo "    server-restart      Restart stock_analysis.service"
 	@echo "    server-pull         git pull on server repo"
 	@echo "    server-df           Disk usage on server"
 	@echo "    update-enctoken     Update ZERODHA_ENC_TOKEN on server .env:"
 	@echo "                          make update-enctoken TOKEN=<your_enc_token>"
+	@echo "    auth-run            Run auth_login.py locally (skips if already ran today)"
+	@echo "    auth-force          Force-refresh enctoken locally (bypasses once-per-day guard)"
+	@echo "    server-auth-force   Force-refresh enctoken on server"
 	@echo "────────────────────────────────────────────────────────────"
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -213,13 +219,24 @@ typecheck:
 # ──────────────────────────────────────────────────────────────────────────────
 # Maintenance
 # ──────────────────────────────────────────────────────────────────────────────
+LOG_FILE := logs/stock_monitor.log
+
 .PHONY: logs
 logs:
-	@tail -50 logs/monitor.log 2>/dev/null || echo "No logs/monitor.log found."
+	@tail -50 $(LOG_FILE) 2>/dev/null || echo "No $(LOG_FILE) found."
+
+.PHONY: logs-500
+logs-500:
+	@tail -500 $(LOG_FILE) 2>/dev/null || echo "No $(LOG_FILE) found."
 
 .PHONY: logs-follow
 logs-follow:
-	@tail -f logs/monitor.log 2>/dev/null || echo "No logs/monitor.log found."
+	@tail -f $(LOG_FILE) 2>/dev/null || echo "No $(LOG_FILE) found."
+
+.PHONY: logs-grep
+logs-grep:
+	@test -n "$(Q)" || { echo "ERROR: Q is required. Usage: make logs-grep Q=RELIANCE"; exit 1; }
+	@grep -i "$(Q)" $(LOG_FILE) 2>/dev/null | tail -100 || echo "No matches for '$(Q)' in $(LOG_FILE)."
 
 .PHONY: clean
 clean:
@@ -243,13 +260,19 @@ clean-all: clean
 server-ssh:
 	ssh $(SERVER)
 
+SERVER_LOG := ~/StockAnalysis/logs/stock_monitor.log
+
 .PHONY: server-logs
 server-logs:
-	ssh $(SERVER) "journalctl -u stock_analysis.service -n 50 --no-pager"
+	ssh $(SERVER) "tail -50 $(SERVER_LOG)"
+
+.PHONY: server-logs-500
+server-logs-500:
+	ssh $(SERVER) "tail -500 $(SERVER_LOG)"
 
 .PHONY: server-logs-follow
 server-logs-follow:
-	ssh $(SERVER) "journalctl -u stock_analysis.service -f"
+	ssh $(SERVER) "tail -f $(SERVER_LOG)"
 
 .PHONY: server-status
 server-status:
@@ -273,3 +296,17 @@ TOKEN ?=
 update-enctoken:
 	@test -n "$(TOKEN)" || { echo "ERROR: TOKEN is required. Usage: make update-enctoken TOKEN=<enc_token>"; exit 1; }
 	ssh $(SERVER) "sed -i 's|^ZERODHA_ENC_TOKEN=.*|ZERODHA_ENC_TOKEN=$(TOKEN)|' ~/StockAnalysis/.env && echo 'ZERODHA_ENC_TOKEN updated on server'"
+
+.PHONY: auth-run
+auth-run:
+	PYTHONPATH=$(CURDIR) $(PYTHON) auth/auth_login.py
+
+.PHONY: auth-force
+auth-force:
+	@echo "Force-refreshing Zerodha enctoken (bypassing once-per-day guard)..."
+	PYTHONPATH=$(CURDIR) $(PYTHON) auth/auth_login.py --force
+
+.PHONY: server-auth-force
+server-auth-force:
+	@echo "Force-refreshing enctoken on server (bypassing once-per-day guard)..."
+	ssh $(SERVER) "cd ~/StockAnalysis && .venv/bin/python auth/auth_login.py --force"
