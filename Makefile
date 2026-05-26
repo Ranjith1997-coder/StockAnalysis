@@ -276,11 +276,11 @@ server-logs-follow:
 
 .PHONY: server-status
 server-status:
-	ssh $(SERVER) "systemctl status stock_analysis.service"
+	ssh $(SERVER) "systemctl status stockanalysis.service"
 
 .PHONY: server-restart
 server-restart:
-	ssh $(SERVER) "sudo systemctl restart stock_analysis.service"
+	ssh $(SERVER) "sudo systemctl restart stockanalysis.service"
 
 .PHONY: server-pull
 server-pull:
