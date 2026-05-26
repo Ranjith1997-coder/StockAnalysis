@@ -140,9 +140,9 @@ class Stock:
         """Thread-safe update of Zerodha tick data."""
         self._tick_store.update_zerodha_data(ticker_data)
 
-    def update_option_tick(self, strike: float, option_type: str, tick: dict) -> None:
+    def update_option_tick(self, strike: float, option_type: str, tick: dict, merge: bool = False) -> None:
         """Update live option data from a WebSocket tick."""
-        self._tick_store.update_option_tick(strike, option_type, tick)
+        self._tick_store.update_option_tick(strike, option_type, tick, merge=merge)
 
     def update_futures_tick(self, expiry_key: str, tick: dict) -> None:
         """Update live futures data from a WebSocket tick."""
