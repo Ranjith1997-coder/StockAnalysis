@@ -64,6 +64,14 @@ class TickStore:
             "atm_ivp_type": None,
             "max_pain_strike": None,
             "future_price": 0.0,
+            # GEX (Gamma Exposure) — computed by GEXAnalyser every 5-min cycle.
+            # Requires gamma from Sensibull; stays 0.0 in Zerodha-only mode.
+            "gex_total": 0.0,       # Net GEX in ₹ crores (CE - PE)
+            "gex_ce": 0.0,          # CE-side GEX contribution
+            "gex_pe": 0.0,          # PE-side GEX contribution
+            "gex_regime": None,     # "POSITIVE" | "NEGATIVE" | None (not yet computed)
+            "gex_flip_level": None, # Strike where cumulative GEX crosses zero
+            "gex_by_strike": {},    # {strike: net_gex} — used by GEX_WALL_BREACH next cycle
         }
 
         # Live futures tick data from WebSocket

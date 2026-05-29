@@ -21,6 +21,7 @@ from analyser.IVAnalyser import IVAnalyser
 from analyser.PCRAnalyser import PCRAnalyser
 from analyser.MaxPainAnalyser import MaxPainAnalyser
 from analyser.OIChainAnalyser import OIChainAnalyser
+from analyser.GEXAnalyser import GEXAnalyser
 from analyser.PanicModeAnalyser import PanicModeAnalyser
 from analyser.OptionSellerCompositeAnalyser import OptionSellerCompositeAnalyser
 from common.logging_util import logger
@@ -113,6 +114,7 @@ def _ping_healthcheck():
 # ═══════════════════════════════════════════════════════════════════════════
 
 _stale_alerts_sent = set()  # tracks symbols already alerted this session
+_stale_alerts_lock  = threading.Lock()  # guards check-then-add on _stale_alerts_sent
 
 def check_data_freshness(stock, stale_threshold_sec=120):
     """Check that live options data has been updated recently.
@@ -145,8 +147,8 @@ def check_data_freshness(stock, stale_threshold_sec=120):
         return True  # no options tracking for this stock — nothing to check
 
     last_updated = options_agg.get("last_updated")
-    if last_updated is None:
-        return True  # field not populated yet
+    if not last_updated:
+        return True  # field not populated yet (0.0 = never written)
 
     if isinstance(last_updated, (int, float)):
         age = now.timestamp() - last_updated
@@ -158,19 +160,22 @@ def check_data_freshness(stock, stale_threshold_sec=120):
 
     if age > stale_threshold_sec:
         symbol = getattr(stock, "stock_symbol", "UNKNOWN")
-        if symbol not in _stale_alerts_sent:
+        with _stale_alerts_lock:
+            if symbol in _stale_alerts_sent:
+                return False
             _stale_alerts_sent.add(symbol)
-            msg = (
-                f"⚠️ <b>STALE DATA — {symbol}</b>\n\n"
-                f"options_aggregate last updated <b>{int(age)}s ago</b> "
-                f"(threshold: {stale_threshold_sec}s).\n"
-                f"WebSocket may have dropped silently."
-            )
-            try:
-                TELEGRAM_NOTIFICATIONS.send_notification(msg, parse_mode="HTML")
-            except Exception:
-                pass
-            logger.warning(f"Stale data detected for {symbol}: {int(age)}s old")
+        # Build and send the alert outside the lock so we never hold a lock over I/O
+        msg = (
+            f"⚠️ <b>STALE DATA — {symbol}</b>\n\n"
+            f"options_aggregate last updated <b>{int(age)}s ago</b> "
+            f"(threshold: {stale_threshold_sec}s).\n"
+            f"WebSocket may have dropped silently."
+        )
+        try:
+            TELEGRAM_NOTIFICATIONS.send_notification(msg, parse_mode="HTML")
+        except Exception:
+            pass
+        logger.warning(f"Stale data detected for {symbol}: {int(age)}s old")
         return False
 
     return True
@@ -181,7 +186,7 @@ class Trend (Enum):
     NEUTRAL = "NEUTRAL"
 
 
-thread_pool = None
+thread_pool: Optional[concurrent.futures.ThreadPoolExecutor] = None  # initialised in init()
 orchestrator : AnalyserOrchestrator =  None
 PRODUCTION = False
 DEV_NOTIFY = False      # True = send Telegram alerts even in dev mode (DEV_NOTIFY=1)
@@ -740,39 +745,57 @@ def fetch_and_analyze_stocks() -> List[Tuple[MonitorResult, bool, Optional[str]]
     # Previously split across index/stock blocks causing a double reset per cycle.
     orchestrator.reset_all_constants()
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-        # Fetch price data for all stocks at once
-        price_future = executor.submit(fetch_price_data, stock_objs, index_objs, commodity_objs, global_indices_objs)
+    # ── Price data ────────────────────────────────────────────────────────────
+    # Single bulk yfinance download for all symbols; submitted to the pool so
+    # the main thread is not blocked, and a hard 60s timeout prevents a stalled
+    # yfinance connection from hanging the entire cycle.
+    price_future = thread_pool.submit(
+        fetch_price_data, stock_objs, index_objs, commodity_objs, global_indices_objs
+    )
+    try:
+        price_future.result(timeout=60)
+    except concurrent.futures.TimeoutError:
+        logger.error(
+            "Price data fetch timed out after 60s — proceeding with stale "
+            "priceData from last cycle"
+        )
+    except Exception as exc:
+        logger.error(f"Error fetching price data for stocks: {exc}")
+        return [(MonitorResult.ERROR, False, str(exc))]
 
-        # Wait for price data fetching to complete
+    # ── Per-stock analysis ────────────────────────────────────────────────────
+    results: List[Tuple[MonitorResult, bool, Optional[str]]] = []
+
+    def _collect(monitor_futures: dict, label: str) -> None:
+        """Drain futures with a 90s hard timeout; cancel and skip stragglers."""
         try:
-            price_future.result()
-        except Exception as exc:
-            logger.error(f"Error fetching price data for stocks: {exc}")
-            return [(MonitorResult.ERROR, False, str(exc))]
+            for future in concurrent.futures.as_completed(monitor_futures, timeout=90):
+                item = monitor_futures[future]
+                try:
+                    results.append(future.result())
+                except Exception as exc:
+                    logger.error(f"Unexpected error processing {item.stockName}: {exc}")
+                    results.append((MonitorResult.ERROR, False, str(exc)))
+        except concurrent.futures.TimeoutError:
+            for future, item in monitor_futures.items():
+                if not future.done():
+                    future.cancel()
+                    logger.warning(
+                        f"[{label}] Analysis timed out for {item.stockName} — skipping"
+                    )
+                    results.append((MonitorResult.ERROR, False, "timeout"))
 
-        # Monitor and analyze all indices
-        results = []
-        monitor_futures = {executor.submit(process_stock, index): index for index in index_objs}
-        for future in concurrent.futures.as_completed(monitor_futures):
-            index = monitor_futures[future]
-            try:
-                result = future.result()
-                results.append(result)
-            except Exception as exc:
-                logger.error(f"Unexpected error processing {index.stockName}: {exc}")
-                results.append((MonitorResult.ERROR, False, str(exc)))
+    # Monitor and analyze all indices
+    _collect(
+        {thread_pool.submit(process_stock, index): index for index in index_objs},
+        "indices",
+    )
 
-        # Monitor and analyze all stocks
-        monitor_futures = {executor.submit(process_stock, stock): stock for stock in stock_objs}
-        for future in concurrent.futures.as_completed(monitor_futures):
-            stock = monitor_futures[future]
-            try:
-                result = future.result()
-                results.append(result)
-            except Exception as exc:
-                logger.error(f"Unexpected error processing {stock.stockName}: {exc}")
-                results.append((MonitorResult.ERROR, False, str(exc)))
+    # Monitor and analyze all stocks
+    _collect(
+        {thread_pool.submit(process_stock, stock): stock for stock in stock_objs},
+        "stocks",
+    )
 
     logger.info("Data fetching and analysis completed for all stocks")
     return results
@@ -1392,8 +1415,7 @@ def live_options_analysis():
                     _enrichment_only = (shared.app_ctx.options_source == "both")
                     _start_sensibull_feed(tm.live_options_engine, enrichment_only=_enrichment_only)
                 else:
-                    from notification.bot_listener import _subscribe_registered_options
-                    _subscribe_registered_options(tm)
+                    tm.subscribe_live_options(wait_for_ticks=True)
             else:
                 logger.error("WebSocket connect failed — live options analysis aborted")
                 return
@@ -1446,6 +1468,7 @@ def intraday_analysis(loop = True, loop_wait_time = 30, max_cycles = 0):
 
     is_in_time_period = isNowInTimePeriod(time(9,15), time(15,30), datetime.now().time())
     cycle = 0
+    _live_options_subscribed = False  # guard: subscribe option tokens once after first tick
 
     while(is_in_time_period or not PRODUCTION):
         cycle += 1
@@ -1459,6 +1482,19 @@ def intraday_analysis(loop = True, loop_wait_time = 30, max_cycles = 0):
             process_monitor_results(results)
         except Exception as e:
             logger.error(f"Critical error in stock analysis: {e}")
+
+        # After the first cycle, spot prices are available — subscribe Zerodha option tokens.
+        # Runs once only; skipped if already subscribed or if Zerodha WS is not connected.
+        if (not _live_options_subscribed
+                and ENABLE_LIVE_OPTIONS
+                and _options_source in ("zerodha", "both")):
+            tm = shared.app_ctx.zd_ticker_manager
+            if tm and tm.connected:
+                logger.info("[intraday] subscribing Zerodha option tokens after first cycle")
+                tm.subscribe_live_options(wait_for_ticks=False)
+                _live_options_subscribed = True
+            else:
+                logger.debug("[intraday] Zerodha WS not connected — option subscription deferred")
 
         report_top_gainers_and_losers()
         report_index_data()
@@ -1707,16 +1743,17 @@ def init():
         update_zerodha_option_chain(args.stock, args.index)
     orchestrator = AnalyserOrchestrator()
     if not LIVE_OPTIONS_ONLY:
-        orchestrator.register(VolumeAnalyser())
-        orchestrator.register(TechnicalAnalyser())
-        orchestrator.register(CandleStickAnalyser())
-        orchestrator.register(IVAnalyser())
-        orchestrator.register(FuturesAnalyser())
-        orchestrator.register(PCRAnalyser())
-        orchestrator.register(MaxPainAnalyser())
-        orchestrator.register(OIChainAnalyser())
-        orchestrator.register(PanicModeAnalyser())
-        orchestrator.register(OptionSellerCompositeAnalyser())  # MUST be last -- reads PANIC_EXHAUSTION
+        # orchestrator.register(VolumeAnalyser())
+        # orchestrator.register(TechnicalAnalyser())
+        # orchestrator.register(CandleStickAnalyser())
+        # orchestrator.register(IVAnalyser())
+        # orchestrator.register(FuturesAnalyser())
+        # orchestrator.register(PCRAnalyser())
+        # orchestrator.register(MaxPainAnalyser())
+        # orchestrator.register(OIChainAnalyser())
+        orchestrator.register(GEXAnalyser())        # After OIChainAnalyser; before composite
+        # orchestrator.register(PanicModeAnalyser())
+        # orchestrator.register(OptionSellerCompositeAnalyser())  # MUST be last -- reads PANIC_EXHAUSTION
     if ENABLE_ZERODHA_API:
         logger.info("Zerodha API enabled")
         userName = os.getenv(constant.ENV_ZERODHA_USERNAME)
@@ -1743,6 +1780,34 @@ def init():
         if LIVE_OPTIONS_ONLY:
             shared.app_ctx.zd_ticker_manager.index_only_mode = True
             logger.info("index_only_mode enabled — equity stocks excluded from WebSocket")
+
+        # Auto-connect Zerodha WebSocket using enctoken from .env.
+        # The auth service (stockanalysis-auth.service) writes a fresh enctoken
+        # before this process starts, so no Telegram bot interaction is needed.
+        # Skipped when OPTIONS_SOURCE=sensibull (Zerodha WS handles only equity/index ticks there).
+        if ENABLE_LIVE_OPTIONS and shared.app_ctx.options_source in ("zerodha", "both"):
+            enc_raw = os.getenv(constant.ENV_ZERODHA_ENC_TOKEN, "")
+            if enc_raw:
+                logger.info("[init] Auto-connecting Zerodha WebSocket using enctoken from .env")
+                shared.app_ctx.zd_ticker_manager.update_enctoken(quote(enc_raw, safe=""))
+                if shared.app_ctx.zd_ticker_manager.connect():
+                    logger.info("[init] Zerodha WebSocket connected successfully")
+                else:
+                    logger.warning(
+                        "[init] Zerodha WebSocket auto-connect failed — "
+                        "option ticks unavailable; use /enctoken via Telegram bot to retry"
+                    )
+            else:
+                logger.warning("[init] ZERODHA_ENC_TOKEN not set — Zerodha WebSocket not connected")
+
+    # Module-level thread pool — created once, reused every 310s cycle.
+    # Avoids 20× thread-creation overhead per cycle; workers park in the OS
+    # scheduler between submissions rather than being destroyed and rebuilt.
+    thread_pool = concurrent.futures.ThreadPoolExecutor(
+        max_workers=constant.THREAD_POOL_WORKERS,
+        thread_name_prefix="monitor",
+    )
+    logger.info(f"Thread pool initialised with {constant.THREAD_POOL_WORKERS} workers")
 
 
 def parse_arguments():
@@ -1860,6 +1925,15 @@ def _shutdown_background_services():
     ThreadPoolExecutor workers are non-daemon by default and will block exit indefinitely
     if not explicitly stopped.
     """
+    global thread_pool
+    if thread_pool is not None:
+        try:
+            thread_pool.shutdown(wait=False, cancel_futures=True)
+            logger.debug("[shutdown] analysis thread pool stopped")
+        except Exception as e:
+            logger.warning(f"[shutdown] thread pool shutdown error: {e}")
+        thread_pool = None  # type: ignore[assignment]
+
     narrator = shared.app_ctx.narrator
     if narrator:
         try:
