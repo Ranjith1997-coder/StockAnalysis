@@ -677,24 +677,40 @@ def _mode_tag(mode_str) -> str:
 
 @MessageFormatter.register("GAMMA_TRAP")
 def _fmt_gamma_trap(data, trend):
-    """
-    GAMMA_TRAP — Kill-switch card.
-    Rendered with maximum urgency: red header, bold directive, condition list.
-    """
     items = data if isinstance(data, list) else [data]
     lines = []
     for d in items:
         dir_arrow = "⬆️" if d.direction == "BULLISH" else "⬇️"
-        conds = ", ".join(d.conditions_detail)
-        vol_str = f" | Vol: <b>{d.volume_signal}</b>" if d.volume_signal else ""
+        _all_conditions = ["G1 Wall Breach", "G2 Volume", "G3 Futures", "G4 IV Spike"]
+        triggers = getattr(d, "triggers", {})
+
+        cond_lines = []
+        for ckey in _all_conditions:
+            metric = triggers.get(ckey)
+            # Map trigger key back to conditions_detail label fragments
+            _detail_map = {
+                "G1 Wall Breach": ("OI_CAPITULATION", "OI_WALL_MIGRATION", "GEX_WALL_BREACH"),
+                "G2 Volume":      ("VOLUME_BREAKOUT", "VOLUME_CLIMAX"),
+                "G3 Futures":     ("FUTURES(",),
+                "G4 IV Spike":    ("IV_SPIKE",),
+            }
+            fired = any(
+                any(frag in cd for frag in _detail_map.get(ckey, ()))
+                for cd in d.conditions_detail
+            )
+            label = ckey.split(" ", 1)[1]  # strip "G1 " prefix
+            if fired and metric:
+                cond_lines.append(f"  ✅ {label} — {metric}")
+            elif fired:
+                cond_lines.append(f"  ✅ {label}")
+            else:
+                cond_lines.append(f"  ❌ {label} — not detected")
 
         lines += [
-            f"  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-            f"  🚨 <b>GAMMA TRAP — CLOSE SHORTS NOW</b>",
-            f"  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+            f"  🚨 <b>GAMMA TRAP — CLOSE SHORTS NOW</b>  "
+            f"[<code>{d.conditions_met}/4</code>]",
             f"  Direction: {dir_arrow} <b>{d.direction}</b> breakout confirmed",
-            f"  Breach: <b>{d.breach_signal}</b>{vol_str}",
-            f"  Conditions: <code>{d.conditions_met}/4</code> — {conds}",
+            *cond_lines,
             f"  ⏱ Mode: <i>{_mode_tag(d.mode)}</i>",
         ]
     return lines
@@ -702,87 +718,54 @@ def _fmt_gamma_trap(data, trend):
 
 @MessageFormatter.register("RANGE_BOUND_SETUP")
 def _fmt_range_bound(data, trend):
-    """
-    RANGE_BOUND_SETUP — Iron Condor / Strangle trade card.
-    Shows the box range (walls), IV context, max pain proximity, and conditions.
-    """
-    # Human-readable labels for each condition code
-    _cond_labels = {
-        "OVERPRICED_VOL":   "IV overpriced (sell premium)",
-        "CEILING_AND_FLOOR": "Put wall floor + Call wall ceiling in place",
-        "NEUTRAL_MOMENTUM": "No breakout signal — price momentum flat",
-        "NO_INSTIT_PUSH":   "No institutional futures buildup (no directional bias)",
-        "MAX_PAIN_MAGNET":  "Price inside max pain gravity zone",
-    }
+    _setup_labels = {"IRON_CONDOR": "Iron Condor", "STRANGLE": "Strangle"}
 
-    # Human-readable setup type
-    _setup_labels = {
-        "IRON_CONDOR": "Iron Condor",
-        "STRANGLE":    "Strangle",
-    }
+    # condition key → (display label, trigger key)
+    _all_conditions = [
+        ("OVERPRICED_VOL",      "IV overpriced",           "R1 IV"),
+        ("CEILING_AND_FLOOR",   "OI walls",                "R2 OI Walls"),
+        ("NEUTRAL_MOMENTUM",    "Neutral momentum",        "R3 Momentum"),
+        ("NO_INSTIT_PUSH",      "No institutional push",   "R4 Futures"),
+        ("MAX_PAIN_MAGNET",     "Max pain magnet",         "R5 MaxPain"),
+        ("GEX_POSITIVE_REGIME", "GEX positive regime",     "R6 GEX"),
+    ]
 
     items = data if isinstance(data, list) else [data]
     lines = []
     for d in items:
         setup_label = _setup_labels.get(d.setup_type, d.setup_type)
+        triggers = getattr(d, "triggers", {})
 
-        # ── Box range line ────────────────────────────────────────────────────
+        # ── Box range line (always shown) ─────────────────────────────────────
         if d.put_wall_strike and d.call_wall_strike:
             box_width_pct = (d.call_wall_strike - d.put_wall_strike) / d.put_wall_strike * 100
-            range_line = (
-                f"  📦 Box:    <code>{d.put_wall_strike:.0f}</code> ←──→ "
+            box_line = (
+                f"  📦 Box: <code>{d.put_wall_strike:.0f}</code> ←──→ "
                 f"<code>{d.call_wall_strike:.0f}</code>  "
                 f"(<code>{box_width_pct:.1f}%</code> wide)"
             )
         elif d.put_wall_strike:
-            range_line = f"  📦 Floor:  <code>{d.put_wall_strike:.0f}</code> (put wall — ceiling not detected)"
+            box_line = f"  📦 Floor: <code>{d.put_wall_strike:.0f}</code> (ceiling not detected)"
         elif d.call_wall_strike:
-            range_line = f"  📦 Ceiling: <code>{d.call_wall_strike:.0f}</code> (call wall — floor not detected)"
+            box_line = f"  📦 Ceiling: <code>{d.call_wall_strike:.0f}</code> (floor not detected)"
         else:
-            range_line = "  📦 Box: walls present (strikes unavailable)"
+            box_line = "  📦 Box: walls present (strikes unavailable)"
 
-        # ── IV line: IV Percentile + what it means for option sellers ─────────
-        if d.iv_percentile is not None:
-            ivp = d.iv_percentile
-            if ivp >= 85:
-                iv_context = "extremely overpriced — strong edge to sell"
-            elif ivp >= 70:
-                iv_context = "overpriced — good edge to sell"
+        # ── Unified condition + metric lines ──────────────────────────────────
+        cond_lines = []
+        total = len(_all_conditions)
+        for (ckey, label, tkey) in _all_conditions:
+            fired = ckey in d.conditions_detail
+            metric = triggers.get(tkey, "")
+            if fired:
+                cond_lines.append(f"  ✅ {label}" + (f" — {metric}" if metric else ""))
             else:
-                iv_context = "elevated"
-            iv_line = (
-                f"  📊 IV:     IVP <code>{ivp:.0f}th</code> percentile — {iv_context}"
-            )
-        else:
-            iv_line = "  📊 IV:     Premium confirmed overpriced"
-
-        # ── Max pain line ─────────────────────────────────────────────────────
-        if d.max_pain_dev_pct is not None:
-            dev = d.max_pain_dev_pct
-            direction_word = "above" if dev > 0 else "below"
-            mp_line = (
-                f"  🧲 MaxPain: <code>{abs(dev):.1f}%</code> {direction_word} max pain "
-                f"— price likely to gravitate back"
-            )
-        else:
-            mp_line = "  🧲 MaxPain: Within gravity zone"
-
-        # ── Conditions: translate each code to plain English ─────────────────
-        cond_lines = [
-            f"  {'✅' if c in d.conditions_detail else '❌'} {_cond_labels.get(c, c)}"
-            for c in ("OVERPRICED_VOL", "CEILING_AND_FLOOR", "NEUTRAL_MOMENTUM",
-                      "NO_INSTIT_PUSH", "MAX_PAIN_MAGNET")
-        ]
+                cond_lines.append(f"  ❌ {label} — not confirmed")
 
         lines += [
-            f"  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
             f"  🎯 <b>RANGE PREMIUM — {setup_label}</b>  "
-            f"[<code>{d.conditions_met}/5</code> conditions]",
-            f"  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-            range_line,
-            iv_line,
-            mp_line,
-            f"  ─────────────────────────────────",
+            f"[<code>{d.conditions_met}/{total}</code>]",
+            box_line,
             *cond_lines,
             f"  ⏱ Mode: <i>{_mode_tag(d.mode)}</i>",
         ]
@@ -791,47 +774,122 @@ def _fmt_range_bound(data, trend):
 
 @MessageFormatter.register("SKEW_FADE_SETUP")
 def _fmt_skew_fade(data, trend):
+    items = data if isinstance(data, list) else [data]
+    lines = []
+    for d in items:
+        fade_arrow = "⬆️" if d.fade_direction == "BULLISH" else "⬇️"
+        triggers = getattr(d, "triggers", {})
+
+        cond_lines = []
+        for tkey, label in [
+            ("S1 Exhaustion", "Exhaustion"),
+            ("S2 SR Wall",    "SR wall"),
+            ("S3 PCR Trap",   "PCR trap"),
+        ]:
+            metric = triggers.get(tkey, "")
+            cond_lines.append(f"  ✅ {label} — {metric}" if metric else f"  ✅ {label}")
+
+        lines += [
+            f"  ⚔️ <b>SKEW FADE — {d.fade_direction} CREDIT SPREAD</b>  [3/3]",
+            *cond_lines,
+            f"  Trade: {fade_arrow} Sell {d.panic_direction.lower()} side → "
+            f"<b>{d.fade_direction}</b> credit spread",
+            f"  ⏱ Mode: <i>{_mode_tag(d.mode)}</i>",
+        ]
+    return lines
+
+
+# ── GEX Formatters ─────────────────────────────────────────────────────────────
+
+@MessageFormatter.register("GEX_REGIME")
+def _fmt_gex_regime(data, trend):
     """
-    SKEW_FADE_SETUP — Directional credit spread trade card.
-    Shows the fade direction, exhaustion context, the SR wall being tested,
-    the confirming candle, and the PCR trap that completes the setup.
+    GEX_REGIME — Gamma regime context card (informational, not a trade card).
+    Rendered prominently only when regime has flipped; otherwise compact.
     """
     items = data if isinstance(data, list) else [data]
     lines = []
     for d in items:
-        fade_arrow  = "⬆️" if d.fade_direction == "BULLISH" else "⬇️"
-        panic_arrow = "⬇️" if d.panic_direction == "BEARISH" else "⬆️"
+        regime_emoji = "🟢" if d.regime == "POSITIVE" else "🔴"
+        regime_label = "POSITIVE — dealers long gamma (market PINS)" if d.regime == "POSITIVE" \
+                       else "NEGATIVE — dealers short gamma (market TRENDS)"
 
-        # Human-readable candle key
-        _candle_labels = {
-            "Double_candle_stick_pattern":    "Engulfing/Piercing (2-bar reversal)",
-            "Single_candle_reversal_pattern": "Hammer/Shooting Star",
-            "Triple_candle_stick_pattern":    "Morning/Evening Star (3-bar reversal)",
-            "Triple_candle_reversal_pattern": "Triple reversal pattern",
-        }
-        candle_label = _candle_labels.get(d.candle_key, d.candle_key)
+        mag_context = {
+            "MILD":     "weak signal, low conviction",
+            "MODERATE": "moderate conviction",
+            "STRONG":   "high conviction",
+        }.get(d.magnitude, d.magnitude)
 
-        # Human-readable PCR signal
-        _pcr_labels = {
-            "PCR_REVERSAL":       "PCR zone crossover (intraday)",
-            "PCR_POS_REVERSAL":   "PCR 3-day avg reversal (positional)",
-            "PCR_INTRADAY_TREND": "PCR intraday momentum shift",
-        }
-        pcr_label = _pcr_labels.get(d.pcr_signal, d.pcr_signal)
+        flip_str = (
+            f"  🔄 <b>REGIME FLIP</b>: {d.prev_regime} → <b>{d.regime}</b>\n"
+            if d.regime_flipped else ""
+        )
+        lines += [
+            f"  {regime_emoji} <b>GEX REGIME</b>: {regime_label}",
+        ]
+        if d.regime_flipped:
+            lines.append(f"  🔄 <b>REGIME FLIP</b>: {d.prev_regime} → <b>{d.regime}</b>")
+        lines += [
+            f"  📊 Net GEX:  <code>{d.gex_total:+.0f} Cr</code>  "
+            f"[CE: <code>{d.gex_ce:.0f}</code>  PE: <code>{d.gex_pe:.0f}</code>]  "
+            f"— {mag_context}",
+        ]
+        if d.flip_level:
+            lines.append(
+                f"  🎯 Flip level: <code>{d.flip_level:.0f}</code> "
+                f"(above = pin, below = trend)"
+            )
+    return lines
+
+
+@MessageFormatter.register("GEX_WALL_BREACH")
+def _fmt_gex_wall_breach(data, trend):
+    """
+    GEX_WALL_BREACH — Directional breach confirmed by dealer gamma unwind.
+    High-conviction: spot crossed a gamma wall AND dealers stopped defending.
+    """
+    items = data if isinstance(data, list) else [data]
+    lines = []
+    for d in items:
+        dir_arrow = "⬆️" if d.breach_side == "CALL" else "⬇️"
+        dir_label = "BULLISH breakout" if d.breach_side == "CALL" else "BEARISH breakdown"
+        wall_label = "call wall" if d.breach_side == "CALL" else "put wall"
 
         lines += [
-            f"  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-            f"  ⚔️ <b>SKEW FADE — {d.fade_direction} CREDIT SPREAD</b>  "
-            f"[3/3]",
-            f"  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-            f"  Exhaust:  {panic_arrow} <b>{d.panic_direction}</b> panic burning out "
-            f"[<b>{d.exhaustion_confidence}</b>]",
-            f"  Wall:     {fade_arrow} SR at <code>{d.sr_level:.0f}</code> "
-            f"(<code>{d.sr_proximity_pct:.2f}%</code> away) | "
-            f"Candle: <i>{candle_label}</i>",
-            f"  PCR Trap: {pcr_label}",
-            f"  Trade:    Sell {d.panic_direction.lower()} side → "
-            f"<b>{d.fade_direction}</b> credit spread",
-            f"  ⏱ Mode: <i>{_mode_tag(d.mode)}</i>",
+            f"  {dir_arrow} <b>GEX WALL BREACH — {dir_label}</b>",
+            f"  🧱 Breached {wall_label}: <code>{d.breached_strike:.0f}</code>",
+            f"  📍 Spot:    <code>{d.spot:.2f}</code>  "
+            f"(<code>{d.spot_beyond_pct:.2f}%</code> beyond wall)",
+            f"  📉 Dealer GEX at strike: "
+            f"<code>{d.gex_prev_cycle:+.1f} Cr</code> → "
+            f"<code>{d.gex_at_strike:+.1f} Cr</code>  "
+            f"(dropped <b>{d.gex_drop_pct:.0f}%</b> — dealers stopped defending)",
+        ]
+    return lines
+
+
+@MessageFormatter.register("GEX_IMBALANCE")
+def _fmt_gex_imbalance(data, trend):
+    """
+    GEX_IMBALANCE — CE or PE gamma dominance creating a persistent directional headwind.
+    """
+    items = data if isinstance(data, list) else [data]
+    lines = []
+    for d in items:
+        if d.dominant_side == "CE":
+            dir_emoji = "🔴"
+            headwind = "dealers must SELL every rally aggressively (bearish headwind)"
+        else:
+            dir_emoji = "🟢"
+            headwind = "dealers must BUY every dip aggressively (bullish floor)"
+
+        mag_emoji = {"MODERATE": "⚠️", "STRONG": "🔥", "EXTREME": "💥"}.get(d.magnitude, "")
+
+        lines += [
+            f"  {dir_emoji} <b>GEX IMBALANCE</b> — {mag_emoji} {d.magnitude}",
+            f"  📊 CE GEX: <code>{d.gex_ce:.0f} Cr</code>  "
+            f"PE GEX: <code>{d.gex_pe:.0f} Cr</code>  "
+            f"Ratio: <b>{d.imbalance_ratio:.1f}x</b> ({d.dominant_side} dominant)",
+            f"  ⚡ {headwind}",
         ]
     return lines

@@ -64,6 +64,7 @@ help:
 	@echo "    server-logs-follow  Live-follow stock_monitor.log on server"
 	@echo "    server-status       Show stock_analysis.service status"
 	@echo "    server-restart      Restart stock_analysis.service"
+	@echo "    server-stop         Stop stock_analysis.service"
 	@echo "    server-pull         git pull on server repo"
 	@echo "    server-df           Disk usage on server"
 	@echo "    update-enctoken     Update ZERODHA_ENC_TOKEN on server .env:"
@@ -281,6 +282,10 @@ server-status:
 .PHONY: server-restart
 server-restart:
 	ssh $(SERVER) "sudo systemctl restart stockanalysis.service"
+
+.PHONY: server-stop
+server-stop:
+	ssh $(SERVER) "sudo systemctl stop stockanalysis.service"
 
 .PHONY: server-pull
 server-pull:
