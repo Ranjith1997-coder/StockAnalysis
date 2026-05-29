@@ -20,6 +20,15 @@ ENV_OPTIONS_SOURCE      = "OPTIONS_SOURCE"         # "zerodha" (default) or "sen
 # SENSEX uses BFO segment on Zerodha (BSE derivatives); NIFTY/BANKNIFTY use NFO (NSE derivatives).
 LIVE_OPTIONS_INDICES = ["NIFTY", "BANKNIFTY", "SENSEX"]
 
+# Lot sizes per index for GEX computation (gamma × OI × lot_size × spot²/100).
+# Used by GEXAnalyser. Fallback = 1 (relative GEX, not absolute) for unknown symbols.
+INDEX_LOT_SIZES = {
+    "NIFTY":     75,
+    "BANKNIFTY": 15,
+    "SENSEX":    10,
+    "FINNIFTY":  40,
+}
+
 # Indices excluded from all analysis (fetch + orchestrator).
 # INDIA_VIX — volatility index, has no options chain; Sensibull API returns 500 for it.
 # FINNIFTY  — Sensibull insights API returns 500; low retail relevance.
@@ -34,6 +43,7 @@ ENV_NO_OF_STOCKS = "NO_OF_STOCKS"
 ENV_NO_OF_INDEX  = "NO_OF_INDEX"
 ENV_DEV_MAX_CYCLES = "DEV_MAX_CYCLES"        # Max intraday loop cycles in dev mode (0 = unlimited)
 ENV_DEV_LOOP_WAIT  = "DEV_LOOP_WAIT_TIME"    # Seconds to sleep between dev cycles (-1 = use production wait time)
+ENV_THREAD_POOL_WORKERS = "THREAD_POOL_WORKERS"  # Number of worker threads in the analysis pool (default: 20)
 
 
 #DEV_CONSTANTS
@@ -41,6 +51,10 @@ ENV_DEV_LOOP_WAIT  = "DEV_LOOP_WAIT_TIME"    # Seconds to sleep between dev cycl
 # in dev mode (e.g. NO_OF_STOCKS=5). -1 means no limit (all loaded).
 NO_OF_STOCKS = int(os.environ.get(ENV_NO_OF_STOCKS, -1))
 NO_OF_INDEX  = int(os.environ.get(ENV_NO_OF_INDEX,  -1))
+# Worker threads for the per-stock analysis ThreadPoolExecutor.
+# Optimal for I/O-bound workload (90% network wait): 20 on i5-6200U (4 hw-threads).
+# Raise to 32 for larger FnO universes; lower to 12 if Sensibull 429s are observed.
+THREAD_POOL_WORKERS = int(os.environ.get(ENV_THREAD_POOL_WORKERS, "20"))
 
 
 #INTRADAY CONSTANTS
@@ -177,6 +191,13 @@ ANALYSIS_WEIGHTS = {
     "SKEW_FADE_SETUP":   0,  # Directional credit spread — panic exhaustion at OI wall
     "GAMMA_TRAP":        0,  # Kill-switch — close short positions, directional breach
 
+    # GEX (Gamma Exposure) signals — GEXAnalyser
+    "GEX_REGIME":         0,   # Positive/negative gamma regime — informational (excluded from score)
+    "GEX_FLIP_PROXIMITY": 16,  # Spot near GEX zero-crossing — regime change imminent
+    "GEX_WALL":           15,  # Gamma concentration wall — sticky price level
+    "GEX_WALL_BREACH":    18,  # Wall broken + dealer GEX dropped — confirmed directional
+    "GEX_IMBALANCE":      13,  # CE/PE gamma dominance imbalance (>2.5x ratio)
+
     # Price Levels
     "52-week-high": 8,
     "52-week-low": 8,
@@ -228,6 +249,7 @@ TECHNICAL_ANALYSES = {"RSI", "MACD", "EMA_CROSSOVER",
                       "Triple_candle_continuation_pattern",
                       "SUPERTREND", "RSI_DIVERGENCE", "STOCHASTIC", "OBV", "PIVOT_POINTS"}
 OPTIONS_ANALYSES = {"MAX_PAIN", "MAX_PAIN_TREND", "MAX_PAIN_ALIGNMENT",
+                    "GEX_FLIP_PROXIMITY", "GEX_WALL", "GEX_WALL_BREACH", "GEX_IMBALANCE",
                     "PCR_EXTREME", "PCR_BIAS", "PCR_TREND", "PCR_INTRADAY_TREND",
                     "PCR_REVERSAL", "PCR_POS_REVERSAL", "PCR_DIVERGENCE",
                     "IV_SPIKE", "IV_TREND", "IV_RANK", "IV_RANK_EXTREME",
@@ -260,6 +282,9 @@ NEUTRAL_EXCLUDE_FROM_SCORE = {
     "SKEW_FADE_SETUP",
     "GAMMA_TRAP",
     "GAMMA_TRAP_ACTIVE",    # Boolean suppression flag written by Gamma Trap
+    # GEX regime is purely informational — the directional signals (GEX_WALL_BREACH,
+    # GEX_FLIP_PROXIMITY) score normally; regime context does not.
+    "GEX_REGIME",
 }
 
 # NEUTRAL signals that SHOULD contribute to score (informational but valuable)

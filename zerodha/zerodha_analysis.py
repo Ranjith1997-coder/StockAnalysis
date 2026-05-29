@@ -239,6 +239,15 @@ class ZerodhaTickerManager:
             parent.recompute_options_aggregate(spot_price=spot)
             self._last_aggregate_time[info.parent_symbol] = now
 
+            agg = parent.options_aggregate
+            logger.debug(
+                f"[ZerodhaWS] {info.parent_symbol} aggregate updated — "
+                f"strikes={len(parent.options_live)}, spot={spot}, "
+                f"pcr={agg.get('live_pcr', 0):.3f}, "
+                f"atm_strike={agg.get('atm_strike')}, "
+                f"straddle={agg.get('atm_straddle_premium', 0):.1f}"
+            )
+
             # Real-time options analysis (only when engine is enabled)
             if self.live_options_engine and spot:
                 self.live_options_engine.on_aggregate_updated(parent, spot)
@@ -333,6 +342,81 @@ class ZerodhaTickerManager:
                 logger.info(f"Subscribed {len(subscribe_tokens)} option tokens for {parent_symbol}")
             except Exception as e:
                 logger.error(f"Error subscribing options for {parent_symbol}: {e}")
+
+    # ─── Live Options Subscription ────────────────────────────────────
+
+    def subscribe_live_options(self, wait_for_ticks: bool = True) -> None:
+        """Subscribe Zerodha option tokens for all LIVE_OPTIONS_INDICES.
+
+        Replaces the old ``_subscribe_registered_options`` helper in
+        ``notification/commands/account.py``.  Can be called from any context
+        — init auto-connect, Telegram bot, or live_options_analysis — without
+        importing from the notification module.
+
+        Args:
+            wait_for_ticks: When True (default) sleeps 2 s so that the first
+                            index tick with spot price has time to arrive.
+                            Pass False when spot prices are already available.
+        """
+        from common.token_registry import TokenType, OptionZone
+        from common.constants import LIVE_OPTIONS_INDICES
+        from common.logging_util import logger
+        from notification.Notification import TELEGRAM_NOTIFICATIONS
+
+        registry = shared.app_ctx.token_registry
+        if registry is None:
+            logger.warning("[subscribe_live_options] token_registry not initialised, skip")
+            return
+
+        if wait_for_ticks:
+            import time as _time
+            _time.sleep(2)  # wait for first index tick with spot price
+
+        total_option_tokens = 0
+        option_lines = []
+
+        for token, index_obj in shared.app_ctx.index_token_obj_dict.items():
+            symbol = index_obj.stock_symbol
+
+            if symbol not in LIVE_OPTIONS_INDICES:
+                continue
+
+            option_tokens = registry.get_tokens_by_type(symbol, TokenType.OPTION)
+            if not option_tokens:
+                logger.warning(f"[subscribe_live_options] no option tokens registered for {symbol}")
+                continue
+
+            spot = index_obj.zerodha_data.get("last_price") or index_obj.ltp
+            if not spot or spot <= 0:
+                logger.warning(f"[subscribe_live_options] no spot price for {symbol}, skipping")
+                continue
+
+            self.subscribe_options_for_symbol(symbol, spot)
+            logger.info(f"[subscribe_live_options] option subscription initiated for {symbol} at spot {spot:.0f}")
+
+            subscribed_count = sum(
+                len(registry.get_option_tokens_by_zone(symbol, zone))
+                for zone in OptionZone
+            )
+            total_option_tokens += subscribed_count
+            option_lines.append(f"  {symbol}: {subscribed_count} tokens (spot {spot:.0f})")
+
+        index_count  = len(shared.app_ctx.index_token_obj_dict)
+        equity_count = len(shared.app_ctx.stock_token_obj_dict)
+        base_count   = index_count + (0 if self.index_only_mode else equity_count)
+        total        = base_count + total_option_tokens
+
+        mode_note = "index-only" if self.index_only_mode else f"{equity_count} equity + {index_count} index"
+        summary_lines = [
+            "WebSocket connected",
+            f"Base: {base_count} ({mode_note})",
+            f"Options: {total_option_tokens}",
+        ]
+        summary_lines.extend(option_lines)
+        summary_lines.append(f"Total: {total} / 500")
+
+        TELEGRAM_NOTIFICATIONS.send_notification("\n".join(summary_lines))
+        logger.info(f"[subscribe_live_options] subscription complete — total {total} tokens")
 
     # ─── Notification ──────────────────────────────────────────────────
 

@@ -64,7 +64,7 @@ class SensibullFetcher:
             url = self._INSIGHTS_URL.format(symbol=encoded)
             logger.info(f"Fetching Sensibull data for {stock.stock_symbol} from {url}")
 
-            response = requests.get(url, timeout=10)
+            response = requests.get(url, timeout=(5, 10))  # (connect_timeout, read_timeout)
             response.raise_for_status()
             data = response.json()
 
@@ -187,7 +187,7 @@ class SensibullFetcher:
             logger.info(
                 f"Fetching Sensibull OI chain for {stock.stock_symbol} ({mode})"
             )
-            response = requests.post(self._OI_CHAIN_URL, json=request_body, timeout=15)
+            response = requests.post(self._OI_CHAIN_URL, json=request_body, timeout=(5, 15))  # (connect_timeout, read_timeout)
             response.raise_for_status()
             data = response.json()
 
@@ -285,7 +285,7 @@ class SensibullFetcher:
             url = self._IV_CHART_URL.format(symbol=encoded)
             logger.info(f"[IV_CHART] Fetching IV chart for {stock.stock_symbol} from {url}")
 
-            response = requests.get(url, timeout=15)
+            response = requests.get(url, timeout=(5, 15))  # (connect_timeout, read_timeout)
             response.raise_for_status()
             data = response.json()
 
@@ -442,7 +442,7 @@ class SensibullFetcher:
                 f"[OI_HISTORY] Fetching daily OI history for {stock.stock_symbol} "
                 f"(options_expiry={nearest_options_expiry} futures_expiry={futures_expiry})"
             )
-            response = requests.post(self._OI_HISTORY_URL, json=payload, timeout=20)
+            response = requests.post(self._OI_HISTORY_URL, json=payload, timeout=(5, 20))  # (connect_timeout, read_timeout)
             response.raise_for_status()
             data = response.json()
 

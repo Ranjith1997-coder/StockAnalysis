@@ -36,14 +36,19 @@ import common.shared as shared
 # ── Output namedtuples (module-level: not recreated on every call) ────────────
 
 RANGE_BOUND_SETUP_NT = namedtuple("RangeBoundSetup", [
-    "conditions_met",    # int : number of conditions that fired (4 or 5)
+    "conditions_met",    # int : number of conditions that fired (out of 6)
     "conditions_detail", # list[str] : human-readable names of fired conditions
     "iv_percentile",     # float | None : IVP from IV_RANK_EXTREME or IV_RANK
+    "iv_trigger",        # str | None : "IV_RANK" | "IV_PREMIUM" — which signal fired R1
+    "iv_hv_ratio",       # float | None : IV/HV ratio (only when iv_trigger="IV_PREMIUM")
+    "iv_premium_pct",    # float | None : IV premium % above HV (only when iv_trigger="IV_PREMIUM")
     "put_wall_strike",   # float | None : nearest put wall strike (floor)
     "call_wall_strike",  # float | None : nearest call wall strike (ceiling)
     "max_pain_dev_pct",  # float | None : spot % deviation from max pain
     "setup_type",        # str : "IRON_CONDOR" (both walls) | "STRANGLE"
     "mode",              # str : app_ctx.mode.value
+    "gex_supports",      # bool : True when GEX regime is POSITIVE + MODERATE/STRONG
+    "triggers",          # dict[str, str] : {condition_name: metric_string} for fired conditions
 ])
 
 SKEW_FADE_SETUP_NT = namedtuple("SkewFadeSetup", [
@@ -56,6 +61,7 @@ SKEW_FADE_SETUP_NT = namedtuple("SkewFadeSetup", [
     "candle_key",            # str : analysis key of the confirming candle pattern
     "pcr_signal",            # str : which PCR key confirmed ("PCR_REVERSAL" etc.)
     "mode",                  # str
+    "triggers",              # dict[str, str] : {condition_name: metric_string}
 ])
 
 GAMMA_TRAP_NT = namedtuple("GammaTrap", [
@@ -65,6 +71,7 @@ GAMMA_TRAP_NT = namedtuple("GammaTrap", [
     "breach_signal",     # str : "OI_CAPITULATION" | "OI_WALL_MIGRATION"
     "volume_signal",     # str : "VOLUME_BREAKOUT" | "VOLUME_CLIMAX" | None
     "mode",              # str
+    "triggers",          # dict[str, str] : {condition_name: metric_string}
 ])
 
 
@@ -194,10 +201,11 @@ class OptionSellerCompositeAnalyser(BaseAnalyzer):
         """
         try:
             logger.debug(f"[GAMMA_TRAP] {stock.stock_symbol} — start")
-            conditions:  list[str] = []
+            conditions:   list[str] = []
+            triggers:     dict[str, str] = {}
             breach_signal: str | None = None
             volume_signal: str | None = None
-            direction:     str | None = None  # direction of the move
+            direction:     str | None = None
 
             # ── G1: Wall Breach ───────────────────────────────────────────────
             # OI_CAPITULATION: either side unwinding = directional clearing
@@ -206,12 +214,18 @@ class OptionSellerCompositeAnalyser(BaseAnalyzer):
             if self._any(cap_bull) or self._any(cap_bear):
                 conditions.append("OI_CAPITULATION")
                 breach_signal = "OI_CAPITULATION"
-                # Direction = toward the capitulating side
-                # CALL capitulation (unwinding) → bullish move; PUT cap → bearish
                 cap_data = cap_bull or cap_bear
                 items = cap_data if isinstance(cap_data, list) else [cap_data]
                 side = getattr(items[0], "side", "CALL") if items else "CALL"
                 direction = "BULLISH" if side == "CALL" else "BEARISH"
+                unwound_pct = getattr(items[0], "unwound_pct", None)
+                top_strikes = getattr(items[0], "top_strikes", [])
+                metric = f"{side} OI unwound"
+                if unwound_pct is not None:
+                    metric += f" {unwound_pct:.0f}%"
+                if top_strikes:
+                    metric += f" near {top_strikes[0]}"
+                triggers["G1 Wall Breach"] = metric
             else:
                 # OI_WALL_MIGRATION with an actual shift (not RETREAT) is a proxy breach
                 for sentiment in ("BULLISH", "BEARISH"):
@@ -228,12 +242,44 @@ class OptionSellerCompositeAnalyser(BaseAnalyzer):
                             conditions.append("OI_WALL_MIGRATION(CALL_HIGHER)")
                             breach_signal = "OI_WALL_MIGRATION"
                             direction = "BULLISH"
+                            mpts = getattr(m, "migration_pts", None)
+                            triggers["G1 Wall Breach"] = f"CALL wall migrated HIGHER" + (f" +{mpts:.0f}pts" if mpts else "")
                             break
                         elif side == "PUT" and mdir == "LOWER":
                             conditions.append("OI_WALL_MIGRATION(PUT_LOWER)")
                             breach_signal = "OI_WALL_MIGRATION"
                             direction = "BEARISH"
+                            mpts = getattr(m, "migration_pts", None)
+                            triggers["G1 Wall Breach"] = f"PUT wall migrated LOWER" + (f" {mpts:.0f}pts" if mpts else "")
                             break
+                    if breach_signal:
+                        break
+
+            # GEX_WALL_BREACH: dealer GEX confirmed drop — additive G1 confirmation.
+            # Direction inferred from breach_side (CALL breach → bullish, PUT breach → bearish).
+            if not breach_signal:
+                for sentiment in ("BULLISH", "BEARISH"):
+                    gex_breach = self._get(stock, sentiment, "GEX_WALL_BREACH")
+                    if self._any(gex_breach):
+                        items = gex_breach if isinstance(gex_breach, list) else [gex_breach]
+                        for b in items:
+                            bside = getattr(b, "breach_side", "")
+                            if bside == "CALL":
+                                conditions.append("GEX_WALL_BREACH(CALL)")
+                                breach_signal = "GEX_WALL_BREACH"
+                                direction = "BULLISH"
+                                drop = getattr(b, "gex_drop_pct", None)
+                                strike = getattr(b, "breached_strike", None)
+                                triggers["G1 Wall Breach"] = f"GEX CALL wall {strike:.0f} broken" + (f", dealer GEX dropped {drop:.0f}%" if drop else "")
+                            elif bside == "PUT":
+                                conditions.append("GEX_WALL_BREACH(PUT)")
+                                breach_signal = "GEX_WALL_BREACH"
+                                direction = "BEARISH"
+                                drop = getattr(b, "gex_drop_pct", None)
+                                strike = getattr(b, "breached_strike", None)
+                                triggers["G1 Wall Breach"] = f"GEX PUT wall {strike:.0f} broken" + (f", dealer GEX dropped {drop:.0f}%" if drop else "")
+                            if breach_signal:
+                                break
                     if breach_signal:
                         break
 
@@ -244,13 +290,21 @@ class OptionSellerCompositeAnalyser(BaseAnalyzer):
             # ── G2: Volume Surge ──────────────────────────────────────────────
             # Check in the direction of the move first, then either direction
             for sentiment in (direction, "BULLISH", "BEARISH"):
-                if self._any(self._get(stock, sentiment, "VOLUME_BREAKOUT")):
+                vb = self._get(stock, sentiment, "VOLUME_BREAKOUT")
+                if self._any(vb):
                     conditions.append("VOLUME_BREAKOUT")
                     volume_signal = "VOLUME_BREAKOUT"
+                    vb_item = (vb[0] if isinstance(vb, list) else vb)
+                    ratio = getattr(vb_item, "volume_ratio", None)
+                    triggers["G2 Volume"] = "BREAKOUT" + (f" {ratio:.1f}× avg" if ratio else "")
                     break
-                if self._any(self._get(stock, sentiment, "VOLUME_CLIMAX")):
+                vc = self._get(stock, sentiment, "VOLUME_CLIMAX")
+                if self._any(vc):
                     conditions.append("VOLUME_CLIMAX")
                     volume_signal = "VOLUME_CLIMAX"
+                    vc_item = (vc[0] if isinstance(vc, list) else vc)
+                    ratio = getattr(vc_item, "volume_ratio", None)
+                    triggers["G2 Volume"] = "CLIMAX" + (f" {ratio:.1f}× avg" if ratio else "")
                     break
 
             # ── G3: Futures Fuel ──────────────────────────────────────────────
@@ -265,15 +319,25 @@ class OptionSellerCompositeAnalyser(BaseAnalyzer):
             fut_found = False
             keys_to_check = fut_keys_bullish if direction == "BULLISH" else fut_keys_bearish
             for key in keys_to_check:
-                if self._any(self._get(stock, direction, key)):
+                fd = self._get(stock, direction, key)
+                if self._any(fd):
                     conditions.append(f"FUTURES({key})")
                     fut_found = True
+                    fd_item = (fd[0] if isinstance(fd, list) else fd)
+                    oi_pct = getattr(fd_item, "oi_percentage", None) or getattr(fd_item, "oi_change_pct", None)
+                    label = key.replace("FUTURE_BREAKOUT_", "").replace("FUTURE_ACTION_", "").replace("_", " ").title()
+                    triggers["G3 Futures"] = label + (f" OI +{oi_pct:.1f}%" if oi_pct else "")
                     break
 
             # ── G4: Volatility Expansion ──────────────────────────────────────
-            iv_found = self._any(self._get(stock, "NEUTRAL", "IV_SPIKE"))
+            iv_data = self._get(stock, "NEUTRAL", "IV_SPIKE")
+            iv_found = self._any(iv_data)
             if iv_found:
                 conditions.append("IV_SPIKE")
+                iv_item = (iv_data[0] if isinstance(iv_data, list) else iv_data)
+                iv_val = getattr(iv_item, "atm_iv", None) or getattr(iv_item, "iv", None)
+                iv_chg = getattr(iv_item, "atm_iv_change", None) or getattr(iv_item, "iv_change", None)
+                triggers["G4 IV Spike"] = "IV spike" + (f" ATM IV {iv_val:.1f}" if iv_val else "") + (f" (+{iv_chg:.1f})" if iv_chg else "")
 
             # ── Gate: 3/4 required ────────────────────────────────────────────
             count = len(conditions)
@@ -292,6 +356,7 @@ class OptionSellerCompositeAnalyser(BaseAnalyzer):
                 breach_signal=breach_signal,
                 volume_signal=volume_signal,
                 mode=mode_label,
+                triggers=triggers,
             )
             stock.set_analysis("NEUTRAL", "GAMMA_TRAP", result)
 
@@ -345,8 +410,12 @@ class OptionSellerCompositeAnalyser(BaseAnalyzer):
 
             logger.debug(f"[RANGE_BOUND] {stock.stock_symbol} — start")
 
-            conditions:   list[str] = []
+            conditions:    list[str] = []
+            triggers:      dict[str, str] = {}
             iv_percentile: float | None = None
+            iv_trigger:    str | None = None
+            iv_hv_ratio:   float | None = None
+            iv_premium_pct: float | None = None
             put_wall_strike:  float | None = None
             call_wall_strike: float | None = None
             max_pain_dev:     float | None = None
@@ -363,6 +432,12 @@ class OptionSellerCompositeAnalyser(BaseAnalyzer):
                         if cat in ("VERY_HIGH", "HIGH") or (ivp is not None and ivp > 70):
                             ivp_ok = True
                             iv_percentile = ivp
+                            iv_trigger = key
+                            atm_iv = getattr(i, "atm_iv", None)
+                            metric = f"IVP {ivp:.0f}th percentile ({cat})" if ivp else cat
+                            if atm_iv:
+                                metric += f" ATM IV {atm_iv:.1f}"
+                            triggers["R1 IV"] = metric
                             break
                 if ivp_ok:
                     break
@@ -372,8 +447,22 @@ class OptionSellerCompositeAnalyser(BaseAnalyzer):
                 if iv_prem:
                     items = iv_prem if isinstance(iv_prem, list) else [iv_prem]
                     for i in items:
-                        if getattr(i, "zone", "") in ("EXPENSIVE", "EXTREME"):
+                        zone = getattr(i, "zone", "")
+                        if zone in ("EXPENSIVE", "EXTREME"):
                             ivp_ok = True
+                            iv_trigger = "IV_PREMIUM"
+                            iv_hv_ratio = getattr(i, "iv_hv_ratio", None)
+                            iv_premium_pct = getattr(i, "iv_premium_pct", None)
+                            atm_iv = getattr(i, "atm_iv", None)
+                            hv = getattr(i, "hv", None)
+                            metric = f"{zone}"
+                            if iv_hv_ratio:
+                                metric += f" IV/HV {iv_hv_ratio:.2f}x"
+                            if iv_premium_pct:
+                                metric += f" ({iv_premium_pct:.0f}% above HV)"
+                            if atm_iv and hv:
+                                metric += f" ATM IV {atm_iv:.1f} vs HV {hv:.1f}"
+                            triggers["R1 IV"] = metric
                             break
 
             if ivp_ok:
@@ -447,6 +536,9 @@ class OptionSellerCompositeAnalyser(BaseAnalyzer):
             both_walls = has_floor and has_ceiling
             if both_walls:
                 conditions.append("CEILING_AND_FLOOR")
+                wall_metric = f"Put floor {put_wall_strike:.0f} / Call ceiling {call_wall_strike:.0f}" \
+                    if put_wall_strike and call_wall_strike else "both walls present"
+                triggers["R2 OI Walls"] = wall_metric
 
             logger.debug(
                 f"[RANGE_BOUND] {stock.stock_symbol} | R2 WALLS "
@@ -468,6 +560,7 @@ class OptionSellerCompositeAnalyser(BaseAnalyzer):
             neutral_momentum = not vol_breakout_present and not rsi_div_present
             if neutral_momentum:
                 conditions.append("NEUTRAL_MOMENTUM")
+                triggers["R3 Momentum"] = "no volume breakout, no RSI divergence"
             logger.debug(
                 f"[RANGE_BOUND] {stock.stock_symbol} | R3 NEUTRAL_MOMENTUM={neutral_momentum} "
                 f"vol_breakout={vol_breakout_present} rsi_div={rsi_div_present}"
@@ -488,6 +581,7 @@ class OptionSellerCompositeAnalyser(BaseAnalyzer):
             no_instit_push = not long_buildup_present and not short_buildup_present
             if no_instit_push:
                 conditions.append("NO_INSTIT_PUSH")
+                triggers["R4 Futures"] = "no long/short buildup detected"
             logger.debug(
                 f"[RANGE_BOUND] {stock.stock_symbol} | R4 NO_INSTIT_PUSH={no_instit_push} "
                 f"long_buildup={long_buildup_present} short_buildup={short_buildup_present}"
@@ -511,16 +605,41 @@ class OptionSellerCompositeAnalyser(BaseAnalyzer):
                     break
             if mp_ok:
                 conditions.append("MAX_PAIN_MAGNET")
+                direction_word = "above" if (max_pain_dev or 0) > 0 else "below"
+                mp_metric = f"{abs(max_pain_dev):.1f}% {direction_word} max pain" if max_pain_dev is not None else "within gravity zone"
+                triggers["R5 MaxPain"] = mp_metric
             logger.debug(
                 f"[RANGE_BOUND] {stock.stock_symbol} | R5 MAX_PAIN_MAGNET={mp_ok} "
                 f"dev={max_pain_dev}"
             )
 
-            # ── Gate: 4/5 required ────────────────────────────────────────────
+            # ── R6: GEX Supports Range ────────────────────────────────────────
+            # Positive GEX (MODERATE or STRONG) means dealers are long gamma —
+            # they actively dampen moves, creating the ideal premium-selling environment.
+            gex_supports = False
+            gex_regime_data = self._get(stock, "NEUTRAL", "GEX_REGIME")
+            if gex_regime_data:
+                items = gex_regime_data if isinstance(gex_regime_data, list) else [gex_regime_data]
+                for g in items:
+                    if (getattr(g, "regime", "") == "POSITIVE"
+                            and getattr(g, "magnitude", "") in ("MODERATE", "STRONG")):
+                        gex_supports = True
+                        break
+            if gex_supports:
+                conditions.append("GEX_POSITIVE_REGIME")
+                gex_data = gex_regime_data if not isinstance(gex_regime_data, list) else gex_regime_data[0]
+                gex_total = getattr(gex_data, "gex_total", None)
+                gex_mag = getattr(gex_data, "magnitude", "")
+                triggers["R6 GEX"] = f"POSITIVE {gex_mag}" + (f" ({gex_total:+.0f} Cr)" if gex_total is not None else "")
+            logger.debug(
+                f"[RANGE_BOUND] {stock.stock_symbol} | R6 GEX_POSITIVE_REGIME={gex_supports}"
+            )
+
+            # ── Gate: 4/6 required (threshold unchanged, R6 adds confidence) ──
             count = len(conditions)
             logger.debug(
                 f"[RANGE_BOUND] {stock.stock_symbol} | "
-                f"conditions={count}/5 — {conditions}"
+                f"conditions={count}/6 — {conditions}"
             )
             if count < self.RANGE_BOUND_MIN_CONDITIONS:
                 return False
@@ -533,19 +652,24 @@ class OptionSellerCompositeAnalyser(BaseAnalyzer):
                 conditions_met=count,
                 conditions_detail=conditions,
                 iv_percentile=iv_percentile,
+                iv_trigger=iv_trigger,
+                iv_hv_ratio=iv_hv_ratio,
+                iv_premium_pct=iv_premium_pct,
                 put_wall_strike=put_wall_strike,
                 call_wall_strike=call_wall_strike,
                 max_pain_dev_pct=max_pain_dev,
                 setup_type=setup_type,
                 mode=self._mode_label(),
+                gex_supports=gex_supports,
+                triggers=triggers,
             )
             stock.set_analysis("NEUTRAL", "RANGE_BOUND_SETUP", result)
             self._set_priority_override(stock, NotificationPriority.HIGH)
 
             logger.info(
                 f"[RANGE_BOUND] {stock.stock_symbol} — FIRED {setup_type} "
-                f"({count}/5) walls=[{put_wall_strike}, {call_wall_strike}] "
-                f"ivp={iv_percentile} mp_dev={max_pain_dev}"
+                f"({count}/6) walls=[{put_wall_strike}, {call_wall_strike}] "
+                f"ivp={iv_percentile} mp_dev={max_pain_dev} gex_supports={gex_supports}"
             )
             return True
 
@@ -729,6 +853,27 @@ class OptionSellerCompositeAnalyser(BaseAnalyzer):
             )
 
             # ── All 3 conditions met ──────────────────────────────────────────
+            _candle_labels = {
+                "Double_candle_stick_pattern":    "Engulfing/Piercing",
+                "Single_candle_reversal_pattern": "Hammer/Shooting Star",
+                "Triple_candle_stick_pattern":    "Morning/Evening Star",
+                "Triple_candle_reversal_pattern": "Triple reversal",
+            }
+            _pcr_labels = {
+                "PCR_REVERSAL":       "PCR zone crossover",
+                "PCR_POS_REVERSAL":   "PCR 3-day reversal",
+                "PCR_INTRADAY_TREND": "PCR intraday trend",
+            }
+            ex_ivp = getattr(ex_item, "iv_percentile", None)
+            triggers = {
+                "S1 Exhaustion": f"{panic_direction} panic {exhaustion_conf} confidence"
+                    + (f" (IVP {ex_ivp:.0f}th)" if ex_ivp else ""),
+                "S2 SR Wall": f"OI wall {test_strike:.0f}, {proximity_pct:.2f}% away, "
+                    + _candle_labels.get(confirming_candle, confirming_candle),
+                "S3 PCR Trap": _pcr_labels.get(pcr_reversal_key, pcr_reversal_key)
+                    + f" in {fade_direction}",
+            }
+
             result = SKEW_FADE_SETUP_NT(
                 conditions_met=3,
                 fade_direction=fade_direction,
@@ -739,6 +884,7 @@ class OptionSellerCompositeAnalyser(BaseAnalyzer):
                 candle_key=confirming_candle,
                 pcr_signal=pcr_reversal_key,
                 mode=self._mode_label(),
+                triggers=triggers,
             )
             stock.set_analysis("NEUTRAL", "SKEW_FADE_SETUP", result)
             self._set_priority_override(stock, NotificationPriority.HIGH)
