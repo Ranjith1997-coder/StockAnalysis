@@ -238,11 +238,19 @@ class TokenRegistry:
                         ws_mode = ZONE_TO_WS_MODE[new_zone]
                         mode_changes.setdefault(ws_mode, []).append(token)
 
-        logger.info(
+        n_sub  = len(new_subscribe)
+        n_unsub = len(unsubscribe)
+        n_mode = sum(len(v) for v in mode_changes.values())
+        msg = (
             f"[TokenRegistry] Recentered {parent_symbol}: ATM {old_atm} → {new_atm}, "
-            f"+{len(new_subscribe)} subscribe, -{len(unsubscribe)} unsubscribe, "
-            f"{sum(len(v) for v in mode_changes.values())} mode changes"
+            f"+{n_sub} subscribe, -{n_unsub} unsubscribe, {n_mode} mode changes"
         )
+        # Downgrade to debug when no tokens actually changed — avoids log spam
+        # when spot oscillates across a strike boundary without moving the zone window.
+        if n_sub or n_unsub or n_mode:
+            logger.info(msg)
+        else:
+            logger.debug(msg)
         return new_subscribe, unsubscribe, mode_changes
 
     def initial_subscribe_options(

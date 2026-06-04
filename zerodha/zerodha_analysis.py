@@ -18,7 +18,7 @@ class ZerodhaTickerManager:
     # Aggregate recomputation throttle (seconds)
     AGGREGATE_INTERVAL = 1.0
     # How much spot must move (in strikes) before re-centering option subscriptions
-    RECENTER_THRESHOLD_STRIKES = 1
+    RECENTER_THRESHOLD_STRIKES = 2  # recenter only after 2-strike ATM move (avoids boundary oscillation)
 
     def __init__(self, userName, password, encToken):
         self.username = userName
@@ -489,3 +489,10 @@ class ZerodhaTickerManager:
     def on_reconnect(self, ws, attempts_count):
         self.reconnect_attempts = attempts_count
         logger.info(f"Reconnected to Zerodha WebSocket. Attempt: {self.reconnect_attempts}")
+        # Re-subscribe option tokens — on_connect only restores base (equity/index) tokens.
+        # Options subscriptions are lost on disconnect and must be re-established.
+        if self.live_options_engine is not None:
+            import threading
+            def _resubscribe():
+                self.subscribe_live_options(wait_for_ticks=True)
+            threading.Thread(target=_resubscribe, name="ws-resubscribe", daemon=True).start()
