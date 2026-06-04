@@ -313,7 +313,8 @@ def monitor(stock: Stock) -> Tuple[MonitorResult, bool, Optional[str]]:
 def process_monitor_results(results):
     for result, trend_found, message in results:
         if result == MonitorResult.NO_DATA:
-            logger.warning(message)
+            if message:
+                logger.warning(message)
         elif result == MonitorResult.ERROR:
             logger.error(f"Error during monitoring: {message}")
         elif trend_found:
@@ -1482,6 +1483,14 @@ def intraday_analysis(loop = True, loop_wait_time = 30, max_cycles = 0):
             process_monitor_results(results)
         except Exception as e:
             logger.error(f"Critical error in stock analysis: {e}")
+
+        try:
+            import psutil, os as _os
+            _proc = psutil.Process(_os.getpid())
+            _rss_mb = _proc.memory_info().rss / 1024 / 1024
+            logger.info(f"[memory] cycle={cycle} RSS={_rss_mb:.1f} MB")
+        except Exception:
+            pass
 
         # After the first cycle, spot prices are available — subscribe Zerodha option tokens.
         # Runs once only; skipped if already subscribed or if Zerodha WS is not connected.
