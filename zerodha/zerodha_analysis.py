@@ -84,7 +84,7 @@ class ZerodhaTickerManager:
             self.is_enctoken_updated = False
             return False
         finally:
-            if not self.connected:
+            if not (self._kt and self._kt.is_connected()):
                 logger.error("Failed to connect to Zerodha WebSocket after multiple attempts")
                 self.close_connection()
 
@@ -477,6 +477,47 @@ class ZerodhaTickerManager:
     def on_error(self, ws, code, reason):
         logger.error(f"Error in connection. Code: {code}, Reason: {reason}")
         self.stop_tick_processor()
+        # 403 = enctoken expired — alert and trigger a fresh login in a background thread.
+        # The auth script writes the new token to .env; the next reconnect attempt picks it up.
+        if "403" in str(reason):
+            logger.warning("[ZerodhaWS] 403 Forbidden — enctoken expired mid-session, re-authing")
+            from notification.Notification import TELEGRAM_NOTIFICATIONS
+            TELEGRAM_NOTIFICATIONS.send_notification(
+                "⚠️ <b>Zerodha WS 403 — enctoken expired</b>\n"
+                "Attempting automatic re-login via auth_login.py…",
+                parse_mode="HTML",
+            )
+            import threading
+            def _reauth():
+                try:
+                    import subprocess, sys, os
+                    script = os.path.join(os.path.dirname(os.path.dirname(__file__)), "auth", "auth_login.py")
+                    result = subprocess.run(
+                        [sys.executable, script, "--force"],
+                        capture_output=True, text=True, timeout=60,
+                    )
+                    if result.returncode == 0:
+                        logger.info("[ZerodhaWS] re-auth succeeded — new enctoken written to .env")
+                        # Reload the new token and reconnect
+                        from dotenv import load_dotenv
+                        load_dotenv(override=True)
+                        import common.constants as _c
+                        from urllib.parse import quote as _quote
+                        new_token = os.getenv(_c.ENV_ZERODHA_ENC_TOKEN, "")
+                        if new_token:
+                            self.update_enctoken(_quote(new_token, safe=""))
+                            if self.connect():
+                                logger.info("[ZerodhaWS] reconnected with fresh enctoken")
+                                self.subscribe_live_options(wait_for_ticks=True)
+                    else:
+                        logger.error(f"[ZerodhaWS] re-auth failed: {result.stderr[:200]}")
+                        TELEGRAM_NOTIFICATIONS.send_notification(
+                            "🚨 <b>Zerodha re-auth FAILED</b> — manual intervention required",
+                            parse_mode="HTML",
+                        )
+                except Exception as e:
+                    logger.error(f"[ZerodhaWS] re-auth exception: {e}")
+            threading.Thread(target=_reauth, name="ws-reauth", daemon=True).start()
 
     def on_ticks(self, ws, ticks):
         import time
@@ -489,9 +530,9 @@ class ZerodhaTickerManager:
     def on_reconnect(self, ws, attempts_count):
         self.reconnect_attempts = attempts_count
         logger.info(f"Reconnected to Zerodha WebSocket. Attempt: {self.reconnect_attempts}")
-        # Re-subscribe option tokens — on_connect only restores base (equity/index) tokens.
-        # Options subscriptions are lost on disconnect and must be re-established.
-        if self.live_options_engine is not None:
+        # Only re-subscribe options if this looks like a genuine reconnect (not a 403 loop).
+        # The 403 re-auth path in on_error handles subscription after token refresh.
+        if self.live_options_engine is not None and self._kt and self._kt.is_connected():
             import threading
             def _resubscribe():
                 self.subscribe_live_options(wait_for_ticks=True)

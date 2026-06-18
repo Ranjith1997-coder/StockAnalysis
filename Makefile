@@ -52,6 +52,7 @@ help:
 	@echo "    update-derivatives  Refresh final_derivatives_list.json from Zerodha + NSE"
 	@echo "    logs          Tail stock_monitor.log (last 50 lines)"
 	@echo "    logs-500      Tail stock_monitor.log (last 500 lines)"
+	@echo "    logs-1000     Tail stock_monitor.log (last 1000 lines)"
 	@echo "    logs-follow   Follow stock_monitor.log live"
 	@echo "    logs-grep     Grep stock_monitor.log: make logs-grep Q=RELIANCE"
 	@echo "    clean         Remove __pycache__, .pyc, pytest cache"
@@ -61,8 +62,10 @@ help:
 	@echo "    server-ssh          Open interactive SSH session"
 	@echo "    server-logs         Tail last 50 lines of stock_monitor.log on server"
 	@echo "    server-logs-500     Tail last 500 lines of stock_monitor.log on server"
+	@echo "    server-logs-1000    Tail last 1000 lines of stock_monitor.log on server"
 	@echo "    server-logs-follow  Live-follow stock_monitor.log on server"
 	@echo "    server-status       Show stock_analysis.service status"
+	@echo "    server-start        Start stock_analysis.service"
 	@echo "    server-restart      Restart stock_analysis.service"
 	@echo "    server-stop         Stop stock_analysis.service"
 	@echo "    server-pull         git pull on server repo"
@@ -230,6 +233,10 @@ logs:
 logs-500:
 	@tail -500 $(LOG_FILE) 2>/dev/null || echo "No $(LOG_FILE) found."
 
+.PHONY: logs-1000
+logs-1000:
+	@tail -1000 $(LOG_FILE) 2>/dev/null || echo "No $(LOG_FILE) found."
+
 .PHONY: logs-follow
 logs-follow:
 	@tail -f $(LOG_FILE) 2>/dev/null || echo "No $(LOG_FILE) found."
@@ -271,6 +278,10 @@ server-logs:
 server-logs-500:
 	ssh $(SERVER) "tail -500 $(SERVER_LOG)"
 
+.PHONY: server-logs-1000
+server-logs-1000:
+	ssh $(SERVER) "tail -1000 $(SERVER_LOG)"
+
 .PHONY: server-logs-follow
 server-logs-follow:
 	ssh $(SERVER) "tail -f $(SERVER_LOG)"
@@ -278,6 +289,10 @@ server-logs-follow:
 .PHONY: server-status
 server-status:
 	ssh $(SERVER) "systemctl status stockanalysis.service"
+
+.PHONY: server-start
+server-start:
+	ssh $(SERVER) "sudo systemctl start stockanalysis.service"
 
 .PHONY: server-restart
 server-restart:
