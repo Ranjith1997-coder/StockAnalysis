@@ -75,6 +75,13 @@ TELEGRAM_LIVE_OPTIONS_CHAT_ID  = os.environ.get("TELEGRAM_LIVE_OPTIONS_CHAT_ID",
 
 TELEGRAM_URL = 'https://api.telegram.org/bot'
 
+# Discord webhook URLs (alternative notification channel)
+# NOTIFICATION_CHANNEL: "telegram" | "discord" | "both" (default: telegram)
+NOTIFICATION_CHANNEL             = os.environ.get("NOTIFICATION_CHANNEL", "telegram")
+DISCORD_INTRADAY_WEBHOOK_URL     = os.environ.get("DISCORD_INTRADAY_WEBHOOK_URL", "")
+DISCORD_POSITIONAL_WEBHOOK_URL   = os.environ.get("DISCORD_POSITIONAL_WEBHOOK_URL", "")
+DISCORD_LIVE_OPTIONS_WEBHOOK_URL = os.environ.get("DISCORD_LIVE_OPTIONS_WEBHOOK_URL", "")
+
 #FILE NAMES
 DERIVATIVE_LIST_FILENAME = "final_derivatives_list.json"
 STOCK_DATA_FILENAME = "stock_data.json"
