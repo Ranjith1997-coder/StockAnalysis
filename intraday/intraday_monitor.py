@@ -469,13 +469,22 @@ def update_zerodha_option_chain(stockName = None, indexName = None):
                      f"options count: {len(index_options[index_options['expiry'] == expiry_dates[0]])}")
 
         zerodha_ctx["option_chain"]["current"] = index_options[index_options['expiry'] == expiry_dates[0]]
-        zerodha_ctx["futures_mdata"]["current"] = index_futures[index_futures['expiry'] == expiry_dates[0]]
         if len(expiry_dates) > 1:
             zerodha_ctx["option_chain"]["next"] = index_options[index_options['expiry'] == expiry_dates[1]]
-            zerodha_ctx["futures_mdata"]["next"] = index_futures[index_futures['expiry'] == expiry_dates[1]]
         else:
             logger.info(f"Index {index.stock_symbol} next expiry not available")
             zerodha_ctx["option_chain"]["next"] = pd.DataFrame()
+
+        # Futures may have different expiry cadence than options (e.g. SENSEX: weekly options,
+        # monthly futures) — use futures' own nearest expiry dates instead of option expiry dates.
+        futures_expiry_dates = sorted(index_futures['expiry'].unique())
+        if futures_expiry_dates:
+            zerodha_ctx["futures_mdata"]["current"] = index_futures[index_futures['expiry'] == futures_expiry_dates[0]]
+            zerodha_ctx["futures_mdata"]["next"] = index_futures[index_futures['expiry'] == futures_expiry_dates[1]] if len(futures_expiry_dates) > 1 else pd.DataFrame()
+        else:
+            zerodha_ctx["futures_mdata"]["current"] = pd.DataFrame()
+            zerodha_ctx["futures_mdata"]["next"] = pd.DataFrame()
+            logger.warning(f"No futures found for index {index.stock_symbol}")
 
         # Register option and futures tokens in the registry (current expiry only for live ticks)
         current_options = index_options[index_options['expiry'] == expiry_dates[0]]

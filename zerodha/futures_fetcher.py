@@ -141,7 +141,7 @@ class FuturesFetcher:
                 spot_map[day_key] = float(row.get("Close", row.get("close", 0)) or 0)
 
         futures_data_current = pd.DataFrame()
-        if futures_mdata_current is not None:
+        if futures_mdata_current is not None and not futures_mdata_current.empty:
             token = futures_mdata_current["instrument_token"].values[0]
             hist_data = _fetch_with_retry(token)
             if hist_data:
@@ -150,9 +150,11 @@ class FuturesFetcher:
                     f"Futures data for {stock.stock_symbol} (current expiry) "
                     f"fetched for {len(futures_data_current)} rows."
                 )
+            else:
+                logger.warning(f"[FuturesFetcher] No futures data returned for {stock.stock_symbol} (current expiry token={token})")
 
         futures_data_next = pd.DataFrame()
-        if is_next_expiry_required and futures_mdata_next is not None:
+        if is_next_expiry_required and futures_mdata_next is not None and not futures_mdata_next.empty:
             token_next = futures_mdata_next["instrument_token"].values[0]
             hist_data_next = _fetch_with_retry(token_next)
             if hist_data_next:
@@ -161,6 +163,8 @@ class FuturesFetcher:
                     f"Futures data for {stock.stock_symbol} (next expiry) "
                     f"fetched for {len(futures_data_next)} rows."
                 )
+            else:
+                logger.warning(f"[FuturesFetcher] No futures data returned for {stock.stock_symbol} (next expiry token={token_next})")
 
         zerodha_ctx["futures_data"]["current"] = futures_data_current
         zerodha_ctx["futures_data"]["next"] = futures_data_next
@@ -211,6 +215,10 @@ class FuturesFetcher:
                         f"C={row['close']:.2f} vol={row['volume']:,} oi={row.get('oi', 0):,} "
                         f"spot={float(row.get('underlying_price') or 0):.2f}"
                     )
+                else:
+                    logger.warning(f"[FuturesFetcher] No intraday candle matched at {dt} for {stock.stock_symbol} (current expiry token={token})")
+            else:
+                logger.warning(f"[FuturesFetcher] No intraday futures data returned for {stock.stock_symbol} (current expiry token={token}, dt={dt})")
 
         # ── Next expiry ───────────────────────────────────────────────────
         futures_data_next = zerodha_ctx["futures_data"]["next"]
@@ -225,12 +233,17 @@ class FuturesFetcher:
                     ts, interval,
                     dt_fmt="%Y-%m-%d %H:%M:%S",
                 )
+                if not hist_data_next:
+                    logger.warning(f"[FuturesFetcher] No intraday futures data returned for {stock.stock_symbol} (next expiry token={token_next}, ts={ts})")
+                    continue
                 if hist_data_next:
                     candle_next = next(
                         (c for c in hist_data_next
                          if pd.Timestamp(c["date"]).tz_convert("Asia/Kolkata") == ts),
                         None,
                     )
+                    if candle_next is None:
+                        logger.warning(f"[FuturesFetcher] No intraday candle matched at {ts} for {stock.stock_symbol} (next expiry token={token_next})")
                     if candle_next:
                         row_next = self._candle_to_row(
                             candle_next, ts, candle_next["close"]

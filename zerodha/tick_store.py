@@ -17,6 +17,8 @@ import threading
 import time
 from typing import Optional
 
+from common.logging_util import logger
+
 
 class TickStore:
     """Thread-safe container for live WebSocket tick data."""
@@ -132,6 +134,7 @@ class TickStore:
                 # Enrichment-only: only update existing strikes (Zerodha-subscribed)
                 existing = self.options_live.get(strike, {}).get(option_type)
                 if existing is None:
+                    logger.debug(f"[TickStore] Enrichment skip: strike {strike} {option_type} not in options_live (Zerodha not yet subscribed)")
                     return
                 existing.update(tick)
                 return

@@ -1,4 +1,6 @@
+import time
 from telegram.ext import ApplicationBuilder
+from telegram.error import NetworkError, TimedOut
 from common.constants import TELEGRAM_INTRADAY_TOKEN
 from common.logging_util import logger
 from notification.commands import register_all
@@ -42,7 +44,22 @@ def init_telegram_bot():
         )
         logger.info("LLM budget alert job scheduled (every 15 min)")
 
-    _application.run_polling()
+    _retry_run_polling()
+
+
+def _retry_run_polling() -> None:
+    delay = 10
+    while True:
+        try:
+            _application.run_polling()
+            return  # clean exit (stop_running() was called)
+        except (NetworkError, TimedOut) as e:
+            logger.error(f"[bot] Telegram polling network error: {e} — retrying in {delay}s")
+            time.sleep(delay)
+            delay = min(delay * 2, 300)  # cap at 5 minutes
+        except Exception as e:
+            logger.error(f"[bot] Telegram polling fatal error: {e} — not retrying")
+            return
 
 
 def stop_telegram_bot():

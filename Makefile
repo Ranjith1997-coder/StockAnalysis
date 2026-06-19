@@ -64,6 +64,7 @@ help:
 	@echo "    server-logs-500     Tail last 500 lines of stock_monitor.log on server"
 	@echo "    server-logs-1000    Tail last 1000 lines of stock_monitor.log on server"
 	@echo "    server-logs-follow  Live-follow stock_monitor.log on server"
+	@echo "    server-logs-copy    Copy stock_monitor.log from server to local logs/"
 	@echo "    server-status       Show stock_analysis.service status"
 	@echo "    server-start        Start stock_analysis.service"
 	@echo "    server-restart      Restart stock_analysis.service"
@@ -285,6 +286,11 @@ server-logs-1000:
 .PHONY: server-logs-follow
 server-logs-follow:
 	ssh $(SERVER) "tail -f $(SERVER_LOG)"
+
+.PHONY: server-logs-copy
+server-logs-copy:
+	scp $(SERVER):$(SERVER_LOG) logs/stock_monitor.log
+	@echo "Copied to logs/stock_monitor.log"
 
 .PHONY: server-status
 server-status:
