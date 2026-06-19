@@ -1,0 +1,70 @@
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Python bytecode & cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.mypy_cache/
+.pytype/
+.pytest_cache/
+
+# IDE / editor settings
+.vscode/
+.idea/
+.cursor/
+.qodo/
+*.iml
+
+# Secrets & credentials
+.env
+.env.*
+!.env.template
+*.pem
+teleport_ls.txt
+
+# Git internals
+.git/
+
+# OS artefacts
+.DS_Store
+Thumbs.db
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+*.ipynb
+
+# Logs
+logs/
+*.log
+
+# Generated stock data — large binary datasets, not source code
+data/stocks/
+data/processed/
+data/raw/
+data/indices/
+data/backtest_results/
+
+# Trained model artefacts
+data/models/
+*.pkl
+*.joblib
+
+# Parquet files (binary data)
+*.parquet
+
+# CSV data exports
+data/processed/reports/
+data/backtest_results/
+
+# CocoIndex (vector index cache)
+.cocoindex_code/
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+*.egg
