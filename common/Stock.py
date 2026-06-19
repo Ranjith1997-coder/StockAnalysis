@@ -80,9 +80,13 @@ class Stock:
     def update_latest_data(self):
         valid_closes = self.priceData['Close'].dropna()
         if valid_closes.empty:
+            logger.warning(f"[Stock] No valid Close prices in priceData for {self.stock_symbol} — ltp not updated")
             return
         current_close = valid_closes.iloc[-1]
-        # previous_close = stock.priceData['Close'].iloc[-2]
+        if self.prevDayOHLCV is None:
+            logger.warning(f"[Stock] prevDayOHLCV not set for {self.stock_symbol} — ltp_change_perc will be 0")
+            self.ltp = current_close
+            return
         previous_close = self.prevDayOHLCV['CLOSE']
         change_percent = percentageChange(current_close, previous_close)
         self.ltp = current_close

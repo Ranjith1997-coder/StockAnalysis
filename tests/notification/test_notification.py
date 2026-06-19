@@ -61,14 +61,11 @@ class TestSendNotification:
         ok_resp = MagicMock()
         ok_resp.status_code = 200
 
-        with patch("notification.Notification.requests.post",
+        with patch("notification.Notification.NOTIFICATION_CHANNEL", "telegram"), \
+             patch("notification.Notification.requests.post",
                    side_effect=[fail_resp, ok_resp]) as mock_post, \
-             patch("notification.Notification.time.sleep" if hasattr(
-                 __import__("notification.Notification", fromlist=["Notification"]),
-                 "time") else "time.sleep"):
-            # patch sleep to avoid slowing tests
-            with patch("time.sleep"):
-                result = TELEGRAM_NOTIFICATIONS.send_notification("hello")
+             patch("time.sleep"):
+            result = TELEGRAM_NOTIFICATIONS.send_notification("hello")
 
         assert result is True
         assert mock_post.call_count == 2
@@ -80,7 +77,8 @@ class TestSendNotification:
         fail_resp.status_code = 500
         fail_resp.text = "Server Error"
 
-        with patch("notification.Notification.requests.post",
+        with patch("notification.Notification.NOTIFICATION_CHANNEL", "telegram"), \
+             patch("notification.Notification.requests.post",
                    return_value=fail_resp), \
              patch("time.sleep"):
             result = TELEGRAM_NOTIFICATIONS.send_notification("hello")
@@ -94,7 +92,8 @@ class TestSendNotification:
         ok_resp = MagicMock()
         ok_resp.status_code = 200
 
-        with patch("notification.Notification.requests.post",
+        with patch("notification.Notification.NOTIFICATION_CHANNEL", "telegram"), \
+             patch("notification.Notification.requests.post",
                    side_effect=[
                        req_lib.Timeout,
                        req_lib.Timeout,
@@ -109,7 +108,8 @@ class TestSendNotification:
         import requests as req_lib
         _set_production(1)
 
-        with patch("notification.Notification.requests.post",
+        with patch("notification.Notification.NOTIFICATION_CHANNEL", "telegram"), \
+             patch("notification.Notification.requests.post",
                    side_effect=req_lib.ConnectionError), \
              patch("time.sleep"):
             result = TELEGRAM_NOTIFICATIONS.send_notification("hello")
@@ -122,7 +122,8 @@ class TestSendNotification:
         ok_resp = MagicMock()
         ok_resp.status_code = 200
 
-        with patch("notification.Notification.requests.post",
+        with patch("notification.Notification.NOTIFICATION_CHANNEL", "telegram"), \
+             patch("notification.Notification.requests.post",
                    return_value=ok_resp) as mock_post:
             TELEGRAM_NOTIFICATIONS.send_notification("bold text", parse_mode="HTML")
 
@@ -136,7 +137,8 @@ class TestSendNotification:
         ok_resp = MagicMock()
         ok_resp.status_code = 200
 
-        with patch("notification.Notification.requests.post",
+        with patch("notification.Notification.NOTIFICATION_CHANNEL", "telegram"), \
+             patch("notification.Notification.requests.post",
                    return_value=ok_resp) as mock_post:
             TELEGRAM_NOTIFICATIONS.send_notification("plain text")
 

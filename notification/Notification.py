@@ -132,6 +132,7 @@ class TELEGRAM_NOTIFICATIONS:
                 except Exception as e:
                     logger.error(f"Telegram send failed: {e}")
                     return False
+            return False  # all retry attempts exhausted
 
         return True
 
