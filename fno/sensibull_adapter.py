@@ -123,8 +123,8 @@ class SensibullAdapter:
                 if not leg:
                     continue
 
-                current_oi: int = leg.get("oi", 0)
-                oi_change_qty: int = leg.get("oi_change_quantity", 0)
+                current_oi: int = leg.get("oi") or 0
+                oi_change_qty: int = leg.get("oi_change_quantity") or 0
 
                 # Derive prev_oi: first call uses oi_change_quantity from Sensibull
                 # (absolute change since day-open); subsequent calls use cache
@@ -153,11 +153,11 @@ class SensibullAdapter:
                     index_stock.update_option_tick(strike, internal_side, greek_tick, merge=True)
                 else:
                     tick = {
-                        "last_price":           leg.get("last_price", 0),
+                        "last_price":           leg.get("last_price") or 0,
                         "oi":                   current_oi,
-                        "volume_traded":        leg.get("volume", 0),
-                        "total_buy_quantity":   leg.get("best_buy_price", 0),
-                        "total_sell_quantity":  leg.get("best_sell_price", 0),
+                        "volume_traded":        leg.get("volume") or 0,
+                        "total_buy_quantity":   leg.get("best_buy_price") or 0,
+                        "total_sell_quantity":  leg.get("best_sell_price") or 0,
                         "delta":    delta,
                         "gamma":    gamma,
                         "theta":    theta,

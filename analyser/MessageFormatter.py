@@ -318,6 +318,33 @@ def _fmt_pvo(data, trend):
     return [_pvo_line(d) for d in items]
 
 
+@MessageFormatter.register("FUTURE_OI_TREND")
+def _fmt_future_oi_trend(data, trend):
+    e = "📈" if trend == "BULLISH" else "📉"
+    line = f"  Futures OI Trend: {e} <b>{data.action}</b>"
+    parts = [f"OI 10d={data.oi_chg_10d:+.1f}%"]
+    if data.oi_chg_20d is not None:
+        parts.append(f"20d={data.oi_chg_20d:+.1f}%")
+    parts.append(f"Price 10d={data.price_chg_10d:+.1f}%")
+    if data.price_chg_20d is not None:
+        parts.append(f"20d={data.price_chg_20d:+.1f}%")
+    line += f" <code>{' | '.join(parts)}</code>"
+    return [line]
+
+
+@MessageFormatter.register("FUTURE_COST_OF_CARRY")
+def _fmt_future_coc(data, trend):
+    e = "⚠️" if data.action == "BACKWARDATION" else ("🔥" if data.action == "HIGH_COST_OF_CARRY" else "📊")
+    line = f"  Cost of Carry: {e} <b>{data.action}</b>"
+    parts = [f"basis={data.basis_pct:+.2f}%"]
+    if data.ann_coc is not None:
+        parts.append(f"ann_coc={data.ann_coc:.1f}%")
+    if data.days_to_expiry is not None:
+        parts.append(f"expiry={data.days_to_expiry}d")
+    line += f" <code>{' | '.join(parts)}</code>"
+    return [line]
+
+
 # ── PCR ───────────────────────────────────────────────────────────────────────
 
 @MessageFormatter.register("PCR_EXTREME")

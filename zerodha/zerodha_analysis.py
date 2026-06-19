@@ -28,15 +28,19 @@ class ZerodhaTickerManager:
         self.root = "wss://ws.zerodha.com"
         self.connected = False
         self._kt: KiteTicker | None = None
-        self.max_retries = 3
+        self.max_retries = 50
         self.retry_delay = 5  # seconds
-        self.tick_queue = queue.Queue()
+        self.tick_queue = queue.Queue(maxsize=2000)
         self.processor_thread = None
         self.stop_processor = False
         self.notification_cooldown = 300  # 5 minutes cooldown
         self.last_notification_time = defaultdict(float)
         self.is_enctoken_updated = False
         self.reconnect_attempts = 0
+        self._unknown_tokens: set = set()  # suppress repeated warnings for same token
+        self._reauth_lock = threading.Lock()
+        self._is_reauthing = False
+        self._tick_count = 0  # for queue depth logging
 
         # Track last ATM per symbol for re-centering decisions
         self._last_atm: dict = {}
@@ -58,12 +62,13 @@ class ZerodhaTickerManager:
         return shared.app_ctx.token_registry
 
     def initialize_kite_ticker(self):
-        self._kt = KiteTicker(self.apiKey, self.username, self.encToken, root=self.root, reconnect=True, reconnect_max_tries=self.max_retries)
+        self._kt = KiteTicker(self.apiKey, self.username, self.encToken, root=self.root, reconnect=True, reconnect_max_tries=self.max_retries, reconnect_max_delay=60)
         self._kt.on_connect = self.on_connect
         self._kt.on_close = self.on_close
         self._kt.on_error = self.on_error
         self._kt.on_ticks = self.on_ticks
         self._kt.on_reconnect = self.on_reconnect
+        self._kt.on_noreconnect = self.on_noreconnect
 
     def connect(self):
         try:
@@ -78,15 +83,15 @@ class ZerodhaTickerManager:
                     logger.info("Successfully connected to Zerodha WebSocket")
                     return True
                 time.sleep(0.5)
+
+            logger.error("Failed to connect to Zerodha WebSocket after timeout")
+            self.close_connection()
+            return False
         except Exception as e:
             logger.error(f"Error while connecting to Zerodha WebSocket: {str(e)}")
             self.connected = False
             self.is_enctoken_updated = False
             return False
-        finally:
-            if not (self._kt and self._kt.is_connected()):
-                logger.error("Failed to connect to Zerodha WebSocket after multiple attempts")
-                self.close_connection()
 
     def close_connection(self):
         if self._kt:
@@ -138,11 +143,18 @@ class ZerodhaTickerManager:
     # ─── Tick Processing ────────────────────────────────────────────────
 
     def start_tick_processor(self):
+        if self.processor_thread and self.processor_thread.is_alive():
+            return  # already running — idempotent
         self.stop_processor = False
         self.processor_thread = threading.Thread(target=self.process_ticks, daemon=True)
         self.processor_thread.start()
 
+    def signal_tick_processor_stop(self):
+        """Signal the processor thread to stop — non-blocking, safe to call from reactor thread."""
+        self.stop_processor = True
+
     def stop_tick_processor(self):
+        """Signal stop and wait for the processor thread to drain — only use during clean shutdown."""
         self.stop_processor = True
         if self.processor_thread:
             self.processor_thread.join(timeout=5)
@@ -152,6 +164,9 @@ class ZerodhaTickerManager:
             try:
                 tick = self.tick_queue.get(timeout=1)
                 self._route_tick(tick)
+                self._tick_count += 1
+                if self._tick_count % 500 == 0:
+                    logger.debug(f"[ZerodhaWS] processed {self._tick_count} ticks, queue depth={self.tick_queue.qsize()}")
             except queue.Empty:
                 continue
             except Exception as e:
@@ -202,6 +217,9 @@ class ZerodhaTickerManager:
         """Handle equity/index/commodity tick — update _zerodha_data."""
         parent = self._get_parent_object(info)
         if parent is None:
+            if info.token not in self._unknown_tokens:
+                self._unknown_tokens.add(info.token)
+                logger.warning(f"[ZerodhaWS] No parent object for equity token {info.token} ({info.parent_symbol}) — tick dropped")
             return
         parent.update_zerodha_data(tick)
 
@@ -228,6 +246,9 @@ class ZerodhaTickerManager:
         """Handle option tick — update parent's options_live data."""
         parent = self._get_parent_object(info)
         if parent is None:
+            if info.token not in self._unknown_tokens:
+                self._unknown_tokens.add(info.token)
+                logger.warning(f"[ZerodhaWS] No parent object for option token {info.token} ({info.parent_symbol} {info.strike} {info.option_type}) — tick dropped")
             return
 
         parent.update_option_tick(info.strike, info.option_type, tick)
@@ -256,6 +277,9 @@ class ZerodhaTickerManager:
         """Handle futures tick — update parent's futures_live data."""
         parent = self._get_parent_object(info)
         if parent is None:
+            if info.token not in self._unknown_tokens:
+                self._unknown_tokens.add(info.token)
+                logger.warning(f"[ZerodhaWS] No parent object for futures token {info.token} ({info.parent_symbol}) — tick dropped")
             return
 
         expiry_key = "current" if info.expiry == self._get_current_expiry(info.parent_symbol) else "next"
@@ -266,6 +290,25 @@ class ZerodhaTickerManager:
         if shared.app_ctx.stockExpires:
             return shared.app_ctx.stockExpires[0]
         return None
+
+    # ─── Thread-safe WS send helper ───────────────────────────────────
+
+    def _ws_call(self, fn, *args):
+        """Call a KiteTicker send method safely from any thread.
+
+        Twisted's sendMessage is only safe on the reactor thread.
+        This marshals the call via reactor.callFromThread when the reactor
+        is running (processor thread / analysis thread context).
+        Falls back to direct call during tests or when reactor is not started.
+        """
+        try:
+            from twisted.internet import reactor as _reactor
+            if _reactor.running:
+                _reactor.callFromThread(fn, *args)
+            else:
+                fn(*args)
+        except Exception as e:
+            logger.error(f"[ZerodhaWS] _ws_call failed for {fn.__name__}: {e}")
 
     # ─── Dynamic Re-centering ──────────────────────────────────────────
 
@@ -294,23 +337,14 @@ class ZerodhaTickerManager:
         )
 
         if unsub and self._kt and self._kt.is_connected():
-            try:
-                self._kt.unsubscribe(unsub)
-            except Exception as e:
-                logger.error(f"Error unsubscribing during recenter: {e}")
+            self._ws_call(self._kt.unsubscribe, unsub)
 
         if new_sub and self._kt and self._kt.is_connected():
-            try:
-                self._kt.subscribe(new_sub)
-            except Exception as e:
-                logger.error(f"Error subscribing during recenter: {e}")
+            self._ws_call(self._kt.subscribe, new_sub)
 
         for ws_mode, tokens in mode_changes.items():
             if tokens and self._kt and self._kt.is_connected():
-                try:
-                    self._kt.set_mode(ws_mode, tokens)
-                except Exception as e:
-                    logger.error(f"Error setting mode {ws_mode} during recenter: {e}")
+                self._ws_call(self._kt.set_mode, ws_mode, tokens)
 
     def subscribe_options_for_symbol(self, parent_symbol: str, spot_price: float):
         """
@@ -334,14 +368,11 @@ class ZerodhaTickerManager:
             return
 
         if self._kt and self._kt.is_connected():
-            try:
-                self._kt.subscribe(subscribe_tokens)
-                for ws_mode, tokens in mode_map.items():
-                    self._kt.set_mode(ws_mode, tokens)
-                self._last_atm[parent_symbol] = registry.round_to_strike(spot_price, parent_symbol)
-                logger.info(f"Subscribed {len(subscribe_tokens)} option tokens for {parent_symbol}")
-            except Exception as e:
-                logger.error(f"Error subscribing options for {parent_symbol}: {e}")
+            self._ws_call(self._kt.subscribe, subscribe_tokens)
+            for ws_mode, tokens in mode_map.items():
+                self._ws_call(self._kt.set_mode, ws_mode, tokens)
+            self._last_atm[parent_symbol] = registry.round_to_strike(spot_price, parent_symbol)
+            logger.info(f"Subscribed {len(subscribe_tokens)} option tokens for {parent_symbol}")
 
     # ─── Live Options Subscription ────────────────────────────────────
 
@@ -472,11 +503,11 @@ class ZerodhaTickerManager:
     def on_close(self, ws, code, reason):
         self.connected = False
         logger.info(f"Connection closed. Code: {code}, Reason: {reason}")
-        self.stop_tick_processor()
+        self.signal_tick_processor_stop()
 
     def on_error(self, ws, code, reason):
         logger.error(f"Error in connection. Code: {code}, Reason: {reason}")
-        self.stop_tick_processor()
+        self.signal_tick_processor_stop()
         # 403 = enctoken expired — alert and trigger a fresh login in a background thread.
         # The auth script writes the new token to .env; the next reconnect attempt picks it up.
         if "403" in str(reason):
@@ -487,9 +518,18 @@ class ZerodhaTickerManager:
                 "Attempting automatic re-login via auth_login.py…",
                 parse_mode="HTML",
             )
-            import threading
             def _reauth():
+                if not self._reauth_lock.acquire(blocking=False):
+                    logger.warning("[ZerodhaWS] re-auth already in progress — skipping duplicate")
+                    return
+                self._is_reauthing = True
                 try:
+                    # Kill the old factory's reconnect loop before building a new ticker
+                    if self._kt:
+                        try:
+                            self._kt.stop_retry()
+                        except Exception:
+                            pass
                     import subprocess, sys, os
                     script = os.path.join(os.path.dirname(os.path.dirname(__file__)), "auth", "auth_login.py")
                     result = subprocess.run(
@@ -498,7 +538,6 @@ class ZerodhaTickerManager:
                     )
                     if result.returncode == 0:
                         logger.info("[ZerodhaWS] re-auth succeeded — new enctoken written to .env")
-                        # Reload the new token and reconnect
                         from dotenv import load_dotenv
                         load_dotenv(override=True)
                         import common.constants as _c
@@ -517,6 +556,9 @@ class ZerodhaTickerManager:
                         )
                 except Exception as e:
                     logger.error(f"[ZerodhaWS] re-auth exception: {e}")
+                finally:
+                    self._is_reauthing = False
+                    self._reauth_lock.release()
             threading.Thread(target=_reauth, name="ws-reauth", daemon=True).start()
 
     def on_ticks(self, ws, ticks):
@@ -525,11 +567,28 @@ class ZerodhaTickerManager:
         logger.debug(f"Received {len(ticks)} ticks")
         shared.app_ctx.last_equity_tick_time = time.time()
         for tick in ticks:
-            self.tick_queue.put(tick)
+            try:
+                self.tick_queue.put_nowait(tick)
+            except queue.Full:
+                logger.warning(f"[ZerodhaWS] tick_queue full (maxsize=2000) — dropping tick for token {tick.get('instrument_token')}")
 
     def on_reconnect(self, ws, attempts_count):
         self.reconnect_attempts = attempts_count
         logger.info(f"Reconnected to Zerodha WebSocket. Attempt: {self.reconnect_attempts}")
+
+    def on_noreconnect(self, ws):
+        self.connected = False
+        logger.error(f"[ZerodhaWS] All {self.max_retries} reconnect attempts exhausted — WebSocket permanently disconnected")
+        try:
+            from notification.Notification import TELEGRAM_NOTIFICATIONS
+            TELEGRAM_NOTIFICATIONS.send_notification(
+                f"🚨 <b>Zerodha WS DEAD</b> — {self.max_retries} reconnect attempts exhausted.\n"
+                "Live tick data has stopped. Session is running on stale data.\n"
+                "Process will restart at next market open (systemd).",
+                parse_mode="HTML",
+            )
+        except Exception:
+            pass
         # Only re-subscribe options if this looks like a genuine reconnect (not a 403 loop).
         # The 403 re-auth path in on_error handles subscription after token refresh.
         if self.live_options_engine is not None and self._kt and self._kt.is_connected():

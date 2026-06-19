@@ -23,9 +23,13 @@ console_handler = logging.StreamHandler()
 console_handler.setLevel(_level)
 console_handler.setFormatter(logging.Formatter(LOG_FORMAT))
 
+# POSITIONAL=1 (set by the systemd positional service) → separate log file
+_is_positional = os.environ.get("POSITIONAL", "0") == "1" or os.environ.get("DEV_POSITIONAL", "0") == "1"
+_log_filename = "stock_monitor_positional.log" if _is_positional else "stock_monitor.log"
+
 # File handler — rotates at 10 MB, keeps last 5 files
 file_handler = RotatingFileHandler(
-    os.path.join(LOG_DIR, "stock_monitor.log"),
+    os.path.join(LOG_DIR, _log_filename),
     maxBytes=10 * 1024 * 1024,
     backupCount=5,
 )
