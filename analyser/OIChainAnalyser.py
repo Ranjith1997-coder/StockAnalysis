@@ -1183,8 +1183,8 @@ class OIChainAnalyser(BaseAnalyzer):
             ))
             logger.info(
                 f"[OI_SHIFT] {stock.stock_symbol} — SIGNAL {sentiment} | "
-                f"call_center={call_weighted_avg:.0f} ({call_shift}) "
-                f"put_center={put_weighted_avg:.0f} ({put_shift}) | {signal}"
+                f"call_center={call_center_str} "
+                f"put_center={put_center_str} | {signal}"
             )
             return True
 

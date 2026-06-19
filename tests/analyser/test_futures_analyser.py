@@ -179,12 +179,12 @@ class TestResetConstants:
         with patch("common.shared.app_ctx", _positional_ctx()):
             a = FuturesAnalyser()
             a.reset_constants()
-            assert FuturesAnalyser.FUTURE_OI_INCREASE_PERCENTAGE == 10
-            assert FuturesAnalyser.FUTURE_PRICE_CHANGE_PERCENTAGE == 2
+            assert FuturesAnalyser.FUTURE_OI_INCREASE_PERCENTAGE == 3.0
+            assert FuturesAnalyser.FUTURE_PRICE_CHANGE_PERCENTAGE == 1.0
 
     def test_intraday_thresholds(self):
         with patch("common.shared.app_ctx", _intraday_ctx()):
             a = FuturesAnalyser()
             a.reset_constants()
-            assert FuturesAnalyser.FUTURE_OI_INCREASE_PERCENTAGE == 0.5
-            assert FuturesAnalyser.FUTURE_PRICE_CHANGE_PERCENTAGE == 0.5
+            assert FuturesAnalyser.FUTURE_OI_INCREASE_PERCENTAGE == 0.10
+            assert FuturesAnalyser.FUTURE_PRICE_CHANGE_PERCENTAGE == 0.15
