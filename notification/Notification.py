@@ -1,9 +1,8 @@
-
-# Import the following modules
 import re
 import requests
 import json
 import os
+import datetime
 from common.constants import (
     TELEGRAM_INTRADAY_CHAT_ID,
     TELEGRAM_INTRADAY_TOKEN,
@@ -12,7 +11,6 @@ from common.constants import (
     TELEGRAM_LIVE_OPTIONS_TOKEN,
     TELEGRAM_LIVE_OPTIONS_CHAT_ID,
     TELEGRAM_URL,
-    ENV_PRODUCTION,
     NOTIFICATION_CHANNEL,
     DISCORD_INTRADAY_WEBHOOK_URL,
     DISCORD_POSITIONAL_WEBHOOK_URL,
@@ -22,21 +20,18 @@ from common.logging_util import logger
 
 
 def _html_to_discord(text: str) -> str:
-    """Convert Telegram HTML tags to Discord markdown."""
     text = re.sub(r"<b>(.*?)</b>", r"**\1**", text, flags=re.DOTALL)
     text = re.sub(r"<i>(.*?)</i>", r"*\1*", text, flags=re.DOTALL)
     text = re.sub(r"<code>(.*?)</code>", r"`\1`", text, flags=re.DOTALL)
     text = re.sub(r"<pre>(.*?)</pre>", r"```\1```", text, flags=re.DOTALL)
-    text = re.sub(r"<[^>]+>", "", text)  # strip remaining tags
+    text = re.sub(r"<[^>]+>", "", text)
     return text
 
 
 def _send_discord(webhook_url: str, message: str, parse_mode: str | None = None) -> bool:
-    """POST a message to a Discord webhook. Returns True on success."""
     if not webhook_url:
         return False
     content = _html_to_discord(message) if parse_mode and parse_mode.upper() == "HTML" else message
-    # Discord message limit is 2000 chars
     if len(content) > 2000:
         content = content[:1997] + "..."
     try:
@@ -52,117 +47,137 @@ def _send_discord(webhook_url: str, message: str, parse_mode: str | None = None)
     except Exception as e:
         logger.error(f"Discord webhook error: {e}")
         return False
- 
-# Function to send Push Notification
- 
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Redis dispatch — primary notification path.
+# All notifications are written to Redis stream "notification:jobs" and
+# the notification-service (separate process) reads and sends them.
+# Direct HTTP is the fallback when Redis is unavailable.
+# ═══════════════════════════════════════════════════════════════════════════
+
+_REDIS_CLIENT = None
+_REDIS_AVAILABLE = None  # None=not checked, True/False after first attempt
+
+def _get_redis():
+    global _REDIS_CLIENT, _REDIS_AVAILABLE
+    if _REDIS_AVAILABLE is False:
+        return None
+    if _REDIS_CLIENT is None:
+        redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
+        try:
+            import redis as _sync_redis
+            _REDIS_CLIENT = _sync_redis.from_url(redis_url, decode_responses=True)
+            _REDIS_CLIENT.ping()
+            _REDIS_AVAILABLE = True
+            logger.info(f"[Notification] Redis dispatch active at {redis_url}")
+        except Exception as e:
+            logger.warning(f"[Notification] Redis unavailable: {e}. Using direct HTTP.")
+            _REDIS_AVAILABLE = False
+            return None
+    return _REDIS_CLIENT
+
+def _notify_via_redis(chat_type: str, message: str, parse_mode=None, message_type="general", symbol=None) -> bool:
+    rc = _get_redis()
+    if not rc:
+        return False
+    try:
+        rc.xadd("notification:jobs", {
+            "chat_type": chat_type,
+            "message": message,
+            "parse_mode": parse_mode or "",
+            "message_type": message_type,
+            "symbol": symbol or "",
+            "timestamp": str(datetime.datetime.now()),
+        }, maxlen=1000)
+        return True
+    except Exception as e:
+        logger.error(f"[Notification] Redis dispatch failed: {e}")
+        return False
+
+
 class TELEGRAM_NOTIFICATIONS:
     is_production = 0
     is_intraday = True
-    dev_notify = False   # Set to True (via DEV_NOTIFY=1) to send alerts in dev mode
-    @classmethod
-    def pushbullet_notif(cls,title, body):
-    
-        TOKEN = 'o.6J1qIOmIRX4MEtgqCho761YLe0VJcanD'  # Pass your Access Token here
-        # Make a dictionary that includes, title and body
-        msg = {"type": "note", "title": title, "body": body}
-        # Sent a posts request
-        resp = requests.post('https://api.pushbullet.com/v2/pushes',
-                            data=json.dumps(msg),
-                            headers={'Authorization': 'Bearer ' + TOKEN,
-                                    'Content-Type': 'application/json'})
-        if resp.status_code != 200:  # Check if fort message send with the help of status code
-            raise Exception('Error', resp.status_code)
-        else:
-            print('Message sent')
+    dev_notify = False
+
     @classmethod
     def send_notification(cls, message, parse_mode=None):
-        """Send a notification via Telegram, Discord, or both (controlled by NOTIFICATION_CHANNEL)."""
         if not cls.is_production and not cls.dev_notify:
             return
 
+        # Primary: Redis stream → notification-service
+        chat_type = "intraday" if cls.is_intraday else "positional"
+        if _notify_via_redis(chat_type, message, parse_mode, message_type="general"):
+            return
+
+        # Fallback: direct HTTP
         channel = NOTIFICATION_CHANNEL.lower()
 
         if channel in ("discord", "both"):
             webhook = (
                 DISCORD_INTRADAY_WEBHOOK_URL
-                if TELEGRAM_NOTIFICATIONS.is_intraday
+                if cls.is_intraday
                 else DISCORD_POSITIONAL_WEBHOOK_URL
             )
             _send_discord(webhook, message, parse_mode)
 
         if channel in ("telegram", "both"):
-            TELEGRAM_CHAT_ID = ""
-            TELEGRAM_TOKEN = ""
-            if TELEGRAM_NOTIFICATIONS.is_intraday:
-                TELEGRAM_CHAT_ID = TELEGRAM_INTRADAY_CHAT_ID
-                TELEGRAM_TOKEN = TELEGRAM_INTRADAY_TOKEN
-            else:
-                TELEGRAM_CHAT_ID = TELEGRAM_POSITIONAL_CHAT_ID
-                TELEGRAM_TOKEN = TELEGRAM_POSITIONAL_TOKEN
-
-            msg = {"chat_id": TELEGRAM_CHAT_ID, "text": message}
+            chat_id = TELEGRAM_INTRADAY_CHAT_ID if cls.is_intraday else TELEGRAM_POSITIONAL_CHAT_ID
+            token = TELEGRAM_INTRADAY_TOKEN if cls.is_intraday else TELEGRAM_POSITIONAL_TOKEN
+            payload = {"chat_id": chat_id, "text": message}
             if parse_mode:
-                msg["parse_mode"] = parse_mode
+                payload["parse_mode"] = parse_mode
             for attempt in range(1, 4):
                 try:
                     resp = requests.post(
-                        TELEGRAM_URL + TELEGRAM_TOKEN + "/sendMessage",
-                        json=msg,
+                        TELEGRAM_URL + token + "/sendMessage",
+                        json=payload,
                         timeout=15,
                     )
-                    if resp.status_code != 200:
-                        logger.error(f"Telegram send failed (attempt {attempt}) with status {resp.status_code}: {resp.text}")
-                        if attempt < 3:
-                            from time import sleep as _sleep
-                            _sleep(2 ** attempt)
-                        continue
-                    logger.info("Message sent successfully")
-                    logger.debug(f"Message: {message}")
-                    return True
-                except requests.Timeout:
-                    logger.error(f"Telegram send timeout (attempt {attempt})")
+                    if resp.status_code == 200:
+                        logger.info("Message sent directly (Redis fallback)")
+                        return True
+                    logger.error(f"Telegram send failed (attempt {attempt}): {resp.status_code}")
                     if attempt < 3:
                         from time import sleep as _sleep
                         _sleep(2 ** attempt)
-                except requests.ConnectionError:
-                    logger.error(f"Telegram connection error (attempt {attempt})")
+                except (requests.Timeout, requests.ConnectionError) as e:
+                    logger.error(f"Telegram {type(e).__name__} (attempt {attempt})")
                     if attempt < 3:
                         from time import sleep as _sleep
                         _sleep(2 ** attempt)
                 except Exception as e:
                     logger.error(f"Telegram send failed: {e}")
                     return False
-            return False  # all retry attempts exhausted
-
+            return False
         return True
 
     @classmethod
     def send_live_options_notification(cls, message, parse_mode="HTML"):
-        """Send a real-time options alert to the dedicated live options channel."""
         if not cls.is_production and not cls.dev_notify:
             return
 
-        channel = NOTIFICATION_CHANNEL.lower()
+        # Primary: Redis stream
+        if _notify_via_redis("live_options", message, parse_mode, message_type="live_options"):
+            return
 
+        # Fallback: direct HTTP
+        channel = NOTIFICATION_CHANNEL.lower()
         if channel in ("discord", "both"):
             _send_discord(DISCORD_LIVE_OPTIONS_WEBHOOK_URL, message, parse_mode)
-
         if channel in ("telegram", "both"):
             if not TELEGRAM_LIVE_OPTIONS_TOKEN or not TELEGRAM_LIVE_OPTIONS_CHAT_ID:
-                logger.debug("TELEGRAM_LIVE_OPTIONS_TOKEN/CHAT_ID not configured — skipping live options Telegram alert")
+                logger.debug("Live options Telegram not configured")
             else:
-                msg = {"chat_id": TELEGRAM_LIVE_OPTIONS_CHAT_ID, "text": message}
-                if parse_mode:
-                    msg["parse_mode"] = parse_mode
                 try:
                     resp = requests.post(
                         TELEGRAM_URL + TELEGRAM_LIVE_OPTIONS_TOKEN + "/sendMessage",
-                        json=msg,
+                        json={"chat_id": TELEGRAM_LIVE_OPTIONS_CHAT_ID, "text": message, "parse_mode": parse_mode},
                         timeout=10,
                     )
                     if resp.status_code != 200:
-                        logger.error(f"Live options Telegram send failed: {resp.status_code}: {resp.text}")
+                        logger.error(f"Live options send failed: {resp.status_code}: {resp.text}")
                 except Exception as e:
-                    logger.error(f"Live options Telegram send failed: {e}")
-
+                    logger.error(f"Live options send failed: {e}")
         return True
