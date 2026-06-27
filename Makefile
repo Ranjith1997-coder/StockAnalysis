@@ -501,11 +501,10 @@ server-redis-config:
 .PHONY: server-notify-test server-dead-letter server-svcs-status
 
 server-notification-status:
-	@echo "=== Server Notification Service ==="
-	ssh $(SERVER) "systemctl is-active stockanalysis-notification 2>/dev/null || echo 'not loaded'"
-	ssh $(SERVER) "journalctl -u stockanalysis-notification --no-pager -n 10 2>/dev/null || echo 'no journal'"
-	ssh $(SERVER) "redis-cli XLEN notification:jobs 2>/dev/null || echo '0'"
-	ssh $(SERVER) "redis-cli XREAD COUNT 10 STREAMS notification:dead 0 2>/dev/null || echo 'no dead letters'"
+	ssh $(SERVER) "systemctl status stockanalysis-notification --no-pager 2>/dev/null | head -10"
+	@echo ""
+	ssh $(SERVER) "echo 'Stream: notification:jobs — '; redis-cli XLEN notification:jobs; echo 'Dead letters: '; redis-cli XLEN notification:dead"
+	@echo ""
 
 server-notification-start:
 	ssh $(SERVER) "sudo systemctl start stockanalysis-notification \
@@ -528,16 +527,15 @@ server-notify-test:
 	@echo "Test notification sent to server Redis."
 
 server-dead-letter:
-	ssh $(SERVER) "redis-cli XREAD COUNT 10 STREAMS notification:dead 0 2>/dev/null || echo 'No dead letters'"
+	@echo "Dead letters: $$(ssh $(SERVER) "redis-cli XLEN notification:dead 2>/dev/null || echo 0")"
+	@ssh $(SERVER) "redis-cli XREAD COUNT 5 STREAMS notification:dead 0 2>/dev/null || true"
 
 server-svcs-status:
-	@echo "=== StockAnalysis Services ==="
 	@for svc in redis-server stockanalysis stockanalysis-auth stockanalysis-notification; do \
-		printf "  %-40s " "$$svc"; \
-		ssh $(SERVER) "systemctl is-active $$svc 2>/dev/null || echo 'not loaded'"; \
+		STATUS=$$(ssh $(SERVER) "systemctl is-active $$svc 2>/dev/null || echo not loaded"); \
+		printf "  %-32s %s\n" "$$svc" "$$STATUS"; \
 	done
-	@echo ""
-	ssh $(SERVER) "redis-cli INFO memory 2>/dev/null | grep used_memory_human" || true
+	@ssh $(SERVER) "redis-cli INFO memory 2>/dev/null | grep used_memory_human" || true
 
 # Usage: make update-enctoken TOKEN=<your_enc_token>
 TOKEN ?=

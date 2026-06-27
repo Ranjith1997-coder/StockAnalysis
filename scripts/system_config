@@ -1,4 +1,16 @@
 # ──────────────────────────────────────────────────────────────────────────────
+# /etc/systemd/system/stockanalysis-redis.service (install via apt)
+#
+# Redis server — message broker for notification-service and all future services.
+# Already installed via: sudo apt-get install redis-server
+# Config: /home/hacker/StockAnalysis/configs/redis.conf (128MB, no persistence)
+# ──────────────────────────────────────────────────────────────────────────────
+# Managed by apt — no custom unit needed.
+# sudo systemctl start redis-server
+# sudo systemctl enable redis-server
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # /etc/systemd/system/stockanalysis-auth.service
 #
 # Refreshes the Zerodha enc_token via TOTP login.
@@ -16,21 +28,51 @@ WorkingDirectory=/home/hacker/StockAnalysis
 EnvironmentFile=/home/hacker/StockAnalysis/.env
 Environment=PYTHONPATH=/home/hacker/StockAnalysis
 ExecStart=/home/hacker/StockAnalysis/.venv/bin/python auth/auth_login.py
-StandardOutput=append:/home/hacker/StockAnalysis/logs/stock_monitor.log
-StandardError=append:/home/hacker/StockAnalysis/logs/stock_monitor.log
+StandardOutput=journal
+StandardError=journal
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# /etc/systemd/system/stockanalysis-notification.service
+#
+# Notification stream consumer — reads from Redis stream and sends
+# Telegram/Discord alerts. Required by both intraday and positional services.
+# ──────────────────────────────────────────────────────────────────────────────
+[Unit]
+Description=StockAnalysis Notification Service
+After=redis-server.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=hacker
+WorkingDirectory=/home/hacker/StockAnalysis
+Environment=PYTHONPATH=/home/hacker/StockAnalysis
+Environment=REDIS_URL=redis://localhost:6379
+ExecStart=/home/hacker/StockAnalysis/.venv/bin/python services/notification-service/main.py --consumer-name prod-1
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+CPUQuota=40%
+MemoryMax=300M
+
+[Install]
+WantedBy=multi-user.target
 
 
 # ──────────────────────────────────────────────────────────────────────────────
 # /etc/systemd/system/stockanalysis.service
 #
 # Intraday monitor — runs during market hours (9:00 AM–3:30 PM IST).
-# Depends on stockanalysis-auth.service completing successfully first.
+# Depends on auth (enctoken) + notification (Telegram dispatch).
+# Uses journald for logs (notification service handles Telegram alerts).
 # ──────────────────────────────────────────────────────────────────────────────
 [Unit]
 Description=Stock Analysis Intraday
-After=network-online.target stockanalysis-auth.service
+After=network-online.target stockanalysis-auth.service stockanalysis-notification.service
 Wants=network-online.target
-Requires=stockanalysis-auth.service
+Requires=stockanalysis-auth.service stockanalysis-notification.service
 
 [Service]
 Type=simple
@@ -40,8 +82,8 @@ EnvironmentFile=/home/hacker/StockAnalysis/.env
 Environment=PYTHONPATH=/home/hacker/StockAnalysis
 ExecStart=/home/hacker/StockAnalysis/.venv/bin/python intraday/intraday_monitor.py
 Restart=no
-StandardOutput=append:/home/hacker/StockAnalysis/logs/stock_monitor.log
-StandardError=append:/home/hacker/StockAnalysis/logs/stock_monitor.log
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
@@ -67,13 +109,13 @@ WantedBy=timers.target
 # /etc/systemd/system/stockanalysis-positional.service
 #
 # EOD positional analysis — runs after market close (8:00 PM IST).
-# Auth runs before this too via the same Requires dependency.
+# Depends on auth + notification (same flow as intraday).
 # ──────────────────────────────────────────────────────────────────────────────
 [Unit]
 Description=Stock Analysis Positional EOD
-After=network-online.target stockanalysis-auth.service
+After=network-online.target stockanalysis-auth.service stockanalysis-notification.service
 Wants=network-online.target
-Requires=stockanalysis-auth.service
+Requires=stockanalysis-auth.service stockanalysis-notification.service
 
 [Service]
 Type=simple
@@ -83,8 +125,8 @@ EnvironmentFile=/home/hacker/StockAnalysis/.env
 Environment=PYTHONPATH=/home/hacker/StockAnalysis
 ExecStart=/home/hacker/StockAnalysis/.venv/bin/python intraday/intraday_monitor.py
 Restart=no
-StandardOutput=append:/home/hacker/StockAnalysis/logs/stock_monitor.log
-StandardError=append:/home/hacker/StockAnalysis/logs/stock_monitor.log
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
