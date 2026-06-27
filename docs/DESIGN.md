@@ -1,6 +1,6 @@
 # StockAnalysis - Comprehensive Design Document
 
-> **Last Updated**: May 2026 (OptionSellerCompositeAnalyser added: GAMMA_TRAP, RANGE_BOUND_SETUP, SKEW_FADE_SETUP with PRIORITY_OVERRIDE / winner-takes-all message dispatch; SENSEX added to live options indices; auth/auth_login.py for automated TOTP enctoken refresh; scripts/system_config systemd units; MIN_NOTIFICATION_SCORE_POSITIONAL=150; positional price-move filter 0.75%)
+> **Last Updated**: June 2026 (Phase 1B — notification-service extracted as first microservice; Redis stream dispatch replaces direct HTTP for all notifications; per-service logging via `services/common/logging.py`; Makefile updated with Redis and service management targets; `configs/redis.conf` for production Redis config)
 > **Purpose**: Complete architectural reference for the Indian Stock Market Analysis System targeting NSE (National Stock Exchange) equities. This document captures the entire codebase: architecture, data flows, module interactions, signal processing, scoring, notifications, and deployment details.
 
 ---
@@ -105,9 +105,31 @@ StockAnalysis/
 |   |-- constants.py                 # All weights, thresholds, env vars, categories
 |   |-- scoring.py                   # Score calculation, alignment bonus, should_notify()
 |   |-- helperFunctions.py           # Utilities (percentage change, JSON I/O, time checks)
-|   |-- logging_util.py              # Logger configuration
+|   |-- logging_util.py              # Logger configuration (monolith, legacy)
 |   |-- token_registry.py            # TokenRegistry — O(1) tick routing, zone management
-|
+
+|-- services/                        # Microservices (Phase 1 extraction)
+|   |-- common/
+|   |   |-- logging.py               # Per-service logger: get_logger("service-name")
+|   |   |-- redis_client.py          # Async Redis connection manager
+|   |   |-- redis_proxy.py           # Sync Redis wrapper (data-gateway)
+|   |   |-- serialization.py         # DataFrame/dict JSON serialization
+|   |   |-- health.py                # Service heartbeat loop
+|   |   |-- stream_consumer.py       # Base class for Redis Stream consumers
+|   |   |-- stock_proxy.py           # Stock object ↔ Redis serialization
+|   |-- notification-service/        # EXTRACTED — Phase 1B
+|   |   |-- main.py                  # Stream consumer: reads notification:jobs, sends Telegram/Discord
+|   |-- data-gateway/                # Code ready, not deployed
+|   |   |-- main.py                  # yfinance + Sensibull fetcher
+|   |   |-- yfinance_fetcher.py      # Async yfinance data fetcher
+|   |   |-- sensibull_fetcher.py     # Async Sensibull REST fetcher
+|   |-- coordinator/                 # Designed — orchestrator + intelligence + bot merged
+|   |-- orchestrator/                # Designed — standalone orchestrator
+|   |-- analysis-engine/             # Designed — stream consumer workers
+|   |-- intelligence-service/        # Designed — SignalBus + Correlator + Narrator
+|   |-- bot-service/                 # Designed — Telegram bot commands
+|   |-- auth-service/                # Designed — TOTP login command listener
+
 |-- notification/
 |   |-- Notification.py              # Telegram message sender
 |   |-- bot_listener.py              # Thin entry point: register_all() + LLM budget alert job
@@ -1661,16 +1683,19 @@ class NewsSentimentManager:
 ```python
 class TELEGRAM_NOTIFICATIONS:
     def send_notification(message, parse_mode="HTML"):
-        # Routes to correct channel based on shared.app_ctx.mode:
-        #   INTRADAY  -> INTRADAY_CHAT_ID
-        #   POSITIONAL -> POSITIONAL_CHAT_ID
-        # Only sends when is_production=True
-        # Retries up to 3 times with exponential backoff (2s, 4s) on HTTP error,
-        # Timeout, or ConnectionError. Timeout per attempt: 15s.
+        # ── Phase 1B: Redis primary path ───────────────────────────────
+        # 1. Try Redis: XADD notification:jobs {chat_type, message, parse_mode, ...}
+        #    → Consumed by notification-service (separate process)
+        # 2. Fallback: direct HTTP to Telegram/Discord if Redis unavailable
+        #
+        # Routes to correct channel based on chat_type:
+        #   "intraday"  -> INTRADAY_CHAT_ID
+        #   "positional" -> POSITIONAL_CHAT_ID
+        # Retries up to 3 times with exponential backoff on HTTP error.
 
     def send_live_options_notification(message, parse_mode="HTML"):
-        # Always routes to LIVE_OPTIONS_CHAT_ID (dedicated real-time channel)
-        # Bypasses mode check — live options alerts are mode-independent
+        # Same Redis primary path with chat_type="live_options"
+        # Direct HTTP fallback when Redis unavailable
 ```
 
 ### Telegram Channels

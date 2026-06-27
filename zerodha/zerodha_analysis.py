@@ -30,7 +30,7 @@ class ZerodhaTickerManager:
         self._kt: KiteTicker | None = None
         self.max_retries = 50
         self.retry_delay = 5  # seconds
-        self.tick_queue = queue.Queue(maxsize=2000)
+        self.tick_queue = queue.Queue(maxsize=5000)
         self.processor_thread = None
         self.stop_processor = False
         self.notification_cooldown = 300  # 5 minutes cooldown
@@ -570,7 +570,10 @@ class ZerodhaTickerManager:
             try:
                 self.tick_queue.put_nowait(tick)
             except queue.Full:
-                logger.warning(f"[ZerodhaWS] tick_queue full (maxsize=2000) — dropping tick for token {tick.get('instrument_token')}")
+                token = tick.get("instrument_token")
+                info = self.token_registry.lookup(token) if self.token_registry else None
+                symbol = info.parent_symbol if info else "unknown"
+                logger.warning(f"[ZerodhaWS] tick_queue full (maxsize=5000) — dropping tick for token {token} ({symbol})")
 
     def on_reconnect(self, ws, attempts_count):
         self.reconnect_attempts = attempts_count

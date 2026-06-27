@@ -23,7 +23,38 @@ Mode selection in production (`PRODUCTION=1`) is time-based. In dev mode, `DEV_I
 ## Architecture
 
 ```
-intraday/intraday_monitor.py          ← Main entry point & orchestrator
+┌─────────────────────────────────────────────────────────────────┐
+│                    Microservices (Phase 1)                       │
+│                                                                  │
+│  ┌──────────┐        ┌──────────────────┐                       │
+│  │  Redis 7 │◄───────│  Monolith (until │                       │
+│  │ (message │   LB   │  fully extracted)│                       │
+│  │  broker) │        │ intraday_monitor │                       │
+│  └────┬─────┘        │  .py             │                       │
+│       │              └────────┬─────────┘                       │
+│       │  notification:jobs    │ send_notification()             │
+│       │  (stream)             │  ─→ Redis (primary)             │
+│       │                       │   → HTTP (fallback)             │
+│       ▼                       ▼                                 │
+│  ┌───────────────────────────────┐                              │
+│  │  notification-service         │  (EXTRACTED — Phase 1B)       │
+│  │  services/notification-       │                              │
+│  │  service/main.py              │                              │
+│  │    └── Consumes Redis stream  │                              │
+│  │    └── Telegram + Discord     │                              │
+│  │    └── Retry + dead letter    │                              │
+│  └───────────────────────────────┘                              │
+│                                                                  │
+│  Services to extract (planned):                                 │
+│    □ data-gateway     — yfinance + Sensibull + Zerodha WS       │
+│    □ analysis-engine  — 12 analysers + scoring                  │
+│    □ orchestrator     — cycle coordination                      │
+│    □ intelligence     — SignalBus + Correlator + LLM            │
+│    □ bot-service      — Telegram bot commands                   │
+└─────────────────────────────────────────────────────────────────┘
+
+Current monolith flow:
+intraday/intraday_monitor.py          ← Main entry point & orchestration
          |
          ├── create_stock_and_index_objects()   yfinance daily data download
          ├── update_zerodha_option_chain()       Kite instruments API → zerodha_ctx
@@ -178,6 +209,26 @@ When `ENABLE_NARRATOR=1` (requires `GEMINI_API_KEY`):
 | `OPTIONS_SOURCE` | `zerodha` | `zerodha` or `sensibull` for live option tick source |
 | `HEALTHCHECK_URL` | (empty) | Dead-man's switch ping URL (e.g., healthchecks.io) |
 
+### Redis (required for notification service)
+
+| Variable | Purpose |
+|----------|---------|
+| `REDIS_URL` | Redis connection string (default: `redis://localhost:6379`) |
+| `NOTIFICATION_CHANNEL` | `telegram`, `discord`, or `both` |
+
+### Per-Service Logging
+
+All services log to `logs/{service_name}.log` with 10 MB rotating files (3 backups). Per-service log level override:
+
+```bash
+LOG_LEVEL=INFO NOTIFICATION_LOG_LEVEL=DEBUG make run-dev
+```
+
+| Env Var | Effect |
+|----------|--------|
+| `LOG_LEVEL` | Global default for all services (default: `INFO`) |
+| `{SERVICE}_LOG_LEVEL` | Per-service override, e.g. `NOTIFICATION_LOG_LEVEL=DEBUG` |
+
 ---
 
 ## Automated Zerodha Authentication
@@ -249,8 +300,9 @@ make env-check                     # Verify required .env variables are set
 
 # Run
 make run-prod                      # PRODUCTION=1 intraday monitor
-make run-dev                       # DEV_INTRADAY=1 intraday monitor
-make run-dev-positional            # DEV_POSITIONAL=1 EOD analysis
+make run-dev                       # DEV_INTRADAY=1 + notification service (auto start/stop)
+make run-dev-positional            # DEV_POSITIONAL=1 EOD + notification service (auto start/stop)
+make run-dev-stop                  # Stop notification service (manual cleanup)
 make run-dev-stock-intraday STOCK=RELIANCE   # Single stock intraday
 make run-dev-stock-positional STOCK=RELIANCE # Single stock positional
 make run-dev-index-intraday INDEX=NIFTY      # Single index intraday
@@ -260,6 +312,19 @@ make run-postmarket                # Post-market analysis pipeline
 make deploy                        # git pull + restart service on EC2 via SSH
 make service-stop                  # Start EC2 (if stopped) + stop service; exits early on holidays
 make service-stop-force            # Same but bypasses holiday guard (dev use)
+
+# Redis
+make redis-install                 # Install Redis via Homebrew
+make redis-start                   # Start Redis service
+make redis-stop                    # Stop Redis service
+make redis-status                  # Check Redis status + memory
+make redis-config                  # Apply production config (128MB, no persistence)
+
+# Notification Service
+make run-notification              # Start notification service (foreground)
+make svc-notify-test               # Send test notification to Redis stream
+make svc-notification-check        # Check stream + consumer group
+make svc-dead-letter               # View failed notifications
 
 # Test
 make test                          # Full test suite
@@ -274,8 +339,13 @@ make typecheck                     # pyright type check
 
 # Maintenance
 make update-derivatives            # Refresh final_derivatives_list.json
-make logs                          # Tail last 50 lines of monitor.log
-make logs-follow                   # Follow logs/monitor.log live
+make logs                          # Monolith log (legacy)
+make logs-follow                   # Follow monolith log live
+make logs-all                      # View last 20 lines of every service log
+make logs-all-follow               # Follow all service logs live
+make logs-svc SVC_LOG=data-gateway # View one service log
+make logs-svc-follow SVC_LOG=...   # Follow one service log live
+make logs-service                  # List all available service logs
 make clean                         # Remove __pycache__, .pyc, pytest cache
 make clean-all                     # clean + remove .venv
 
@@ -287,6 +357,13 @@ make server-status                 # Show stock_analysis.service status
 make server-restart                # Restart stock_analysis.service
 make server-pull                   # git pull on server repo
 make server-df                     # Disk usage on server
+make server-redis-status           # Redis status + memory on server
+make server-redis-start            # Start Redis on server
+make server-redis-config           # Apply Redis config on server
+make server-notification-status    # Notification service status on server
+make server-notification-logs      # Notification service logs on server
+make server-notify-test            # Send test notification via server Redis
+make server-svcs-status            # All StockAnalysis service statuses
 make update-enctoken TOKEN=<tok>   # Update ZERODHA_ENC_TOKEN on server .env
 ```
 
@@ -300,7 +377,7 @@ StockAnalysis/
 ├── auth/              # auth_login.py — automated TOTP-based Zerodha enctoken refresh
 ├── backtest/          # Backtesting framework + Optuna optimizer
 ├── common/            # Stock.py, shared.py, constants.py, scoring.py, token_registry.py
-├── configs/           # custom_holidays.json, ml_config.yaml
+├── configs/           # custom_holidays.json, ml_config.yaml, redis.conf
 ├── data/              # final_derivatives_list.json, backtest results
 ├── docs/              # DESIGN.md, DATA_SCHEMA.md
 ├── fno/               # SensibullFetcher, sensibull_feed.py (OPTIONS_SOURCE=sensibull path)
@@ -309,14 +386,22 @@ StockAnalysis/
 ├── ml_pipeline/       # ML prediction pipeline (XGBoost, LightGBM, RF, Ensemble)
 ├── notification/      # Telegram sender + bot commands (Command Router pattern)
 ├── nse/               # NSE API wrappers + market calendar helpers
+├── plans/             # microservices_architecture.md — migration plan
 ├── post_market_analysis/  # FII/DII, sector perf, F&O OI, index returns pipeline
 ├── premarket/         # Global cues, bonds, commodities, pre-open report
 ├── scripts/           # deploy.py, service_stop.py (holiday-aware), system_config (systemd units)
 ├── sentiment/         # FinBERT news sentiment
+├── services/          # Microservices (Phase 1 — extracted services)
+│   ├── common/        # Shared infra: logging.py, redis_client.py, stock_proxy.py, health.py
+│   ├── notification-service/  # Notification stream consumer (EXTRACTED — Phase 1B)
+│   ├── data-gateway/  # yfinance + Sensibull + Zerodha WS (code ready, not deployed)
+│   ├── coordinator/   # Orchestrator + intelligence + bot (compact mode, designed)
+│   └── *-service/     # Future: orchestrator, analysis-engine, intelligence, bot, auth
 ├── tests/             # 951 tests across 41 files
 ├── zerodha/           # WebSocket lifecycle, TickStore, FuturesFetcher, LiveOptionsEngine
 ├── Makefile
-└── .env.template
+├── .env.template
+└── requirements.txt
 ```
 
 ### Key Files
@@ -334,8 +419,12 @@ StockAnalysis/
 | `analyser/Analyser.py` | BaseAnalyzer (decorator framework) + AnalyserOrchestrator |
 | `zerodha/futures_fetcher.py` | FuturesFetcher — Kite historical futures data |
 | `fno/sensibull_fetcher.py` | SensibullFetcher — Sensibull API (insights, OI chain, IV chart, OI history) |
-| `notification/Notification.py` | Telegram message sender (3 channels, retry logic) |
+| `notification/Notification.py` | Telegram message sender — routes through Redis by default, direct HTTP fallback |
 | `notification/bot_listener.py` | Telegram bot entry point (Command Router) |
+| `services/notification-service/main.py` | Notification stream consumer (EXTRACTED — Phase 1B) |
+| `services/common/logging.py` | Per-service logger factory (`get_logger("service-name")`) |
+| `services/common/stock_proxy.py` | Stock object ↔ Redis serialization |
+| `configs/redis.conf` | Redis configuration (128MB maxmemory, no persistence) |
 
 ---
 
