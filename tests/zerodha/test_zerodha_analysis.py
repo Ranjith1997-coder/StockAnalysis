@@ -297,13 +297,13 @@ class TestCheckRecentering:
     def test_shift_gte_threshold_calls_recenter(self, patched_app_ctx):
         mgr = _manager()
         mgr._last_atm["NIFTY"] = 22000.0
-        mgr._kt = None  # no active WebSocket — just testing the recenter logic
-        patched_app_ctx.token_registry.round_to_strike = MagicMock(return_value=22050.0)
+        mgr._kt_options = None  # no active WebSocket — just testing the recenter logic
+        patched_app_ctx.token_registry.round_to_strike = MagicMock(return_value=22100.0)
         patched_app_ctx.token_registry.get_strike_gap.return_value = 50.0
         patched_app_ctx.token_registry.recenter_and_get_subscription_changes.return_value = ([], [], {})
         with patch(_SHARED) as mock_shared:
             mock_shared.app_ctx = patched_app_ctx
-            mgr._check_recentering("NIFTY", 22060.0)  # 1 strike gap shifted
+            mgr._check_recentering("NIFTY", 22110.0)  # 2 strike gap shifted
         patched_app_ctx.token_registry.recenter_and_get_subscription_changes.assert_called_once()
 
     def test_none_registry_returns_early(self, patched_app_ctx):
@@ -341,7 +341,7 @@ class TestWebSocketCallbacks:
         with patch(_SHARED) as mock_shared:
             mock_shared.app_ctx = patched_app_ctx
             with patch.object(mgr, "start_tick_processor"):
-                mgr.on_connect(ws, {})
+                mgr.on_connect_base(ws, {})
         assert mgr.connected is True
 
     def test_on_connect_subscribes_base_tokens(self, patched_app_ctx):
@@ -352,7 +352,7 @@ class TestWebSocketCallbacks:
         with patch(_SHARED) as mock_shared:
             mock_shared.app_ctx = patched_app_ctx
             with patch.object(mgr, "start_tick_processor"):
-                mgr.on_connect(ws, {})
+                mgr.on_connect_base(ws, {})
         ws.subscribe.assert_called_once()
         subscribed = ws.subscribe.call_args[0][0]
         assert 256265 in subscribed
@@ -367,22 +367,22 @@ class TestWebSocketCallbacks:
         with patch(_SHARED) as mock_shared:
             mock_shared.app_ctx = patched_app_ctx
             with patch.object(mgr, "start_tick_processor"):
-                mgr.on_connect(ws, {})
+                mgr.on_connect_base(ws, {})
         subscribed = ws.subscribe.call_args[0][0]
         assert 1234 not in subscribed
         assert 256265 in subscribed
 
     def test_on_close_sets_connected_false(self):
         mgr = _manager()
-        mgr.connected = True
-        with patch.object(mgr, "stop_tick_processor"):
-            mgr.on_close(None, 1000, "normal")
+        mgr._base_connected = True
+        with patch.object(mgr, "signal_tick_processor_stop"):
+            mgr.on_close_base(None, 1000, "normal")
         assert mgr.connected is False
 
     def test_on_close_calls_stop_tick_processor(self):
         mgr = _manager()
-        with patch.object(mgr, "stop_tick_processor") as mock_stop:
-            mgr.on_close(None, 1000, "normal")
+        with patch.object(mgr, "signal_tick_processor_stop") as mock_stop:
+            mgr.on_close_base(None, 1000, "normal")
         mock_stop.assert_called_once()
 
 
