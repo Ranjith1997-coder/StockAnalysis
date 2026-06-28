@@ -30,8 +30,12 @@ def _safe_len(obj) -> int:
         return 0
 
 
-def _fmt_age(ts: float) -> str:
+def _fmt_age(ts) -> str:
     if not ts:
+        return "never"
+    try:
+        ts = float(ts)
+    except (TypeError, ValueError):
         return "never"
     secs = time.time() - ts
     if secs < 60:
