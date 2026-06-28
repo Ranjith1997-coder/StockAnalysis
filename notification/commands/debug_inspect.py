@@ -74,6 +74,7 @@ def inspect_overview() -> dict:
         "signals_emitted": signals_emitted,
         "confluences": confluences,
         "ws_connected": tm.connected if tm else False,
+        "ws_options_connected": getattr(tm, "options_connected", False) if tm else False,
         "ws_tick_count": getattr(tm, "_tick_count", 0) if tm else 0,
         "ws_reconnects": getattr(tm, "reconnect_attempts", 0) if tm else 0,
         "tick_queue_depth": tm.tick_queue.qsize() if tm else 0,

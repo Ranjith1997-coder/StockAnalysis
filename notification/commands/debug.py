@@ -55,6 +55,7 @@ async def cmd_debug(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     d = inspect_overview()
     ws_icon = "🟢" if d["ws_connected"] else "🔴"
+    ws_opt_icon = "🟢" if d.get("ws_options_connected") else "⚪"
     sb = d.get("sensibull_ws", {})
     sb_icon = "🟢" if sb.get("active") else "⚪"
     lines = [
@@ -67,9 +68,11 @@ async def cmd_debug(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "",
         f"<b>Instruments:</b> 📈{d['stocks']}  🏦{d['indices']}  🛢{d['commodities']}  🌍{d['global_indices']}",
         "",
-        f"{ws_icon} <b>Zerodha WebSocket</b>",
+        f"{ws_icon} <b>Zerodha WS1 (equity + index)</b>",
         f"  Ticks: {d['ws_tick_count']}  |  Reconnects: {d['ws_reconnects']}",
         f"  Queue: {d['tick_queue_depth']}  |  Unknown tokens: {d['unknown_tokens']}",
+        "",
+        f"{ws_opt_icon} <b>Zerodha WS2 (options)</b>",
         "",
     ]
     if sb.get("active"):
