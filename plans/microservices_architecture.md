@@ -1,8 +1,11 @@
 # StockAnalysis — Distributed Microservices Architecture Design
 
 > **Last Updated**: June 2026
+> **Implementation Status**: Phase 1A COMPLETE. Notification-service + data-gateway extracted. Monolith is always-running (24/7, `Restart=always`) with self-scheduling daily loop. Cycle sync via Redis Pub/Sub + stream. Parallel Sensibull fetch (10 workers). Unified logging. No systemd timers or auth service. See `docs/DESIGN.md` and `README.md` for current state.
 > **Purpose**: Complete design for decomposing the monolithic StockAnalysis application into independently scalable services, solving the 12 PM thread-pool saturation stall and enabling horizontal scaling.
 > **Constraint**: Initial deployment on a **single spare laptop** (Intel i5-6200U, 2 physical cores / 4 threads, 8 GB RAM, Ubuntu 24.04). Must scale out to additional machines later **without code changes** — just by changing `REDIS_URL` and starting services on the new node.
+>
+> **Note**: Sections below describe the ORIGINAL plan. The systemd topology (auth service, timers) has been superseded by the always-running architecture. Phase 1A implementation differs from the original plan — see implementation notes inline.
 
 ---
 
