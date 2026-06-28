@@ -12,11 +12,15 @@
 
 # Architecture & Constraints
 - Indian NSE/BSE equity & derivatives analysis.
-- Zerodha KiteConnect WebSocket + Sensibull REST/WS + yfinance + Telegram.
-- **Entry point:** `intraday/intraday_monitor.py`
+- **Always-running services**: monolith + data-gateway + notification-service (all 24/7, `Restart=always`).
+- **Data flow**: data-gateway fetches yfinance + Sensibull → Redis hashes → monolith reads from Redis → writes notifications to Redis stream → notification-service sends Telegram/Discord.
+- **Cycle sync**: data-gateway publishes `data:cycle_ready` (Pub/Sub) + `data:cycle_stream` (durable stream) after each fetch. Monolith's `CycleSubscriber` blocks until signal arrives.
+- Zerodha KiteConnect WebSocket + Sensibull REST (via data-gateway) + yfinance (via data-gateway) + Telegram.
+- **Entry point:** `intraday/intraday_monitor.py` → `_run_daily_loop()` (production) or `start_stock_analysis()` (dev).
 - **Signal Correlation:** `SignalBus` → `SignalCorrelator` → `MarketNarrator` (Gemini Flash LLM).
 - **Registration Order:** `OptionSellerCompositeAnalyser` MUST be registered last.
 - **Options Source:** When `OPTIONS_SOURCE=both`, Zerodha is authoritative. Sensibull enriches ONLY `{delta, gamma, theta, vega, iv, iv_change}` via `TickStore.update_option_tick(merge=True)`.
+- **Logging:** All services use `services/common/logging.py` via `get_logger()`. Monolith's `common/logging_util.py` is a shim.
 
 
 # Communication & Token Efficiency
@@ -37,4 +41,4 @@
 - `make test-fast` : Pytest suite (stop on first fail)
 - `make lint` / `make format` / `make typecheck` : Ruff / Pyright
 - `make deploy` : rsync + SSH to production
-- `make server-logs-500` : Check production `stock_monitor.log`
+- `make server-logs-500` : Check production `monolith.log`

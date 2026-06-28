@@ -1,8 +1,7 @@
 # ──────────────────────────────────────────────────────────────────────────────
 # /etc/systemd/system/stockanalysis-redis.service (install via apt)
 #
-# Redis server — message broker for notification-service and all future services.
-# Already installed via: sudo apt-get install redis-server
+# Redis server — message broker for all services.
 # Config: /home/hacker/StockAnalysis/configs/redis.conf (128MB, no persistence)
 # ──────────────────────────────────────────────────────────────────────────────
 # Managed by apt — no custom unit needed.
@@ -11,32 +10,10 @@
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# /etc/systemd/system/stockanalysis-auth.service
-#
-# Refreshes the Zerodha enc_token via TOTP login.
-# Run once at startup — writes the new token into .env before the monitor starts.
-# ──────────────────────────────────────────────────────────────────────────────
-[Unit]
-Description=Zerodha Auth — refresh enc_token before market open
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=oneshot
-User=hacker
-WorkingDirectory=/home/hacker/StockAnalysis
-EnvironmentFile=/home/hacker/StockAnalysis/.env
-Environment=PYTHONPATH=/home/hacker/StockAnalysis
-ExecStart=/home/hacker/StockAnalysis/.venv/bin/python auth/auth_login.py
-StandardOutput=journal
-StandardError=journal
-
-
-# ──────────────────────────────────────────────────────────────────────────────
 # /etc/systemd/system/stockanalysis-notification.service
 #
-# Notification stream consumer — reads from Redis stream and sends
-# Telegram/Discord alerts. Required by both intraday and positional services.
+# Notification stream consumer — reads from Redis stream "notification:jobs"
+# and sends Telegram/Discord alerts. Runs 24/7.
 # ──────────────────────────────────────────────────────────────────────────────
 [Unit]
 Description=StockAnalysis Notification Service
@@ -62,17 +39,57 @@ WantedBy=multi-user.target
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# /etc/systemd/system/stockanalysis-data-gateway.service
+#
+# Data gateway — fetches yfinance + Sensibull data and publishes to Redis.
+# Self-schedules based on market calendar:
+#   09:15-15:30 → intraday (5m bars every 5 min)
+#   19:00-19:30 → positional (2y daily, one fetch)
+#   Otherwise   → idle (heartbeat only)
+# Runs 24/7.
+# ──────────────────────────────────────────────────────────────────────────────
+[Unit]
+Description=StockAnalysis Data Gateway
+After=redis-server.service network-online.target
+Wants=network-online.target
+Requires=redis-server.service
+
+[Service]
+Type=simple
+User=hacker
+WorkingDirectory=/home/hacker/StockAnalysis
+Environment=PYTHONPATH=/home/hacker/StockAnalysis
+Environment=REDIS_URL=redis://localhost:6379
+ExecStart=/home/hacker/StockAnalysis/.venv/bin/python services/data_gateway/main.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+CPUQuota=40%
+
+[Install]
+WantedBy=multi-user.target
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # /etc/systemd/system/stockanalysis.service
 #
-# Intraday monitor — runs during market hours (9:00 AM–3:30 PM IST).
-# Depends on auth (enctoken) + notification (Telegram dispatch).
-# Uses journald for logs (notification service handles Telegram alerts).
+# Stock Analysis monolith — always running, self-scheduling.
+# Internal state machine manages the daily flow:
+#   09:00 → pre-market (global cues, FII/DII)
+#   09:07 → NSE pre-open report
+#   09:10 → morning bias (from 8 PM positional results)
+#   09:15 → intraday analysis (every 5 min until 15:30)
+#   20:00 → positional analysis (EOD)
+#   Overnight → idle (Redis keeps positional data for next morning)
+# Auth (Zerodha TOTP) is refreshed inline at 9:00 AM — no separate auth service.
+# Runs 24/7. Restart=always for crash recovery.
 # ──────────────────────────────────────────────────────────────────────────────
 [Unit]
-Description=Stock Analysis Intraday
-After=network-online.target stockanalysis-auth.service stockanalysis-notification.service
+Description=Stock Analysis (always running — self-scheduling)
+After=redis-server.service stockanalysis-notification.service stockanalysis-data-gateway.service
 Wants=network-online.target
-Requires=stockanalysis-auth.service stockanalysis-notification.service
+Requires=redis-server.service stockanalysis-notification.service stockanalysis-data-gateway.service
 
 [Service]
 Type=simple
@@ -80,69 +97,12 @@ User=hacker
 WorkingDirectory=/home/hacker/StockAnalysis
 EnvironmentFile=/home/hacker/StockAnalysis/.env
 Environment=PYTHONPATH=/home/hacker/StockAnalysis
+Environment=REDIS_URL=redis://localhost:6379
 ExecStart=/home/hacker/StockAnalysis/.venv/bin/python intraday/intraday_monitor.py
-Restart=no
+Restart=always
+RestartSec=30
 StandardOutput=journal
 StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# /etc/systemd/system/stockanalysis.timer
-#
-# Triggers the intraday service at 9:00 AM IST (03:30 UTC) Mon–Fri.
-# ──────────────────────────────────────────────────────────────────────────────
-[Unit]
-Description=Stock Analysis at 9:00 AM IST Mon-Fri
-
-[Timer]
-OnCalendar=Mon-Fri 03:30:00 UTC
-Persistent=true
-
-[Install]
-WantedBy=timers.target
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# /etc/systemd/system/stockanalysis-positional.service
-#
-# EOD positional analysis — runs after market close (8:00 PM IST).
-# Depends on auth + notification (same flow as intraday).
-# ──────────────────────────────────────────────────────────────────────────────
-[Unit]
-Description=Stock Analysis Positional EOD
-After=network-online.target stockanalysis-auth.service stockanalysis-notification.service
-Wants=network-online.target
-Requires=stockanalysis-auth.service stockanalysis-notification.service
-
-[Service]
-Type=simple
-User=hacker
-WorkingDirectory=/home/hacker/StockAnalysis
-EnvironmentFile=/home/hacker/StockAnalysis/.env
-Environment=PYTHONPATH=/home/hacker/StockAnalysis
-ExecStart=/home/hacker/StockAnalysis/.venv/bin/python intraday/intraday_monitor.py
-Restart=no
-StandardOutput=journal
-StandardError=journal
-
-[Install]
-WantedBy=multi-user.target
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# /etc/systemd/system/stockanalysis-positional.timer
-#
-# Triggers the positional service at 8:00 PM IST (14:30 UTC) Mon–Fri.
-# ──────────────────────────────────────────────────────────────────────────────
-[Unit]
-Description=Stock Analysis Positional at 8:00 PM IST Mon-Fri
-
-[Timer]
-OnCalendar=Mon-Fri 14:30:00 UTC
-Persistent=true
-
-[Install]
-WantedBy=timers.target
