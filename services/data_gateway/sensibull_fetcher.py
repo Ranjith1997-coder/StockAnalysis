@@ -21,6 +21,7 @@ import pandas as pd
 from services.common.logging import get_logger
 logger = get_logger("data-gateway")
 from services.common.stock_proxy import StockProxy
+from services.common.rate_limiter import get_sensibull_limiter, retry_on_429
 
 
 SENSIBULL_BASE = "https://oxide.sensibull.com/v1/compute"
@@ -35,12 +36,18 @@ def fetch_sensibull_data(symbol: str, mode: str = "intraday") -> dict | None:
         dict with keys: underlying_info, stats, per_expiry_map, nse_stats,
         historical_row (for building historical_data)
     """
+    limiter = get_sensibull_limiter()
     try:
-        encoded = quote(symbol, safe="")
-        url = f"{SENSIBULL_BASE}/cache/insights/stock_info?tradingsymbol={encoded}"
-        response = requests.get(url, timeout=(5, 10))
-        response.raise_for_status()
-        data = response.json()
+        @retry_on_429(max_retries=3, base_delay=1.0, max_delay=8.0)
+        def _do_fetch():
+            limiter.acquire()
+            encoded = quote(symbol, safe="")
+            url = f"{SENSIBULL_BASE}/cache/insights/stock_info?tradingsymbol={encoded}"
+            response = requests.get(url, timeout=(5, 10))
+            response.raise_for_status()
+            return response.json()
+
+        data = _do_fetch()
 
         if not (data.get("success") and "payload" in data):
             logger.warning(f"[Sensibull] Unsuccessful response for {symbol}")
@@ -103,10 +110,17 @@ def fetch_sensibull_oi_chain(symbol: str, per_expiry_map: dict, mode: str = "int
             "show_prev_oi": True,
         }
 
-        url = f"{SENSIBULL_BASE}/1/oi_graphs/oi_chart"
-        response = requests.post(url, json=body, timeout=(5, 15))
-        response.raise_for_status()
-        data = response.json()
+        limiter = get_sensibull_limiter()
+
+        @retry_on_429(max_retries=3, base_delay=1.0, max_delay=8.0)
+        def _do_fetch():
+            limiter.acquire()
+            url = f"{SENSIBULL_BASE}/1/oi_graphs/oi_chart"
+            response = requests.post(url, json=body, timeout=(5, 15))
+            response.raise_for_status()
+            return response.json()
+
+        data = _do_fetch()
 
         if not (data.get("success") and "payload" in data):
             logger.warning(f"[Sensibull] OI chain unsuccessful for {symbol}")
@@ -162,11 +176,18 @@ def fetch_iv_chart(symbol: str) -> pd.DataFrame | None:
         or None on error.
     """
     try:
-        encoded = quote(symbol, safe="")
-        url = f"{SENSIBULL_BASE}/iv_chart/{encoded}"
-        response = requests.get(url, timeout=(5, 15))
-        response.raise_for_status()
-        data = response.json()
+        limiter = get_sensibull_limiter()
+
+        @retry_on_429(max_retries=3, base_delay=1.0, max_delay=8.0)
+        def _do_fetch():
+            limiter.acquire()
+            encoded = quote(symbol, safe="")
+            url = f"{SENSIBULL_BASE}/iv_chart/{encoded}"
+            response = requests.get(url, timeout=(5, 15))
+            response.raise_for_status()
+            return response.json()
+
+        data = _do_fetch()
 
         if not (data.get("success") and "payload" in data):
             logger.warning(f"[Sensibull] IV chart unsuccessful for {symbol}")
@@ -261,10 +282,17 @@ def fetch_oi_history(symbol: str, per_expiry_map: dict) -> pd.DataFrame | None:
             "max_pain": {"expiries": options_expiries_body, "automatic_expiry": False},
         }
 
-        url = f"{SENSIBULL_BASE}/compute_intraday"
-        response = requests.post(url, json=payload, timeout=(5, 20))
-        response.raise_for_status()
-        data = response.json()
+        limiter = get_sensibull_limiter()
+
+        @retry_on_429(max_retries=3, base_delay=1.0, max_delay=8.0)
+        def _do_fetch():
+            limiter.acquire()
+            url = f"{SENSIBULL_BASE}/compute_intraday"
+            response = requests.post(url, json=payload, timeout=(5, 20))
+            response.raise_for_status()
+            return response.json()
+
+        data = _do_fetch()
 
         if not (data.get("success") and "payload" in data):
             logger.warning(f"[Sensibull] OI history unsuccessful for {symbol}")
@@ -484,7 +512,7 @@ def fetch_and_publish_cycle(redis_proxy, stock_symbols: list[str], index_symbols
     logger.info(f"[Sensibull] Cycle complete: {successes} success, {failures} failure")
 
 
-SENSIBULL_WORKERS = int(os.environ.get("SENSIBULL_WORKERS", "10"))
+SENSIBULL_WORKERS = int(os.environ.get("SENSIBULL_WORKERS", "5"))
 
 
 def fetch_and_publish_cycle_parallel(redis_proxy, stock_symbols: list[str], index_symbols: list[str],

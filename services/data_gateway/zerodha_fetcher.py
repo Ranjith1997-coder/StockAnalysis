@@ -21,13 +21,14 @@ import pandas as pd
 from common.logging_util import logger
 from zerodha.zerodha_connect import KiteConnect
 from common import constants as constant
+from services.common.rate_limiter import get_zerodha_limiter
 
 
 AUTH_HASH = "auth:zerodha"
 AUTH_CHANNEL = "auth:enctoken_refreshed"
 AUTH_COMMANDS_STREAM = "auth:commands"
 ZERODHA_HASH_TEMPLATE = "data:zerodha:{symbol}"
-FUTURES_WORKERS = 5
+FUTURES_WORKERS = 3
 
 
 def fetch_instruments() -> dict:
@@ -119,9 +120,16 @@ def _fetch_one_symbol(
     is_next: bool,
     retries: int = 3,
 ) -> Optional[pd.DataFrame]:
-    """Fetch historical data for a single instrument token."""
+    """Fetch historical data for a single instrument token.
+
+    Uses a shared RateLimiter (3 req/s) across all workers and exponential
+    backoff with jitter on rate-limit errors.
+    """
+    limiter = get_zerodha_limiter()
+    delay = 1.0
     for attempt in range(retries):
         try:
+            limiter.acquire()
             hist_data = kc.historical_data(
                 instrument_token=token,
                 from_date=from_date,
@@ -136,10 +144,14 @@ def _fetch_one_symbol(
         except Exception as e:
             err_str = str(e)
             if "Too many requests" in err_str:
-                logger.debug(f"[zerodha-fetcher] Rate limit for {symbol}, sleeping 1s…")
-                time.sleep(1)
+                import random as _rnd
+                jitter = _rnd.uniform(0, delay * 0.25)
+                logger.debug(f"[zerodha-fetcher] Rate limit for {symbol}, "
+                             f"retry {attempt + 1}/{retries}, sleeping {delay + jitter:.1f}s")
+                time.sleep(delay + jitter)
+                delay = min(delay * 2, 8.0)
             elif "403" in err_str or "TokenException" in err_str:
-                raise  # enctoken expired — propagate to caller
+                raise
             else:
                 logger.error(f"[zerodha-fetcher] Error fetching {symbol} "
                              f"({'next' if is_next else 'current'}): {e}")
