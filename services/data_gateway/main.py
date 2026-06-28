@@ -65,6 +65,7 @@ POSITIONAL_FETCH_END = _time(19, 30)
 
 # Global state
 _running = True
+_positional_done_date = None  # date string when positional fetch completed (prevents redundant cycles)
 
 
 def signal_handler(signum, frame):
@@ -177,7 +178,7 @@ def _sleep_seconds(seconds: int):
 
 
 def main():
-    global _running
+    global _running, _positional_done_date
 
     parser = argparse.ArgumentParser(description="StockAnalysis Data Gateway")
     parser.add_argument("--dev-intraday", action="store_true", help="Dev intraday mode")
@@ -313,6 +314,12 @@ def main():
                 _sleep_seconds(min(sleep_sec, 300))
                 continue
 
+        if mode == "positional" and _positional_done_date == str(datetime.date.today()):
+            logger.debug(f"[data-gateway] Cycle {cycle_count}: positional already done today — idle")
+            _update_beat(redis, cycle_count, "idle", status_detail="positional_done")
+            _sleep_seconds(IDLE_SLEEP)
+            continue
+
         # ── Fetch data ──────────────────────────────────────────────────
         cycle_start = time.time()
         logger.info(f"[data-gateway] Cycle {cycle_count}: fetching {mode} data...")
@@ -384,6 +391,7 @@ def main():
 
         # ── Sleep until next cycle ──────────────────────────────────────
         if mode == "positional":
+            _positional_done_date = str(datetime.date.today())
             logger.info("[data-gateway] Positional fetch complete — idle until tomorrow")
 
         if not _running:
