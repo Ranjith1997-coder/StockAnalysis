@@ -27,7 +27,6 @@ from analyser.PanicModeAnalyser import PanicModeAnalyser
 from analyser.OptionSellerCompositeAnalyser import OptionSellerCompositeAnalyser
 from common.logging_util import logger
 from typing import List, Tuple, Optional
-from enum import Enum
 from zerodha.zerodha_analysis import ZerodhaTickerManager
 from zerodha.live_options_engine import LiveOptionsEngine
 from dotenv import load_dotenv
@@ -40,7 +39,7 @@ from urllib.parse import quote
 from common.token_registry import TokenRegistry, TokenInfo, TokenType
 from intelligence.signal_bus import SignalBus
 from intelligence.correlator import SignalCorrelator, Confluence
-from intelligence.signal import Signal, Direction, Layer, SignalStrength, weight_to_strength
+from intelligence.signal import Signal, Direction, Layer, weight_to_strength
 from zerodha.live_stock_engine import LiveStockEngine
 from zerodha.futures_fetcher import FuturesFetcher
 from services.common.redis_proxy import RedisProxy
@@ -687,7 +686,7 @@ def generate_top_gainers_and_losers_report(gainers, losers):
     for i, (stock, change_percent) in enumerate(gainers):
         report += f"  \U0001F7E2 {i+1}. <b>{stock}</b>: <code>{change_percent:+.2f}%</code>\n"
 
-    report += f"\n\U0001F4C9 <b>Top Losers</b>\n"
+    report += "\n\U0001F4C9 <b>Top Losers</b>\n"
     for i, (stock, change_percent) in enumerate(losers):
         report += f"  \U0001F534 {i+1}. <b>{stock}</b>: <code>{change_percent:.2f}%</code>\n"
 
@@ -1197,6 +1196,42 @@ def _get_nearest_expiry_str(index_stock) -> str | None:
     return None
 
 
+def _start_zerodha_ws() -> None:
+    """Connect Zerodha dual WebSockets at 09:00 after auth refresh."""
+    if not ENABLE_ZERODHA_API:
+        logger.info("[ws] Zerodha API disabled — skipping WS connect")
+        return
+    tm = shared.app_ctx.zd_ticker_manager
+    if tm is None:
+        logger.warning("[ws] ZerodhaTickerManager not initialised")
+        return
+    if tm.connected:
+        logger.info("[ws] Zerodha WS already connected")
+        return
+    enc_raw = os.getenv(constant.ENV_ZERODHA_ENC_TOKEN, "")
+    if not enc_raw:
+        logger.warning("[ws] ZERODHA_ENC_TOKEN not set — Zerodha WS not connected")
+        return
+    tm.update_enctoken(quote(enc_raw, safe=""))
+    if tm.connect():
+        logger.info("[ws] Zerodha WS1 (base) + WS2 (options) connected")
+    else:
+        logger.warning("[ws] Zerodha WS connect failed — use /enctoken via Telegram bot to retry")
+
+
+def _stop_zerodha_ws() -> None:
+    """Disconnect Zerodha WS after market close."""
+    tm = shared.app_ctx.zd_ticker_manager
+    if tm is None or not tm.connected:
+        return
+    try:
+        tm.close_connection()
+        tm.stop_tick_processor()
+        logger.info("[ws] Zerodha WS1 + WS2 disconnected after market close")
+    except Exception as e:
+        logger.warning(f"[ws] Zerodha WS disconnect error: {e}")
+
+
 def _start_sensibull_feed(live_options_engine, enrichment_only: bool = False) -> None:
     """
     Create one SensibullFeed per supported symbol and start them.
@@ -1381,7 +1416,8 @@ def intraday_analysis(loop = True, loop_wait_time = 30, max_cycles = 0):
             logger.error(f"Critical error in stock analysis: {e}")
 
         try:
-            import psutil, os as _os
+            import psutil
+            import os as _os
             _proc = psutil.Process(_os.getpid())
             _rss_mb = _proc.memory_info().rss / 1024 / 1024
             logger.info(f"[memory] cycle={cycle} RSS={_rss_mb:.1f} MB")
@@ -1701,22 +1737,18 @@ def init():
             shared.app_ctx.zd_ticker_manager.index_only_mode = True
             logger.info("index_only_mode enabled — equity stocks excluded from WebSocket")
 
-        # Auto-connect Zerodha WebSocket using enctoken from .env.
-        # The auth service (stockanalysis-auth.service) writes a fresh enctoken
-        # before this process starts, so no Telegram bot interaction is needed.
-        # Skipped when OPTIONS_SOURCE=sensibull (Zerodha WS handles only equity/index ticks there).
-        if ENABLE_LIVE_OPTIONS and shared.app_ctx.options_source in ("zerodha", "both"):
+        # Auto-connect Zerodha WebSocket in dev mode.
+        # In production mode, WS connects at 09:00 in _run_daily_loop()
+        # after _refresh_zerodha_auth() so the enctoken is fresh.
+        if not PRODUCTION and ENABLE_LIVE_OPTIONS and shared.app_ctx.options_source in ("zerodha", "both"):
             enc_raw = os.getenv(constant.ENV_ZERODHA_ENC_TOKEN, "")
             if enc_raw:
-                logger.info("[init] Auto-connecting Zerodha WebSocket using enctoken from .env")
+                logger.info("[init] Dev mode — auto-connecting Zerodha WebSocket")
                 shared.app_ctx.zd_ticker_manager.update_enctoken(quote(enc_raw, safe=""))
                 if shared.app_ctx.zd_ticker_manager.connect():
-                    logger.info("[init] Zerodha WebSocket connected successfully")
+                    logger.info("[init] Zerodha WebSocket connected (dev mode)")
                 else:
-                    logger.warning(
-                        "[init] Zerodha WebSocket auto-connect failed — "
-                        "option ticks unavailable; use /enctoken via Telegram bot to retry"
-                    )
+                    logger.warning("[init] Zerodha WebSocket auto-connect failed — use /enctoken via Telegram bot to retry")
             else:
                 logger.warning("[init] ZERODHA_ENC_TOKEN not set — Zerodha WebSocket not connected")
 
@@ -1818,6 +1850,12 @@ def _run_daily_loop():
         # Refresh auth (was separate systemd oneshot)
         _refresh_zerodha_auth()
 
+        # ── 09:00 — Connect Zerodha dual WebSockets ──
+        # WS1 (base) for equity + index ticks.
+        # WS2 (options) for option ticks (no 500-instrument limit).
+        # Both use the fresh enctoken from _refresh_zerodha_auth().
+        _start_zerodha_ws()
+
         # ── 09:00 — Start Sensibull live option chain feed ──
         # 15-min buffer before market opens so connection issues are
         # discovered early and can retry before intraday starts.
@@ -1871,6 +1909,9 @@ def _run_daily_loop():
 
         # ── Stop Sensibull feeds after market close (no longer needed) ──
         _stop_sensibull_feed()
+
+        # ── Disconnect Zerodha WebSockets until tomorrow ──
+        _stop_zerodha_ws()
 
         # ── Done for today ──
         _morning_bias_done = False
@@ -1994,6 +2035,7 @@ def _shutdown_background_services():
             logger.warning(f"[shutdown] narrator shutdown error: {e}")
 
     _stop_sensibull_feed()
+    _stop_zerodha_ws()
 
 if __name__ =="__main__":
 
