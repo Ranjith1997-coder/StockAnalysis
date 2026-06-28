@@ -48,6 +48,13 @@ ENV_NO_OF_INDEX  = "NO_OF_INDEX"
 ENV_DEV_MAX_CYCLES = "DEV_MAX_CYCLES"        # Max intraday loop cycles in dev mode (0 = unlimited)
 ENV_DEV_LOOP_WAIT  = "DEV_LOOP_WAIT_TIME"    # Seconds to sleep between dev cycles (-1 = use production wait time)
 ENV_THREAD_POOL_WORKERS = "THREAD_POOL_WORKERS"  # Number of worker threads in the analysis pool (default: 20)
+ENV_USE_ANALYSIS_ENGINE = "USE_ANALYSIS_ENGINE"  # Feature flag: 1 = Redis Stream job dispatch, 0 = ThreadPoolExecutor
+
+# Phase 1C: analysis-engine stream contracts
+ANALYSIS_JOBS_STREAM     = "orchestrator:analysis_jobs"
+ANALYSIS_RESULTS_STREAM  = "analysis:results"
+ANALYSIS_JOBS_GROUP      = "analysis-workers"
+ANALYSIS_RESULTS_GROUP   = "monolith"
 
 
 #DEV_CONSTANTS
@@ -59,6 +66,7 @@ NO_OF_INDEX  = int(os.environ.get(ENV_NO_OF_INDEX,  -1))
 # Optimal for I/O-bound workload (90% network wait): 20 on i5-6200U (4 hw-threads).
 # Raise to 32 for larger FnO universes; lower to 12 if Sensibull 429s are observed.
 THREAD_POOL_WORKERS = int(os.environ.get(ENV_THREAD_POOL_WORKERS, "20"))
+USE_ANALYSIS_ENGINE = os.environ.get(ENV_USE_ANALYSIS_ENGINE, "").lower() in ("1", "true", "yes")
 
 
 #INTRADAY CONSTANTS

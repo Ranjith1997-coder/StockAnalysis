@@ -72,6 +72,39 @@ WantedBy=multi-user.target
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# /etc/systemd/system/stockanalysis-analysis-engine.service
+#
+# Analysis engine — consumes analysis jobs from orchestrator:analysis_jobs
+# Redis Stream and runs all 11 analysers against each stock.
+# Horizontal scaling: start N workers, all join the same analysis-workers
+# consumer group. Use stockanalysis-analysis@.service (template) for multi-worker.
+# ──────────────────────────────────────────────────────────────────────────────
+[Unit]
+Description=StockAnalysis Analysis Engine
+After=redis-server.service stockanalysis-data-gateway.service
+Wants=network-online.target
+Requires=redis-server.service
+
+[Service]
+Type=simple
+User=hacker
+WorkingDirectory=/home/hacker/StockAnalysis
+EnvironmentFile=/home/hacker/StockAnalysis/.env
+Environment=PYTHONPATH=/home/hacker/StockAnalysis
+Environment=REDIS_URL=redis://localhost:6379
+ExecStart=/home/hacker/StockAnalysis/.venv/bin/python services/analysis_engine/main.py --worker-name prod-1
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+CPUQuota=40%
+MemoryMax=800M
+
+[Install]
+WantedBy=multi-user.target
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # /etc/systemd/system/stockanalysis.service
 #
 # Stock Analysis monolith — always running, self-scheduling.
@@ -87,9 +120,9 @@ WantedBy=multi-user.target
 # ──────────────────────────────────────────────────────────────────────────────
 [Unit]
 Description=Stock Analysis (always running — self-scheduling)
-After=redis-server.service stockanalysis-notification.service stockanalysis-data-gateway.service
+After=redis-server.service stockanalysis-notification.service stockanalysis-data-gateway.service stockanalysis-analysis-engine.service
 Wants=network-online.target
-Requires=redis-server.service stockanalysis-notification.service stockanalysis-data-gateway.service
+Requires=redis-server.service stockanalysis-notification.service stockanalysis-data-gateway.service stockanalysis-analysis-engine.service
 
 [Service]
 Type=simple

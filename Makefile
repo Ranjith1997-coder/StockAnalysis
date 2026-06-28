@@ -617,7 +617,7 @@ server-enable-always-on: timers-disable
 
 .PHONY: server-svcs-status
 server-svcs-status:
-	@for svc in redis-server stockanalysis stockanalysis-notification stockanalysis-data-gateway; do \
+	@for svc in redis-server stockanalysis stockanalysis-notification stockanalysis-data-gateway stockanalysis-analysis-engine; do \
 		STATUS=$$(ssh $(SERVER) "systemctl is-active $$svc 2>/dev/null || echo not loaded"); \
 		printf "  %-32s %s\n" "$$svc" "$$STATUS"; \
 	done
@@ -710,6 +710,47 @@ svc-notify-test:
 
 svc-dead-letter:
 	@redis-cli XREAD COUNT 10 STREAMS notification:dead 0 2>/dev/null || echo "No dead letters"
+
+# ─── Analysis Engine ──────────────────────────────────────────────────────────
+.PHONY: run-analysis-engine analysis-engine-prod server-analysis-engine-status
+.PHONY: server-analysis-engine-start server-analysis-engine-stop server-analysis-engine-logs
+
+run-analysis-engine:
+	@echo "Starting analysis-engine..."
+	@echo "Press Ctrl+C to stop."
+	REDIS_URL=redis://localhost:6379 PYTHONPATH=$(CURDIR) $(PYTHON) services/analysis_engine/main.py --worker-name dev-1
+
+svc-analysis-engine-check:
+	@redis-cli XINFO GROUPS orchestrator:analysis_jobs 2>/dev/null || echo "No consumer group yet (start analysis-engine first)"
+	@redis-cli XLEN orchestrator:analysis_jobs 2>/dev/null || echo "0"
+	@redis-cli XLEN analysis:results 2>/dev/null || echo "0"
+	@redis-cli KEYS "service:registry:analysis-engine:*" 2>/dev/null || echo "No worker heartbeats"
+
+svc-analysis-engine-logs:
+	@tail -50 logs/analysis-engine.log 2>/dev/null || echo "No analysis-engine logs found."
+
+analysis-engine-deploy:
+	@echo "=== Deploying analysis-engine systemd unit to server ==="
+	ssh $(SERVER) "sudo cp $$(pwd)/scripts/system_config /etc/systemd/system/stockanalysis-analysis-engine.service 2>/dev/null; \
+		sudo systemctl daemon-reload && \
+		sudo systemctl enable stockanalysis-analysis-engine && \
+		sudo systemctl restart stockanalysis-analysis-engine && \
+		echo 'Analysis engine deployed and started'"
+
+server-analysis-engine-status:
+	ssh $(SERVER) "systemctl status stockanalysis-analysis-engine --no-pager 2>/dev/null | head -10"
+	@echo ""
+	ssh $(SERVER) "redis-cli KEYS 'service:registry:analysis-engine:*' 2>/dev/null | head -5" || true
+
+server-analysis-engine-start:
+	ssh $(SERVER) "sudo systemctl start stockanalysis-analysis-engine && echo 'Started' || echo 'FAILED'"
+
+server-analysis-engine-stop:
+	ssh $(SERVER) "sudo systemctl stop stockanalysis-analysis-engine && echo 'Stopped'"
+
+server-analysis-engine-logs:
+	ssh $(SERVER) "journalctl -u stockanalysis-analysis-engine --no-pager -n 50"
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Debug Client (Telethon terminal → Telegram bot)

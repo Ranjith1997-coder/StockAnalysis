@@ -1,8 +1,10 @@
+import json
 import os
 import sys
 import traceback
 import html
 import argparse
+import uuid
 from notification.Notification import TELEGRAM_NOTIFICATIONS
 from datetime import datetime, time, timedelta
 import concurrent.futures
@@ -204,6 +206,8 @@ LIVE_OPTIONS_ONLY   = False   # When True: skip all regular analysis, run live o
 ENABLE_INTELLIGENCE = False   # When True: SignalBus + Correlator + morning bias + LiveStockEngine
 redis_proxy: Optional[RedisProxy] = None
 cycle_subscriber: Optional[CycleSubscriber] = None
+
+USE_ANALYSIS_ENGINE = False
 
 class MonitorResult(Enum):
     SUCCESS = 0
@@ -578,31 +582,13 @@ def process_stock(stock: Stock) -> Tuple[MonitorResult, bool, Optional[str]]:
         logger.error(f"Error processing {stock.stockName}: {exc}")
         return MonitorResult.ERROR, False, str(exc)
 
-def fetch_and_analyze_stocks() -> List[Tuple[MonitorResult, bool, Optional[str]]]:
-    logger.info("Fetching and analyzing data for all stocks")
-    
-    stock_objs = list(shared.app_ctx.stock_token_obj_dict.values())
-    index_objs = list(shared.app_ctx.index_token_obj_dict.values())
-    commodity_objs = list(shared.app_ctx.commodity_token_obj_dict.values())
-    global_indices_objs = list(shared.app_ctx.global_indices_token_obj_dict.values())
-    
-    # Reset analyser constants once per cycle before any analysis runs.
-    # Previously split across index/stock blocks causing a double reset per cycle.
-    orchestrator.reset_all_constants()
-
-    # ── Price data ────────────────────────────────────────────────────────────
-    # Read from data-gateway's Redis hashes (sub-millisecond)
-    # All 4 asset classes: stocks, indices, commodities, global indices
-    load_price_data_from_redis(
-        redis_proxy, stock_objs, index_objs,
-        commodity_objs, global_indices_objs,
-    )
-
-    # ── Per-stock analysis ────────────────────────────────────────────────────
+def _dispatch_and_collect_threadpool(
+    stock_objs: list, index_objs: list
+) -> List[Tuple[MonitorResult, bool, Optional[str]]]:
+    """Dispatch analysis jobs via ThreadPoolExecutor (fallback path)."""
     results: List[Tuple[MonitorResult, bool, Optional[str]]] = []
 
     def _collect(monitor_futures: dict, label: str) -> None:
-        """Drain futures with a 90s hard timeout; cancel and skip stragglers."""
         try:
             for future in concurrent.futures.as_completed(monitor_futures, timeout=90):
                 item = monitor_futures[future]
@@ -620,20 +606,232 @@ def fetch_and_analyze_stocks() -> List[Tuple[MonitorResult, bool, Optional[str]]
                     )
                     results.append((MonitorResult.ERROR, False, "timeout"))
 
-    # Monitor and analyze all indices
     _collect(
         {thread_pool.submit(process_stock, index): index for index in index_objs},
         "indices",
     )
-
-    # Monitor and analyze all stocks
     _collect(
         {thread_pool.submit(process_stock, stock): stock for stock in stock_objs},
         "stocks",
     )
-
-    logger.info("Data fetching and analysis completed for all stocks")
     return results
+
+
+def _re_emit_signals_from_analysis(stock, layer: Layer):
+    """Re-emit signals from analysis dict to in-memory SignalBus.
+    
+    The analysis-engine worker's _emit_signals() no-ops because
+    shared.app_ctx.signal_bus is None in the worker process. The monolith
+    re-emits here so the Correlator/Narrator see the signals.
+    """
+    bus = shared.app_ctx.signal_bus
+    if not bus:
+        return
+    for sentiment in ("BULLISH", "BEARISH"):
+        direction = Direction[sentiment]
+        for analysis_type in stock.analysis.get(sentiment, {}):
+            weight = constant.ANALYSIS_WEIGHTS.get(
+                analysis_type, constant.ANALYSIS_WEIGHTS.get("DEFAULT", 10)
+            )
+            bus.emit(Signal(
+                symbol=stock.stock_symbol,
+                direction=direction,
+                source=analysis_type.lower(),
+                layer=layer,
+                strength=weight_to_strength(weight),
+            ))
+
+
+def _convert_stream_result(fields: dict, stock_obj) -> Tuple[MonitorResult, bool, Optional[str]]:
+    """Convert a stream result dict to the standard tuple format + side effects.
+    
+    Side effects performed:
+    - Updates stock_obj.analysis from result (for reporting/intelligence)
+    - Adds to 52-week lists if applicable
+    - Re-emits signals to in-memory SignalBus
+    - Sends Telegram notification if trend found
+    """
+    result_str = fields.get("result", "ERROR")
+    trend_found = fields.get("trend_found", "false").lower() == "true"
+    message = fields.get("message", "")
+
+    monitor_result = {
+        "SUCCESS": MonitorResult.SUCCESS,
+        "NO_DATA": MonitorResult.NO_DATA,
+        "ERROR": MonitorResult.ERROR,
+    }.get(result_str, MonitorResult.ERROR)
+
+    analysis_json = fields.get("analysis_json", "{}")
+    try:
+        stock_obj.analysis = json.loads(analysis_json)
+    except Exception:
+        stock_obj.analysis = {"BULLISH": {}, "BEARISH": {}, "NEUTRAL": {}, "NoOfTrends": 0}
+
+    is_52w_high = fields.get("is_52w_high", "false").lower() == "true"
+    is_52w_low = fields.get("is_52w_low", "false").lower() == "true"
+    if is_52w_high:
+        shared.ticker_52_week_high_list.append(stock_obj)
+    if is_52w_low:
+        shared.ticker_52_week_low_list.append(stock_obj)
+
+    if shared.app_ctx.signal_bus and trend_found:
+        layer = (
+            Layer.POSITIONAL
+            if shared.app_ctx.mode == shared.Mode.POSITIONAL
+            else Layer.INTRADAY
+        )
+        _re_emit_signals_from_analysis(stock_obj, layer)
+
+    if trend_found and message:
+        TELEGRAM_NOTIFICATIONS.send_notification(message, parse_mode="HTML")
+
+    return (monitor_result, trend_found, message if trend_found else None)
+
+
+def _time_to_next_5min_bar() -> int:
+    """Seconds remaining until the next 5-minute bar boundary."""
+    now = datetime.now()
+    seconds_into_bar = now.second + (now.minute % 5) * 60
+    return constant.INTRADAY_SLEEP_TIME - seconds_into_bar
+
+
+def _analysis_collection_deadline(reporting_buffer: int = 15) -> float:
+    """Compute the wall-clock deadline for collecting analysis results.
+
+    Uses the time remaining until the next 5-min bar (intraday mode) or
+    a generous fixed budget (positional mode, which runs once).
+
+    Args:
+        reporting_buffer: Seconds reserved for reporting + healthcheck after
+                          collection completes.  Default 15s.
+
+    Returns:
+        Unix timestamp (time.time() + seconds) at which collection should stop.
+    """
+    if shared.app_ctx.mode == shared.Mode.POSITIONAL:
+        return time.time() + 180  # 3 min for positional (single run, no next-bar pressure)
+    budget = _time_to_next_5min_bar() - reporting_buffer
+    return time.time() + max(60, budget)
+
+
+def _dispatch_and_collect_stream(
+    stock_objs: list, index_objs: list
+) -> List[Tuple[MonitorResult, bool, Optional[str]]]:
+    """Dispatch analysis jobs to Redis Stream, collect results by cycle_id.
+
+    Uses a dynamic deadline based on the next 5-min bar (intraday) or a
+    generous fixed budget (positional).  Results from a different cycle_id
+    (e.g. late stragglers from a previous cycle) are acked and discarded.
+    """
+    cycle_id = (
+        f"{datetime.now().strftime('%Y-%m-%d')}-{shared.app_ctx.intraday_cycle_count}"
+    )
+    mode_str = (
+        "positional"
+        if shared.app_ctx.mode == shared.Mode.POSITIONAL
+        else "intraday"
+    )
+
+    redis_proxy.hset("orchestrator:state", mapping={
+        "mode": mode_str,
+        "cycle_id": cycle_id,
+        "last_cycle_time": str(time.time()),
+    })
+
+    jobs = []
+    for obj in index_objs + stock_objs:
+        job_id = uuid.uuid4().hex[:8]
+        jobs.append((job_id, obj))
+        redis_proxy.xadd(constant.ANALYSIS_JOBS_STREAM, {
+            "job_id": job_id,
+            "cycle_id": cycle_id,
+            "symbol": obj.stock_symbol,
+            "is_index": str(obj.is_index).lower(),
+            "mode": mode_str,
+        }, maxlen=500)
+
+    logger.info(f"[stream] Dispatched {len(jobs)} analysis jobs (cycle={cycle_id})")
+
+    expected = len(jobs)
+    job_ids = {jid for jid, _ in jobs}
+    results_by_job = {}
+    deadline = _analysis_collection_deadline()
+
+    while len(results_by_job) < expected and time.time() < deadline:
+        remaining_ms = int((deadline - time.time()) * 1000)
+        block_ms = min(remaining_ms, 5000)
+        if block_ms <= 0:
+            break
+
+        try:
+            messages = redis_proxy.xreadgroup(
+                constant.ANALYSIS_RESULTS_GROUP,
+                "prod-1",
+                {constant.ANALYSIS_RESULTS_STREAM: ">"},
+                count=expected - len(results_by_job),
+                block=block_ms,
+            )
+        except Exception as e:
+            logger.error(f"[stream] xreadgroup error: {e}")
+            sleep(1)
+            continue
+
+        if not messages:
+            continue
+
+        entries = messages[0][1] if isinstance(messages, list) and messages else []
+        for msg_id, fields in entries:
+            result_cycle = fields.get("cycle_id", "")
+            if result_cycle != cycle_id:
+                logger.debug(
+                    f"[stream] Discarding stale result for {fields.get('symbol', '?')} "
+                    f"(cycle={result_cycle}, current={cycle_id})"
+                )
+            else:
+                jid = fields.get("job_id", "")
+                if jid in job_ids:
+                    results_by_job[jid] = fields
+            try:
+                redis_proxy.xack(constant.ANALYSIS_RESULTS_STREAM, constant.ANALYSIS_RESULTS_GROUP, msg_id)
+            except Exception:
+                pass
+
+    results = []
+    for job_id, obj in jobs:
+        fields = results_by_job.get(job_id)
+        if fields is None:
+            logger.warning(f"[stream] No result for {obj.stock_symbol} (job={job_id}) — timeout")
+            results.append((MonitorResult.ERROR, False, "stream_timeout"))
+        else:
+            results.append(_convert_stream_result(fields, obj))
+
+    missing = expected - len(results_by_job)
+    if missing > 0:
+        logger.warning(f"[stream] {missing}/{expected} jobs timed out for cycle={cycle_id}")
+
+    logger.info(f"[stream] Collected {len(results_by_job)}/{expected} results for cycle={cycle_id}")
+    return results
+
+
+def fetch_and_analyze_stocks() -> List[Tuple[MonitorResult, bool, Optional[str]]]:
+    logger.info("Fetching and analyzing data for all stocks")
+
+    stock_objs = list(shared.app_ctx.stock_token_obj_dict.values())
+    index_objs = list(shared.app_ctx.index_token_obj_dict.values())
+    commodity_objs = list(shared.app_ctx.commodity_token_obj_dict.values())
+    global_indices_objs = list(shared.app_ctx.global_indices_token_obj_dict.values())
+
+    orchestrator.reset_all_constants()
+
+    load_price_data_from_redis(
+        redis_proxy, stock_objs, index_objs,
+        commodity_objs, global_indices_objs,
+    )
+
+    if USE_ANALYSIS_ENGINE:
+        return _dispatch_and_collect_stream(stock_objs, index_objs)
+    else:
+        return _dispatch_and_collect_threadpool(stock_objs, index_objs)
 
 def get_top_gainers_and_losers(stock_objs):
     """
@@ -1571,6 +1769,7 @@ def init():
     global DEV_NOTIFY
     global redis_proxy
     global cycle_subscriber
+    global USE_ANALYSIS_ENGINE
 
 
     if os.getenv(constant.ENV_PRODUCTION, "0") == "1":
@@ -1596,7 +1795,20 @@ def init():
 
     cycle_subscriber = CycleSubscriber(redis_proxy)
     cycle_subscriber.start()
-    
+
+    USE_ANALYSIS_ENGINE = constant.USE_ANALYSIS_ENGINE
+    if USE_ANALYSIS_ENGINE:
+        try:
+            redis_proxy.xgroup_create(
+                constant.ANALYSIS_RESULTS_GROUP,
+                constant.ANALYSIS_RESULTS_STREAM,
+                mkstream=True,
+            )
+            logger.info(f"[stream] Created consumer group '{constant.ANALYSIS_RESULTS_GROUP}' on {constant.ANALYSIS_RESULTS_STREAM}")
+        except Exception:
+            pass  # Group already exists
+        logger.info(f"[stream] Analysis engine mode enabled — dispatching jobs to {constant.ANALYSIS_JOBS_STREAM}")
+
     if os.getenv(constant.ENV_ENABLE_ZERODHA_DERIVATIVES, "0") == "1":
         logger.info("Zerodha Derivative analysis enabled")
         ENABLE_ZERODHA_DERIVATIVES = True
