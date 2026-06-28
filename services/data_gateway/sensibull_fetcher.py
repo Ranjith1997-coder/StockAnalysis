@@ -490,14 +490,16 @@ def fetch_and_publish_cycle(redis_proxy, stock_symbols: list[str], index_symbols
                 if existing_iv is None or existing_iv.empty:
                     iv_chart = fetch_iv_chart(symbol)
                 elif "date" in existing_iv.columns and len(existing_iv) > 0:
-                    if existing_iv["date"].iloc[-1] < today:
+                    last_iv_date = str(existing_iv["date"].iloc[-1])[:10]
+                    if last_iv_date < today:
                         iv_chart = fetch_iv_chart(symbol)
 
                 existing_oi = existing_ctx.get("oi_history")
                 if existing_oi is None or existing_oi.empty:
                     oi_hist = fetch_oi_history(symbol, per_expiry_map)
                 elif "date" in existing_oi.columns and len(existing_oi) > 0:
-                    if existing_oi["date"].iloc[-1] < today:
+                    last_oi_date = str(existing_oi["date"].iloc[-1])[:10]
+                    if last_oi_date < today:
                         oi_hist = fetch_oi_history(symbol, per_expiry_map)
 
             # Step 3: Publish to Redis
@@ -562,14 +564,16 @@ def fetch_and_publish_cycle_parallel(redis_proxy, stock_symbols: list[str], inde
                 if existing_iv is None or existing_iv.empty:
                     iv_chart = fetch_iv_chart(symbol)
                 elif "date" in existing_iv.columns and len(existing_iv) > 0:
-                    if existing_iv["date"].iloc[-1] < today:
+                    last_iv_date = str(existing_iv["date"].iloc[-1])[:10]
+                    if last_iv_date < today:
                         iv_chart = fetch_iv_chart(symbol)
 
                 existing_oi = existing_ctx.get("oi_history")
                 if existing_oi is None or existing_oi.empty:
                     oi_hist = fetch_oi_history(symbol, per_expiry_map)
                 elif "date" in existing_oi.columns and len(existing_oi) > 0:
-                    if existing_oi["date"].iloc[-1] < today:
+                    last_oi_date = str(existing_oi["date"].iloc[-1])[:10]
+                    if last_oi_date < today:
                         oi_hist = fetch_oi_history(symbol, per_expiry_map)
 
             publish_to_redis(redis_proxy, symbol, current_data, oi_chain,
