@@ -1265,6 +1265,21 @@ def _start_sensibull_feed(live_options_engine, enrichment_only: bool = False) ->
         logger.error("[Sensibull] no feeds started — check symbol/expiry configuration")
 
 
+def _stop_sensibull_feed() -> None:
+    """Stop all Sensibull WebSocket feeds cleanly after market close."""
+    feeds = shared.app_ctx.sensibull_feed
+    if not feeds:
+        return
+    feeds_list = feeds if isinstance(feeds, list) else [feeds]
+    for feed in feeds_list:
+        try:
+            feed.stop()
+        except Exception as e:
+            logger.warning(f"[Sensibull] stop error: {e}")
+    shared.app_ctx.sensibull_feed = None
+    logger.info(f"[Sensibull] {len(feeds_list)} feed(s) stopped")
+
+
 def live_options_analysis():
     """
     Live options only mode — WebSocket + LiveOptionsEngine, no regular analysis.
@@ -1324,9 +1339,8 @@ def intraday_analysis(loop = True, loop_wait_time = 30, max_cycles = 0):
     """
     shared.app_ctx.mode = shared.Mode.INTRADAY
 
-    # Start Sensibull live option chain feed independently of Zerodha WS.
-    # Sensibull is a public WebSocket — no enctoken required.
-    # Only start once (guard: sensibull_feed is None until first start).
+    # Sensibull feed is normally started at 09:00 in _run_daily_loop().
+    # In dev mode (no _run_daily_loop), start it here as a fallback.
     _options_source = shared.app_ctx.options_source
     if (ENABLE_LIVE_OPTIONS
             and _options_source in ("sensibull", "both")
@@ -1334,7 +1348,7 @@ def intraday_analysis(loop = True, loop_wait_time = 30, max_cycles = 0):
         tm = shared.app_ctx.zd_ticker_manager
         if tm and tm.live_options_engine:
             _enrichment_only = (_options_source == "both")
-            logger.info(f"[intraday] OPTIONS_SOURCE={_options_source} — starting Sensibull feed (enrichment_only={_enrichment_only})")
+            logger.info(f"[intraday] fallback — starting Sensibull feed (enrichment_only={_enrichment_only})")
             _start_sensibull_feed(tm.live_options_engine, enrichment_only=_enrichment_only)
         else:
             logger.warning("[intraday] Cannot start Sensibull feed — LiveOptionsEngine not initialised")
@@ -1804,6 +1818,15 @@ def _run_daily_loop():
         # Refresh auth (was separate systemd oneshot)
         _refresh_zerodha_auth()
 
+        # ── 09:00 — Start Sensibull live option chain feed ──
+        # 15-min buffer before market opens so connection issues are
+        # discovered early and can retry before intraday starts.
+        if ENABLE_LIVE_OPTIONS and shared.app_ctx.options_source in ("sensibull", "both"):
+            tm = shared.app_ctx.zd_ticker_manager
+            if tm and tm.live_options_engine and not shared.app_ctx.sensibull_feed:
+                _enrichment_only = (shared.app_ctx.options_source == "both")
+                _start_sensibull_feed(tm.live_options_engine, enrichment_only=_enrichment_only)
+
         TELEGRAM_NOTIFICATIONS.is_intraday = False
         TELEGRAM_NOTIFICATIONS.send_notification(
             "\U0001F4CB <b>Pre-Market Analysis Started</b> \U0001F4CB", parse_mode="HTML"
@@ -1845,6 +1868,9 @@ def _run_daily_loop():
         # ── Positional analysis (20:00) ──
         logger.info("=== Positional phase ===")
         positional_analysis()
+
+        # ── Stop Sensibull feeds after market close (no longer needed) ──
+        _stop_sensibull_feed()
 
         # ── Done for today ──
         _morning_bias_done = False
@@ -1967,13 +1993,7 @@ def _shutdown_background_services():
         except Exception as e:
             logger.warning(f"[shutdown] narrator shutdown error: {e}")
 
-    sensibull_feed = getattr(shared.app_ctx, "sensibull_feed", None)
-    if sensibull_feed:
-        try:
-            sensibull_feed.stop()
-            logger.debug("[shutdown] SensibullFeed stopped")
-        except Exception as e:
-            logger.warning(f"[shutdown] SensibullFeed stop error: {e}")
+    _stop_sensibull_feed()
 
 if __name__ =="__main__":
 
