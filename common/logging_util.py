@@ -1,40 +1,20 @@
-import logging
-import os
-from logging.handlers import RotatingFileHandler
-from dotenv import load_dotenv
+"""
+Monolith logging — delegates to services/common/logging.py factory.
 
-load_dotenv()
+All modules that do ``from common.logging_util import logger`` get the same
+unified logger as the microservices, writing to:
 
-LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs")
-os.makedirs(LOG_DIR, exist_ok=True)
+  - stdout (captured by systemd journal on server)
+  - logs/monolith.log (10 MB rotating, 3 backups)
 
-LOG_FORMAT = "%(levelname)s:%(name)s:%(asctime)s:%(filename)s:%(lineno)d:%(funcName)s:%(message)s"
+Format (NEW+):
+  28 13:26:31 | WARNING | SA.monolith              | intraday_monitor.py:1234 | message
 
-# LOG_LEVEL env var controls verbosity across all handlers.
-# Valid values: DEBUG, INFO, WARNING, ERROR  (default: WARNING)
-_level_name = os.environ.get("LOG_LEVEL", "WARNING").upper()
-_level = getattr(logging, _level_name, logging.WARNING)
+This file is kept as a thin shim so 44+ modules don't need import changes.
+"""
 
-logger = logging.getLogger('StockMonitor')
-logger.setLevel(_level)
+from __future__ import annotations
 
-# Console handler
-console_handler = logging.StreamHandler()
-console_handler.setLevel(_level)
-console_handler.setFormatter(logging.Formatter(LOG_FORMAT))
+from services.common.logging import get_logger
 
-# POSITIONAL=1 (set by the systemd positional service) → separate log file
-_is_positional = os.environ.get("POSITIONAL", "0") == "1" or os.environ.get("DEV_POSITIONAL", "0") == "1"
-_log_filename = "stock_monitor_positional.log" if _is_positional else "stock_monitor.log"
-
-# File handler — rotates at 10 MB, keeps last 5 files
-file_handler = RotatingFileHandler(
-    os.path.join(LOG_DIR, _log_filename),
-    maxBytes=10 * 1024 * 1024,
-    backupCount=5,
-)
-file_handler.setLevel(_level)
-file_handler.setFormatter(logging.Formatter(LOG_FORMAT))
-
-logger.addHandler(console_handler)
-logger.addHandler(file_handler)
+logger = get_logger("monolith")
