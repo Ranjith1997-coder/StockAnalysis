@@ -4,6 +4,7 @@ from telegram.error import NetworkError, TimedOut
 from common.constants import TELEGRAM_INTRADAY_TOKEN
 from common.logging_util import logger
 from notification.commands import register_all
+from notification.commands._guard import init_guard
 from notification.commands.system import job_llm_budget_alert
 
 # ── Re-exports for backward compatibility (tests and external callers) ────────
@@ -29,6 +30,7 @@ _application = None
 def init_telegram_bot():
     global _application
     logger.info("Initializing Telegram Bot...")
+    init_guard()
     _application = ApplicationBuilder().token(TELEGRAM_INTRADAY_TOKEN).build()
 
     # Register all commands via the router

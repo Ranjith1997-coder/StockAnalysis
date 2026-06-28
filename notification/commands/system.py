@@ -13,6 +13,7 @@ from telegram.ext import ContextTypes
 
 import common.shared as shared
 from common.logging_util import logger
+from notification.commands._guard import guard
 
 # ─── Thresholds ──────────────────────────────────────────────────────────────
 
@@ -152,9 +153,11 @@ def _llm_budget_lines() -> list[str]:
 
 # ─── Handlers ────────────────────────────────────────────────────────────────
 
+@guard
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = (
         "📋 <b>StockAnalysis Bot — Commands</b>\n\n"
+        "<b>General</b>\n"
         "/help — Show this help message\n"
         "/status — System health dashboard\n"
         "/ltp <code>&lt;SYMBOL&gt;</code> — Last traded price + % change\n"
@@ -164,13 +167,23 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/walls <code>&lt;NIFTY|BANKNIFTY&gt;</code> — Institutional OI walls (S/R levels)\n"
         "/watchlist — Full subscription overview\n"
         "/holidays — Upcoming NSE market holidays\n"
-        "/enctoken <code>&lt;token&gt;</code> — Update Zerodha enctoken\n"
+        "/enctoken <code>&lt;token&gt;</code> — Update Zerodha enctoken\n\n"
+        "<b>Debug (debug chat only)</b>\n"
+        "/debug — Overview dashboard\n"
+        "/debugstock <code>&lt;SYM&gt;</code> — Deep stock object dump\n"
+        "/debugsignals <code>[SYM]</code> — SignalBus + correlator state\n"
+        "/debugcycle — Cycle sync (data-gateway + monolith)\n"
+        "/debugredis <code>&lt;SYM&gt;</code> — Raw Redis hash inspection\n"
+        "/debugcounters — All runtime counters\n"
+        "/debugmemory — AppContext + memory layout\n"
+        "/debuganalyzers — Registered analyser list\n"
     )
     await context.bot.send_message(
         chat_id=update.effective_chat.id, text=text, parse_mode="HTML"
     )
 
 
+@guard
 async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     ctx = shared.app_ctx
     now_str = datetime.now().strftime("%H:%M:%S")

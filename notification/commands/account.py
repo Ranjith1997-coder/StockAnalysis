@@ -9,6 +9,7 @@ from telegram.ext import ContextTypes
 
 import common.shared as shared
 from common.logging_util import logger
+from notification.commands._guard import guard
 
 
 def _is_urlencoded(s: str) -> bool:
@@ -43,6 +44,7 @@ def _subscribe_registered_options(ticker_manager) -> None:
 
 # ─── Handlers ────────────────────────────────────────────────────────────────
 
+@guard
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
@@ -50,6 +52,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
+@guard
 async def cmd_enctoken(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     zerodha_ticker_manager = shared.app_ctx.zd_ticker_manager
     zerodha_kite_connect = shared.app_ctx.zd_kc

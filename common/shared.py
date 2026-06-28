@@ -40,6 +40,11 @@ class AppContext:
         # Options data source: "zerodha" (default) or "sensibull"
         self.options_source: str = "zerodha"
         self.sensibull_feed = None  # SensibullFeed instance when OPTIONS_SOURCE=sensibull
+        # ── Debug counters (incremented in the intraday/positional loops) ──
+        self.intraday_cycle_count: int = 0
+        self.monitor_result_counts: dict = {"SUCCESS": 0, "NO_DATA": 0, "ERROR": 0}
+        self.error_count: int = 0
+        self.last_cycle_time: float = 0.0
 
 app_ctx = AppContext()
 ticker_52_week_high_list = []

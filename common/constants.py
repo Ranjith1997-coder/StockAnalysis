@@ -14,6 +14,8 @@ ENV_ENABLE_LIVE_OPTIONS = "ENABLE_LIVE_OPTIONS"   # Toggle real-time options ana
 ENV_LIVE_OPTIONS_ONLY   = "LIVE_OPTIONS_ONLY"     # Skip all regular analysis; run live options engine only
 ENV_ENABLE_INTELLIGENCE = "ENABLE_INTELLIGENCE"   # Toggle SignalBus + Correlator + morning bias
 ENV_ENABLE_NARRATOR     = "ENABLE_NARRATOR"       # Toggle LLM-powered trade narratives (requires GEMINI_API_KEY)
+ENV_DEBUG_CHAT_ID       = "TELEGRAM_DEBUG_CHAT_ID"        # Chat ID where debug commands are permitted
+ENV_ALLOWED_CHAT_IDS    = "TELEGRAM_ALLOWED_CHAT_IDS"     # Comma-separated allowlist of chat IDs for all bot commands
 # Notification is routed through Redis stream by default (notification/Notification.py).
 # Direct HTTP fallback when Redis is unavailable.
 ENV_OPTIONS_SOURCE      = "OPTIONS_SOURCE"         # "zerodha" (default) or "sensibull"
@@ -74,6 +76,9 @@ TELEGRAM_POSITIONAL_CHAT_ID = os.environ.get("TELEGRAM_POSITIONAL_CHAT_ID", "")
 # Dedicated channel for real-time options alerts (LiveOIAnalyser + LiveStraddleAnalyser)
 TELEGRAM_LIVE_OPTIONS_TOKEN    = os.environ.get("TELEGRAM_LIVE_OPTIONS_TOKEN", "")
 TELEGRAM_LIVE_OPTIONS_CHAT_ID  = os.environ.get("TELEGRAM_LIVE_OPTIONS_CHAT_ID", "")
+
+TELEGRAM_DEBUG_CHAT_ID    = os.environ.get(ENV_DEBUG_CHAT_ID, "")
+TELEGRAM_ALLOWED_CHAT_IDS = os.environ.get(ENV_ALLOWED_CHAT_IDS, "")
 
 TELEGRAM_URL = 'https://api.telegram.org/bot'
 
