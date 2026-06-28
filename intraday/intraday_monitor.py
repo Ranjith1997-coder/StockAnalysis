@@ -1852,7 +1852,7 @@ def _sleep_until_midnight():
 
 
 def _refresh_zerodha_auth():
-    """Refresh Zerodha enctoken via TOTP (was stockanalysis-auth.service)."""
+    """Refresh Zerodha enctoken via TOTP and publish to Redis for data-gateway."""
     if not ENABLE_ZERODHA_API:
         return
     try:
@@ -1860,10 +1860,17 @@ def _refresh_zerodha_auth():
         success = generate_enctoken()
         if success:
             load_dotenv(override=True)
-            # Reload enctoken for KiteConnect
             encToken_raw = os.getenv(constant.ENV_ZERODHA_ENC_TOKEN)
             shared.app_ctx.zd_kc.set_enctoken(encToken_raw)
-            logger.info("Zerodha auth refreshed successfully")
+
+            # Publish enctoken to Redis for data-gateway
+            redis_proxy.hset("auth:zerodha", mapping={
+                "enctoken": encToken_raw,
+                "issued_at": str(time.time()),
+                "user_id": os.getenv("ZERODHA_USER", ""),
+            })
+            redis_proxy.publish("auth:enctoken_refreshed", f"issued_at={int(time.time())}")
+            logger.info("Zerodha auth refreshed — enctoken published to Redis")
         else:
             logger.error("Zerodha auth refresh failed")
     except Exception as e:

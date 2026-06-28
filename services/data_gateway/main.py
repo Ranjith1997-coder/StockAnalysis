@@ -38,11 +38,16 @@ logger = get_logger("data-gateway")
 from datetime import time as _time
 from common.helperFunctions import get_stock_objects_from_json, isNowInTimePeriod
 from common.market_calendar import is_trading_day
+from common import constants as constant
 from services.common.redis_proxy import RedisProxy
 from services.data_gateway.yfinance_fetcher import fetch_initial_daily_data, fetch_cycle_data
 from services.data_gateway.sensibull_fetcher import (
     fetch_and_publish_cycle_parallel,
     INDEX_ANALYSIS_EXCLUDE,
+)
+from services.data_gateway.zerodha_fetcher import (
+    fetch_instruments,
+    ZerodhaFuturesManager,
 )
 
 CYCLE_STREAM = "data:cycle_stream"
@@ -221,6 +226,12 @@ def main():
     logger.info(f"[data-gateway] yfinance symbols: {len(yf_stocks)} stocks, {len(yf_indices)} indices, "
                 f"{len(yf_commodities)} commodities, {len(yf_globals)} global indices")
 
+    # Initialise Zerodha futures manager (fetches instruments via public API)
+    all_futures_mdata = fetch_instruments()
+    zerodha_mgr = ZerodhaFuturesManager(redis, all_futures_mdata)
+    has_enc = "available" if zerodha_mgr.has_enctoken() else "pending (monolith TOTP at 09:00)"
+    logger.info(f"[data-gateway] ZerodhaFuturesManager ready — enctoken={has_enc}")
+
     # Build yfinance symbol → tradingsymbol map for cycle data key resolution
     yf_to_key_map = {}
     for s in stock_list:
@@ -325,6 +336,22 @@ def main():
             logger.error(f"[data-gateway] Sensibull cycle fetch failed: {e}")
             sensibull_fail = len(stock_symbols) + len(index_symbols)
 
+        # ── Zerodha futures data ──────────────────────────────────────────────
+        futures_ok = 0
+        futures_fail = 0
+        if zerodha_mgr.has_enctoken():
+            try:
+                futures_ok, futures_fail = zerodha_mgr.fetch_and_publish(
+                    redis,
+                    stock_symbols + index_symbols,
+                    mode=mode,
+                )
+            except Exception as e:
+                logger.error(f"[data-gateway] Zerodha futures fetch failed: {e}")
+                futures_fail = len(stock_symbols) + len(index_symbols)
+        else:
+            logger.debug("[data-gateway] No enctoken yet — skipping futures fetch")
+
         # ── Publish cycle signal ────────────────────────────────────────────
         cycle_elapsed = time.time() - cycle_start
         price_count = len(stock_symbols) + len(index_symbols) + len(commodity_symbols) + len(global_indices_symbols)
@@ -336,6 +363,8 @@ def main():
             "price_symbols": str(price_count if price_ok else 0),
             "sensibull_symbols": str(sensibull_ok),
             "failures": str(sensibull_fail),
+            "futures_ok": str(futures_ok),
+            "futures_fail": str(futures_fail),
             "elapsed": str(round(cycle_elapsed, 1)),
         }
         redis.xadd(CYCLE_STREAM, cycle_fields, maxlen=100)
