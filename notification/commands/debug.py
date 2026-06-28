@@ -23,10 +23,10 @@ from notification.commands.debug_inspect import (
 )
 
 
-def _send(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str) -> None:
+async def _send(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str) -> None:
     """Send text, splitting into chunks if it exceeds Telegram's 4096-char limit."""
     if len(text) <= 4096:
-        context.bot.send_message(
+        await context.bot.send_message(
             chat_id=update.effective_chat.id, text=text, parse_mode="HTML"
         )
         return
@@ -42,7 +42,7 @@ def _send(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str) -> None
     if current:
         chunks.append(current)
     for chunk in chunks:
-        context.bot.send_message(
+        await context.bot.send_message(
             chat_id=update.effective_chat.id, text=chunk, parse_mode="HTML"
         )
 
@@ -80,7 +80,7 @@ async def cmd_debug(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "",
         f"<b>Monitor Results:</b> {d['monitor_results']}",
     ]
-    _send(update, context, "\n".join(lines))
+    await _send(update, context, "\n".join(lines))
 
 
 # ─── /debugstock <SYM> — deep stock dump ────────────────────────────────────
@@ -91,12 +91,12 @@ async def cmd_debug_stock(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
     symbol = context.args[0].upper().strip() if context.args else ""
     if not symbol:
-        _send(update, context, "Usage: /debugstock <code>&lt;SYMBOL&gt;</code>")
+        await _send(update, context, "Usage: /debugstock <code>&lt;SYMBOL&gt;</code>")
         return
 
     d = inspect_stock(symbol)
     if "error" in d:
-        _send(update, context, f"❌ {d['error']}")
+        await _send(update, context, f"❌ {d['error']}")
         return
 
     pd = d.get("priceData", {})
@@ -149,7 +149,7 @@ async def cmd_debug_stock(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             "<b>Zerodha (live)</b>",
             f"  Last price: {zd.get('last_price')}  Volume: {zd.get('volume_traded')}  Change: {zd.get('change')}",
         ]
-    _send(update, context, "\n".join(lines))
+    await _send(update, context, "\n".join(lines))
 
 
 # ─── /debugsignals [SYM] ─────────────────────────────────────────────────────
@@ -184,7 +184,7 @@ async def cmd_debug_signals(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         else:
             lines.append("No active signals in buffer.")
 
-    _send(update, context, "\n".join(lines))
+    await _send(update, context, "\n".join(lines))
 
 
 # ─── /debugcycle ─────────────────────────────────────────────────────────────
@@ -220,7 +220,7 @@ async def cmd_debug_cycle(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if "redis_error" in d:
         lines.append(f"⚠️ Redis error: {d['redis_error']}")
 
-    _send(update, context, "\n".join(lines))
+    await _send(update, context, "\n".join(lines))
 
 
 # ─── /debugredis <SYM> ───────────────────────────────────────────────────────
@@ -231,7 +231,7 @@ async def cmd_debug_redis(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
     symbol = context.args[0].upper().strip() if context.args else ""
     if not symbol:
-        _send(update, context, "Usage: /debugredis <code>&lt;SYMBOL&gt;</code>")
+        await _send(update, context, "Usage: /debugredis <code>&lt;SYMBOL&gt;</code>")
         return
 
     d = inspect_redis(symbol)
@@ -250,7 +250,7 @@ async def cmd_debug_redis(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if "error" in d:
         lines.append(f"⚠️ Error: {d['error']}")
 
-    _send(update, context, "\n".join(lines))
+    await _send(update, context, "\n".join(lines))
 
 
 # ─── /debugcounters ──────────────────────────────────────────────────────────
@@ -279,7 +279,7 @@ async def cmd_debug_counters(update: Update, context: ContextTypes.DEFAULT_TYPE)
         f"<b>LLM tokens:</b> {d['llm_tokens_used']:,}",
         f"<b>Memory RSS:</b> {d['memory_rss_mb']} MB",
     ]
-    _send(update, context, "\n".join(lines))
+    await _send(update, context, "\n".join(lines))
 
 
 # ─── /debugmemory ────────────────────────────────────────────────────────────
@@ -317,7 +317,7 @@ async def cmd_debug_memory(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         "",
         f"<b>Memory RSS:</b> {d['memory_rss_mb']} MB",
     ]
-    _send(update, context, "\n".join(lines))
+    await _send(update, context, "\n".join(lines))
 
 
 # ─── /debuganalyzers ─────────────────────────────────────────────────────────
@@ -328,7 +328,7 @@ async def cmd_debug_analyzers(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
     d = inspect_analyzers()
     if "error" in d:
-        _send(update, context, f"❌ {d['error']}")
+        await _send(update, context, f"❌ {d['error']}")
         return
 
     lines = [
@@ -340,7 +340,7 @@ async def cmd_debug_analyzers(update: Update, context: ContextTypes.DEFAULT_TYPE
         active = "✅" if a.get("is_active", True) else "🔴"
         lines.append(f"  {active} {a['class']}")
 
-    _send(update, context, "\n".join(lines))
+    await _send(update, context, "\n".join(lines))
 
 
 HANDLERS = [
