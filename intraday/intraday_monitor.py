@@ -7,7 +7,6 @@ import argparse
 import uuid
 from notification.Notification import TELEGRAM_NOTIFICATIONS
 from datetime import datetime, time, timedelta
-import concurrent.futures
 import common.constants as constant
 import common.shared as shared
 from common.Stock import Stock
@@ -43,7 +42,6 @@ from intelligence.signal_bus import SignalBus
 from intelligence.correlator import SignalCorrelator, Confluence
 from intelligence.signal import Signal, Direction, Layer, weight_to_strength
 from zerodha.live_stock_engine import LiveStockEngine
-from zerodha.futures_fetcher import FuturesFetcher
 from services.common.redis_proxy import RedisProxy
 from services.common.stock_loader import (
     load_price_data_from_redis,
@@ -193,7 +191,6 @@ class Trend (Enum):
     NEUTRAL = "NEUTRAL"
 
 
-thread_pool: Optional[concurrent.futures.ThreadPoolExecutor] = None  # initialised in init()
 orchestrator : AnalyserOrchestrator =  None
 PRODUCTION = False
 DEV_NOTIFY = False      # True = send Telegram alerts even in dev mode (DEV_NOTIFY=1)
@@ -207,103 +204,10 @@ ENABLE_INTELLIGENCE = False   # When True: SignalBus + Correlator + morning bias
 redis_proxy: Optional[RedisProxy] = None
 cycle_subscriber: Optional[CycleSubscriber] = None
 
-USE_ANALYSIS_ENGINE = False
-
 class MonitorResult(Enum):
     SUCCESS = 0
     NO_DATA = 1
     ERROR = 2
-
-def monitor(stock: Stock) -> Tuple[MonitorResult, bool, Optional[str]]:
-    """
-    Monitor a stock for trends and generate analysis.
-    
-    Args:
-        stock (Stock): The stock to monitor.
-    
-    Returns:
-        Tuple[MonitorResult, bool, Optional[str]]: 
-            - MonitorResult: The result of the monitoring process.
-            - bool: Whether a trend was found.
-            - Optional[str]: The analysis message if a trend was found, else None.
-    """
-    if stock.is_price_data_empty():
-        return MonitorResult.NO_DATA, False, f"{stock.stock_symbol} data not available"
-
-    try:
-        stock.reset_analysis()
-        stock.update_latest_data()
-
-        analysis_type = "positional" if shared.app_ctx.mode == shared.Mode.POSITIONAL else "intraday"
-
-        # Positional: require a minimum absolute price move before running any analysis.
-        # Stocks with tiny moves (<0.75%) produce mechanical signals (BASIS_EXPANDING,
-        # PCR noise, OI drift) that are not actionable — skip them entirely.
-        if shared.app_ctx.mode == shared.Mode.POSITIONAL:
-            MIN_POSITIONAL_MOVE_PCT = 0.75
-            if stock.ltp_change_perc is not None and abs(stock.ltp_change_perc) < MIN_POSITIONAL_MOVE_PCT:
-                logger.debug(
-                    f"[monitor] {stock.stock_symbol} skipped — price move "
-                    f"{stock.ltp_change_perc:+.2f}% < ±{MIN_POSITIONAL_MOVE_PCT}%"
-                )
-                return MonitorResult.SUCCESS, False, None
-        logger.debug(f"{analysis_type} analysis for {stock.stockName} started.")
-        
-        # Read sensibull + zerodha from data-gateway's Redis hashes
-        # Pure microservice: no direct HTTP fallback. If data is missing,
-        # the stock is skipped this cycle — it will be available next cycle.
-        _excluded = stock.stock_symbol in constant.INDEX_ANALYSIS_EXCLUDE
-        if _excluded:
-            logger.debug(f"[monitor] {stock.stock_symbol} is in INDEX_ANALYSIS_EXCLUDE — skipping")
-            return MonitorResult.SUCCESS, False, None
-
-        sensibull_ok = load_sensibull_from_redis(redis_proxy, stock)
-        zerodha_ok = load_zerodha_from_redis(redis_proxy, stock)
-
-        if not sensibull_ok:
-            logger.warning(f"[monitor] No sensibull data in Redis for {stock.stock_symbol} — data pending, skipping")
-            return MonitorResult.NO_DATA, False, f"{stock.stock_symbol} sensibull data pending"
-
-        # FuturesFetcher stays in monolith until Phase 1E (auth-service migration).
-        # It writes results back to Redis for other services to use.
-        if ENABLE_ZERODHA_DERIVATIVES:
-            if not zerodha_ok:
-                try:
-                    FuturesFetcher(shared.app_ctx.zd_kc).fetch(stock, mode=analysis_type)
-                    _publish_zerodha_to_redis(stock)
-                except Exception as e:
-                    logger.error(f"Error fetching zerodha futures data for {stock.stockName}: {e}")
-        else:
-            logger.debug("Zerodha derivatives data not enabled for {stock.stockName}")
-
-        if stock.is_index:
-            trend_found, score_result = (
-                orchestrator.run_all_positional(stock, index=True)
-                if shared.app_ctx.mode == shared.Mode.POSITIONAL
-                else orchestrator.run_all_intraday(stock, index=True)
-            )
-        else:
-            trend_found, score_result = (
-                orchestrator.run_all_positional(stock)
-                if shared.app_ctx.mode == shared.Mode.POSITIONAL
-                else orchestrator.run_all_intraday(stock)
-            )
-        
-        logger.debug(f"{analysis_type} analysis for {stock.stockName} completed.")
-        
-        if trend_found:
-            priority_label = score_result.priority.value if score_result else "N/A"
-            score_value = score_result.total_score if score_result else stock.analysis["NoOfTrends"]
-            logger.info(f"Trend found for {stock.stockName} - Priority: {priority_label}, Score: {score_value}")
-            message = orchestrator.generate_analysis_message(stock)
-            TELEGRAM_NOTIFICATIONS.send_notification(message, parse_mode="HTML")
-            return MonitorResult.SUCCESS, True, message
-        
-        return MonitorResult.SUCCESS, False, None
-
-    except Exception as e:
-        logger.exception(f"Error occurred while monitoring {stock.stockName}")
-        return MonitorResult.ERROR, False, str(e)
 
 def process_monitor_results(results):
     for result, trend_found, message in results:
@@ -570,53 +474,6 @@ def create_stock_and_index_objects(stockName = None, indexName = None, commodity
 
     # Data is loaded from Redis by _load_initial_data_from_redis() after init.
 
-def process_stock(stock: Stock) -> Tuple[MonitorResult, bool, Optional[str]]:
-    mode = shared.app_ctx.mode
-    min_rows = 3 if mode is not None and mode.name == shared.Mode.INTRADAY.name else 2
-    if stock.priceData is None or len(stock.priceData) < min_rows:
-        logger.debug(f"Skipping {stock.stock_symbol}: insufficient price data ({len(stock.priceData) if stock.priceData is not None else 0} rows, need {min_rows})")
-        return MonitorResult.NO_DATA, False, None
-    try:
-        return monitor(stock)
-    except Exception as exc:
-        logger.error(f"Error processing {stock.stockName}: {exc}")
-        return MonitorResult.ERROR, False, str(exc)
-
-def _dispatch_and_collect_threadpool(
-    stock_objs: list, index_objs: list
-) -> List[Tuple[MonitorResult, bool, Optional[str]]]:
-    """Dispatch analysis jobs via ThreadPoolExecutor (fallback path)."""
-    results: List[Tuple[MonitorResult, bool, Optional[str]]] = []
-
-    def _collect(monitor_futures: dict, label: str) -> None:
-        try:
-            for future in concurrent.futures.as_completed(monitor_futures, timeout=90):
-                item = monitor_futures[future]
-                try:
-                    results.append(future.result())
-                except Exception as exc:
-                    logger.error(f"Unexpected error processing {item.stockName}: {exc}")
-                    results.append((MonitorResult.ERROR, False, str(exc)))
-        except concurrent.futures.TimeoutError:
-            for future, item in monitor_futures.items():
-                if not future.done():
-                    future.cancel()
-                    logger.warning(
-                        f"[{label}] Analysis timed out for {item.stockName} — skipping"
-                    )
-                    results.append((MonitorResult.ERROR, False, "timeout"))
-
-    _collect(
-        {thread_pool.submit(process_stock, index): index for index in index_objs},
-        "indices",
-    )
-    _collect(
-        {thread_pool.submit(process_stock, stock): stock for stock in stock_objs},
-        "stocks",
-    )
-    return results
-
-
 def _re_emit_signals_from_analysis(stock, layer: Layer):
     """Re-emit signals from analysis dict to in-memory SignalBus.
     
@@ -821,17 +678,12 @@ def fetch_and_analyze_stocks() -> List[Tuple[MonitorResult, bool, Optional[str]]
     commodity_objs = list(shared.app_ctx.commodity_token_obj_dict.values())
     global_indices_objs = list(shared.app_ctx.global_indices_token_obj_dict.values())
 
-    orchestrator.reset_all_constants()
-
     load_price_data_from_redis(
         redis_proxy, stock_objs, index_objs,
         commodity_objs, global_indices_objs,
     )
 
-    if USE_ANALYSIS_ENGINE:
-        return _dispatch_and_collect_stream(stock_objs, index_objs)
-    else:
-        return _dispatch_and_collect_threadpool(stock_objs, index_objs)
+    return _dispatch_and_collect_stream(stock_objs, index_objs)
 
 def get_top_gainers_and_losers(stock_objs):
     """
@@ -1756,7 +1608,6 @@ def positional_analysis():
 
 def init():
     load_dotenv()
-    global thread_pool
     global orchestrator
     global PRODUCTION
     global ENABLE_ZERODHA_DERIVATIVES
@@ -1769,7 +1620,6 @@ def init():
     global DEV_NOTIFY
     global redis_proxy
     global cycle_subscriber
-    global USE_ANALYSIS_ENGINE
 
 
     if os.getenv(constant.ENV_PRODUCTION, "0") == "1":
@@ -1796,18 +1646,15 @@ def init():
     cycle_subscriber = CycleSubscriber(redis_proxy)
     cycle_subscriber.start()
 
-    USE_ANALYSIS_ENGINE = constant.USE_ANALYSIS_ENGINE
-    if USE_ANALYSIS_ENGINE:
-        try:
-            redis_proxy.xgroup_create(
-                constant.ANALYSIS_RESULTS_GROUP,
-                constant.ANALYSIS_RESULTS_STREAM,
-                mkstream=True,
-            )
-            logger.info(f"[stream] Created consumer group '{constant.ANALYSIS_RESULTS_GROUP}' on {constant.ANALYSIS_RESULTS_STREAM}")
-        except Exception:
-            pass  # Group already exists
-        logger.info(f"[stream] Analysis engine mode enabled — dispatching jobs to {constant.ANALYSIS_JOBS_STREAM}")
+    try:
+        redis_proxy.xgroup_create(
+            constant.ANALYSIS_RESULTS_GROUP,
+            constant.ANALYSIS_RESULTS_STREAM,
+            mkstream=True,
+        )
+        logger.info(f"[stream] Created consumer group '{constant.ANALYSIS_RESULTS_GROUP}' on {constant.ANALYSIS_RESULTS_STREAM}")
+    except Exception:
+        pass  # Group already exists
 
     if os.getenv(constant.ENV_ENABLE_ZERODHA_DERIVATIVES, "0") == "1":
         logger.info("Zerodha Derivative analysis enabled")
@@ -1963,15 +1810,6 @@ def init():
                     logger.warning("[init] Zerodha WebSocket auto-connect failed — use /enctoken via Telegram bot to retry")
             else:
                 logger.warning("[init] ZERODHA_ENC_TOKEN not set — Zerodha WebSocket not connected")
-
-    # Module-level thread pool — created once, reused every 310s cycle.
-    # Avoids 20× thread-creation overhead per cycle; workers park in the OS
-    # scheduler between submissions rather than being destroyed and rebuilt.
-    thread_pool = concurrent.futures.ThreadPoolExecutor(
-        max_workers=constant.THREAD_POOL_WORKERS,
-        thread_name_prefix="monitor",
-    )
-    logger.info(f"Thread pool initialised with {constant.THREAD_POOL_WORKERS} workers")
 
 
 def parse_arguments():
@@ -2156,40 +1994,6 @@ def start_stock_analysis():
             from notification.bot_listener import stop_telegram_bot
             stop_telegram_bot()
 
-def _publish_zerodha_to_redis(stock):
-    """Write zerodha_ctx futures data to Redis so data-gateway / analysis-engine can read it."""
-    if redis_proxy is None:
-        return
-    ctx = stock.zerodha_ctx
-    futures_data_current = ctx.get("futures_data", {}).get("current", pd.DataFrame())
-    futures_data_next = ctx.get("futures_data", {}).get("next", pd.DataFrame())
-    futures_mdata_current = ctx.get("futures_mdata", {}).get("current")
-    futures_mdata_next = ctx.get("futures_mdata", {}).get("next")
-
-    mapping = {}
-    if not futures_data_current.empty:
-        mapping["futures_data_current_json"] = futures_data_current.to_json(orient="split", date_format="iso")
-    else:
-        mapping["futures_data_current_json"] = "{}"
-    if not futures_data_next.empty:
-        mapping["futures_data_next_json"] = futures_data_next.to_json(orient="split", date_format="iso")
-    else:
-        mapping["futures_data_next_json"] = "{}"
-
-    mdata = {}
-    if futures_mdata_current is not None and not futures_mdata_current.empty:
-        mdata["current"] = futures_mdata_current.to_dict(orient="records")[0] if len(futures_mdata_current) > 0 else None
-    else:
-        mdata["current"] = None
-    if futures_mdata_next is not None and not futures_mdata_next.empty:
-        mdata["next"] = futures_mdata_next.to_dict(orient="records")[0] if len(futures_mdata_next) > 0 else None
-    else:
-        mdata["next"] = None
-    mapping["futures_mdata_json"] = __import__("json").dumps(mdata, default=str)
-
-    redis_proxy.hset(f"data:zerodha:{stock.stock_symbol}", mapping=mapping)
-
-
 def _wait_for_cycle_ready(timeout: float = 120.0) -> bool:
     """Wait for the next data-gateway cycle signal via Pub/Sub subscriber.
 
@@ -2226,18 +2030,7 @@ def _load_initial_data_from_redis():
 def _shutdown_background_services():
     """
     Shut down non-daemon background threads so the process exits cleanly in dev mode.
-    ThreadPoolExecutor workers are non-daemon by default and will block exit indefinitely
-    if not explicitly stopped.
     """
-    global thread_pool
-    if thread_pool is not None:
-        try:
-            thread_pool.shutdown(wait=False, cancel_futures=True)
-            logger.debug("[shutdown] analysis thread pool stopped")
-        except Exception as e:
-            logger.warning(f"[shutdown] thread pool shutdown error: {e}")
-        thread_pool = None  # type: ignore[assignment]
-
     narrator = shared.app_ctx.narrator
     if narrator:
         try:
