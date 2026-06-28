@@ -1229,7 +1229,7 @@ The `/status` command now reads from Redis service registry:
 **Goal**: Move all data fetching to a separate process that publishes to Redis. This alone solves the 12 PM stall — analysis stays in the monolith but reads data from Redis instead of fetching it inline.
 
 Steps:
-1. Create `services/data-gateway/main.py` — copies ZerodhaTickerManager, SensibullFetcher, yfinance fetch logic
+1. Create `services/data_gateway/main.py` — copies ZerodhaTickerManager, SensibullFetcher, yfinance fetch logic
 2. Replace in-process Stock objects with Redis HSET writes
 3. Keep intraday_monitor.py reading from Redis instead of calling fetchers directly
 4. Run data-gateway + monolith in parallel; verify data matches
@@ -2047,13 +2047,13 @@ laptop-setup:
 | `intraday/intraday_monitor.py` zombie watchdog | `services/coordinator/` or `services/orchestrator/` | Reads `data:options_agg:*` timestamps from Redis |
 | `common/shared.py` AppContext | Redis hashes + per-service env vars | Global singleton eliminated |
 | `common/Stock.py` | `services/common/stock_proxy.py` | Redis-backed reconstruction |
-| `zerodha/zerodha_analysis.py` | `services/data-gateway/zerodha_manager.py` | Publishes ticks to Redis |
-| `zerodha/tick_store.py` | `services/data-gateway/tick_store.py` | In-memory in data-gateway, aggregate published to Redis |
-| `zerodha/futures_fetcher.py` | `services/data-gateway/` | Called by data-gateway, results to Redis |
+| `zerodha/zerodha_analysis.py` | `services/data_gateway/zerodha_manager.py` | Publishes ticks to Redis |
+| `zerodha/tick_store.py` | `services/data_gateway/tick_store.py` | In-memory in data-gateway, aggregate published to Redis |
+| `zerodha/futures_fetcher.py` | `services/data_gateway/` | Called by data-gateway, results to Redis |
 | `zerodha/live_options_engine.py` | `services/coordinator/` (compact) or `services/intelligence-service/` (full) | Reads from Redis pub/sub, emits signals to stream |
 | `zerodha/live_stock_engine.py` | `services/coordinator/` (compact) or `services/intelligence-service/` (full) | Reads from Redis pub/sub, emits signals to stream |
-| `fno/sensibull_fetcher.py` | `services/data-gateway/sensibull_fetcher.py` | Async HTTP, results to Redis |
-| `fno/sensibull_feed.py` | `services/data-gateway/sensibull_feed.py` | Publishes to Redis |
+| `fno/sensibull_fetcher.py` | `services/data_gateway/sensibull_fetcher.py` | Async HTTP, results to Redis |
+| `fno/sensibull_feed.py` | `services/data_gateway/sensibull_feed.py` | Publishes to Redis |
 | `analyser/*.py` (12 analysers) | `services/analysis-engine/` | **Unchanged** — imported as-is |
 | `analyser/Analyser.py` | `services/analysis-engine/` | **Unchanged** |
 | `common/scoring.py` | `services/analysis-engine/` + `services/notification-service/` | Imported as-is |
@@ -2066,7 +2066,7 @@ laptop-setup:
 | `notification/Notification.py` | `services/notification-service/telegram_sender.py` | Consumes from stream |
 | `notification/bot_listener.py` | `services/coordinator/main.py` (compact) or `services/bot-service/main.py` (full) | Reads from Redis |
 | `notification/commands/*.py` | `services/coordinator/commands/` (compact) or `services/bot-service/commands/` (full) | Reads from Redis |
-| `premarket/premarket_report.py` | `services/data-gateway/` | Publishes to `premarket:reports` stream |
+| `premarket/premarket_report.py` | `services/data_gateway/` | Publishes to `premarket:reports` stream |
 | `post_market_analysis/` | `services/analysis-engine/` (positional mode) | Publishes to `postmarket:reports` stream |
 | `auth/auth_login.py` | `services/auth-service/main.py` | Listens on `auth:commands` stream |
 | `scripts/deploy.py` | `scripts/deploy_services.py` | Multi-service deployment |

@@ -22,7 +22,7 @@ help:
 	@echo ""
 	@echo "  Run"
 	@echo "    run-prod           Intraday monitor — PRODUCTION=1"
-	@echo "    run-dev            Dev intraday + notification service (auto start+stop)"
+	@echo "    run-dev            Dev intraday + notification + data-gateway (auto start+stop)"
 	@echo "    run-dev-positional Dev positional (EOD) — PRODUCTION=0 DEV_POSITIONAL=1"
 	@echo "                       Append DEV_NOTIFY=1 to either run-dev target to send Telegram alerts in dev mode"
 	@echo "    run-dev-stock-intraday   Dev single stock intraday:   make run-dev-stock-intraday STOCK=RELIANCE"
@@ -51,11 +51,11 @@ help:
 	@echo ""
 	@echo "  Maintenance"
 	@echo "    update-derivatives  Refresh final_derivatives_list.json from Zerodha + NSE"
-	@echo "    logs          Monolith log — tail stock_monitor.log (legacy)"
-	@echo "    logs-500      Tail stock_monitor.log (last 500 lines)"
-	@echo "    logs-1000     Tail stock_monitor.log (last 1000 lines)"
-	@echo "    logs-follow   Follow stock_monitor.log live"
-	@echo "    logs-grep     Grep stock_monitor.log: make logs-grep Q=RELIANCE"
+	@echo "    logs          Monolith log — tail monolith.log"
+	@echo "    logs-500      Tail monolith.log (last 500 lines)"
+	@echo "    logs-1000     Tail monolith.log (last 1000 lines)"
+	@echo "    logs-follow   Follow monolith.log live"
+	@echo "    logs-grep     Grep monolith.log: make logs-grep Q=RELIANCE"
 	@echo "    logs-all      View last 20 lines of every service log"
 	@echo "    logs-all-follow  Follow all service logs live"
 	@echo "    logs-svc      View one service: make logs-svc SVC_LOG=data-gateway"
@@ -66,17 +66,21 @@ help:
 	@echo ""
 	@echo "  Server (hacker@100.92.21.31)"
 	@echo "    server-ssh          Open interactive SSH session"
-	@echo "    server-logs         Tail last 50 lines of stock_monitor.log on server"
-	@echo "    server-logs-500     Tail last 500 lines of stock_monitor.log on server"
-	@echo "    server-logs-1000    Tail last 1000 lines of stock_monitor.log on server"
-	@echo "    server-logs-follow  Live-follow stock_monitor.log on server"
-	@echo "    server-logs-copy    Copy stock_monitor.log from server to local logs/"
+	@echo "    server-logs         Tail last 50 lines of monolith.log on server"
+	@echo "    server-logs-500     Tail last 500 lines of monolith.log on server"
+	@echo "    server-logs-1000    Tail last 1000 lines of monolith.log on server"
+	@echo "    server-logs-follow  Live-follow monolith.log on server"
+	@echo "    server-logs-copy    Copy monolith.log from server to local logs/"
 	@echo "    server-status       Show stock_analysis.service status"
 	@echo "    server-start        Start stock_analysis.service"
 	@echo "    server-restart      Restart stock_analysis.service"
 	@echo "    server-stop         Stop stock_analysis.service"
 	@echo "    server-pull         git pull on server repo"
 	@echo "    server-df           Disk usage on server"
+	@echo "    server-data-gateway-start      Start data-gateway on server"
+	@echo "    server-data-gateway-stop       Stop data-gateway on server"
+	@echo "    server-data-gateway-status     Data-gateway status on server"
+	@echo "    server-data-gateway-logs       Data-gateway logs on server"
 	@echo "    server-redis-status     Redis status + memory on server"
 	@echo "    server-redis-start      Start Redis on server"
 	@echo "    server-redis-stop       Stop Redis on server"
@@ -189,57 +193,98 @@ run-prod:
 
 NOTIFICATION_PID_FILE := .notification.pid
 NOTIFICATION_LOG := logs/notification-service.log
+DATA_GATEWAY_PID_FILE := .data-gateway.pid
+DATA_GATEWAY_LOG := logs/data-gateway.log
 
 .PHONY: run-dev
 run-dev:
-	@echo "Starting notification service (background)..."
+	@echo "Starting services (background)..."
 	@mkdir -p logs
 	REDIS_URL=redis://localhost:6379 PYTHONPATH=$(CURDIR) nohup $(PYTHON) \
 		services/notification-service/main.py --consumer-name dev-1 \
 		> /dev/null 2>$(NOTIFICATION_LOG) & \
 		echo $$! > $(NOTIFICATION_PID_FILE)
-	@sleep 2
-	@if kill -0 $$(cat $(NOTIFICATION_PID_FILE) 2>/dev/null) 2>/dev/null; then \
+	REDIS_URL=redis://localhost:6379 PYTHONPATH=$(CURDIR) nohup $(PYTHON) \
+		services/data_gateway/main.py --dev-intraday \
+		> /dev/null 2>$(DATA_GATEWAY_LOG) & \
+		echo $$! > $(DATA_GATEWAY_PID_FILE)
+	@sleep 3
+	@NOTIFY_OK=0; DG_OK=0; \
+	if kill -0 $$(cat $(NOTIFICATION_PID_FILE) 2>/dev/null) 2>/dev/null; then \
 		echo "Notification service started (pid $$(cat $(NOTIFICATION_PID_FILE)))."; \
-		echo "Starting intraday monitor... Ctrl+C to stop everything."; \
+		NOTIFY_OK=1; \
 	else \
-		echo "Notification service failed. Check $(NOTIFICATION_LOG)"; \
+		echo "Notification service FAILED. Check $(NOTIFICATION_LOG)"; \
+	fi; \
+	if kill -0 $$(cat $(DATA_GATEWAY_PID_FILE) 2>/dev/null) 2>/dev/null; then \
+		echo "Data-gateway started (pid $$(cat $(DATA_GATEWAY_PID_FILE)))."; \
+		DG_OK=1; \
+	else \
+		echo "Data-gateway FAILED. Check $(DATA_GATEWAY_LOG)"; \
+	fi; \
+	if [ $$NOTIFY_OK -eq 0 ] || [ $$DG_OK -eq 0 ]; then \
+		$(MAKE) run-dev-stop >/dev/null 2>&1; \
 		exit 1; \
-	fi
+	fi; \
+	echo "Starting intraday monitor... Ctrl+C to stop everything."
 	@trap '' INT; \
-	PRODUCTION=0 DEV_INTRADAY=1 PYTHONPATH=$(CURDIR) $(PYTHON) intraday/intraday_monitor.py; \
+	DEV_INTRADAY=1 PYTHONPATH=$(CURDIR) $(PYTHON) intraday/intraday_monitor.py; \
 	EXIT_CODE=$$?; \
 	$(MAKE) run-dev-stop >/dev/null 2>&1; \
 	exit $$EXIT_CODE
 
 .PHONY: run-dev-positional
 run-dev-positional:
-	@echo "Starting notification service (background)..."
+	@echo "Starting services (background)..."
 	@mkdir -p logs
 	REDIS_URL=redis://localhost:6379 PYTHONPATH=$(CURDIR) nohup $(PYTHON) \
 		services/notification-service/main.py --consumer-name dev-1 \
 		> /dev/null 2>$(NOTIFICATION_LOG) & \
 		echo $$! > $(NOTIFICATION_PID_FILE)
-	@sleep 2
-	@if kill -0 $$(cat $(NOTIFICATION_PID_FILE) 2>/dev/null) 2>/dev/null; then \
+	REDIS_URL=redis://localhost:6379 PYTHONPATH=$(CURDIR) nohup $(PYTHON) \
+		services/data_gateway/main.py --dev-positional \
+		> /dev/null 2>$(DATA_GATEWAY_LOG) & \
+		echo $$! > $(DATA_GATEWAY_PID_FILE)
+	@sleep 3
+	@NOTIFY_OK=0; DG_OK=0; \
+	if kill -0 $$(cat $(NOTIFICATION_PID_FILE) 2>/dev/null) 2>/dev/null; then \
 		echo "Notification service started (pid $$(cat $(NOTIFICATION_PID_FILE)))."; \
-		echo "Running positional analysis..."; \
+		NOTIFY_OK=1; \
 	else \
-		echo "Notification service failed. Check $(NOTIFICATION_LOG)"; \
+		echo "Notification service FAILED. Check $(NOTIFICATION_LOG)"; \
+	fi; \
+	if kill -0 $$(cat $(DATA_GATEWAY_PID_FILE) 2>/dev/null) 2>/dev/null; then \
+		echo "Data-gateway started (pid $$(cat $(DATA_GATEWAY_PID_FILE)))."; \
+		DG_OK=1; \
+	else \
+		echo "Data-gateway FAILED. Check $(DATA_GATEWAY_LOG)"; \
+	fi; \
+	if [ $$NOTIFY_OK -eq 0 ] || [ $$DG_OK -eq 0 ]; then \
+		$(MAKE) run-dev-stop >/dev/null 2>&1; \
 		exit 1; \
-	fi
+	fi; \
+	echo "Running positional analysis..."
 	@trap '' INT; \
-	PRODUCTION=0 DEV_POSITIONAL=1 PYTHONPATH=$(CURDIR) $(PYTHON) intraday/intraday_monitor.py; \
+	DEV_POSITIONAL=1 PYTHONPATH=$(CURDIR) $(PYTHON) intraday/intraday_monitor.py; \
 	EXIT_CODE=$$?; \
 	$(MAKE) run-dev-stop >/dev/null 2>&1; \
 	exit $$EXIT_CODE
 
 .PHONY: run-dev-stop
 run-dev-stop:
+	@echo "Stopping data-gateway..."
+	@if [ -f $(DATA_GATEWAY_PID_FILE) ]; then \
+		PID=$$(cat $(DATA_GATEWAY_PID_FILE)); \
+		kill $$PID 2>/dev/null && echo "Data-gateway stopped (pid $$PID)." || echo "Data-gateway already stopped."; \
+		rm -f $(DATA_GATEWAY_PID_FILE); \
+	fi
 	@if [ -f $(NOTIFICATION_PID_FILE) ]; then \
 		PID=$$(cat $(NOTIFICATION_PID_FILE)); \
-		echo "Stopping notification service (pid $$PID)..."; \
-		kill $$PID 2>/dev/null && echo "Stopped." || echo "Already stopped."; \
+		if kill -0 $$PID 2>/dev/null; then \
+			echo "Waiting 30s for notification service to drain remaining messages..."; \
+			sleep 30; \
+			kill $$PID 2>/dev/null && echo "Notification service stopped (pid $$PID)." || echo "Already stopped."; \
+		fi; \
 		rm -f $(NOTIFICATION_PID_FILE); \
 	fi
 
@@ -336,7 +381,7 @@ typecheck:
 # ──────────────────────────────────────────────────────────────────────────────
 # Maintenance
 # ──────────────────────────────────────────────────────────────────────────────
-LOG_FILE := logs/stock_monitor.log
+LOG_FILE := logs/monolith.log
 
 .PHONY: logs
 logs:
@@ -425,7 +470,7 @@ clean-all: clean
 server-ssh:
 	ssh $(SERVER)
 
-SERVER_LOG := ~/StockAnalysis/logs/stock_monitor.log
+SERVER_LOG := ~/StockAnalysis/logs/monolith.log
 
 .PHONY: server-logs
 server-logs:
@@ -445,8 +490,8 @@ server-logs-follow:
 
 .PHONY: server-logs-copy
 server-logs-copy:
-	scp $(SERVER):$(SERVER_LOG) logs/stock_monitor.log
-	@echo "Copied to logs/stock_monitor.log"
+	scp $(SERVER):$(SERVER_LOG) logs/monolith.log
+	@echo "Copied to logs/monolith.log"
 
 .PHONY: server-status
 server-status:
@@ -496,6 +541,25 @@ server-redis-config:
 		&& redis-cli CONFIG SET save '' \
 		&& redis-cli CONFIG GET maxmemory maxmemory-policy save"
 
+# ─── Server Data Gateway ─────────────────────────────────────────────────────
+.PHONY: server-data-gateway-status server-data-gateway-start server-data-gateway-stop server-data-gateway-logs
+
+server-data-gateway-status:
+	ssh $(SERVER) "systemctl status stockanalysis-data-gateway --no-pager 2>/dev/null | head -10"
+	@echo ""
+	ssh $(SERVER) "redis-cli HGETALL service:registry:data-gateway" 2>/dev/null || true
+
+server-data-gateway-start:
+	ssh $(SERVER) "sudo systemctl start stockanalysis-data-gateway \
+		&& echo 'Data-gateway started' \
+		|| echo 'FAILED — check: journalctl -u stockanalysis-data-gateway'"
+
+server-data-gateway-stop:
+	ssh $(SERVER) "sudo systemctl stop stockanalysis-data-gateway && echo 'Data-gateway stopped'"
+
+server-data-gateway-logs:
+	ssh $(SERVER) "journalctl -u stockanalysis-data-gateway --no-pager -n 50"
+
 # ─── Server Notification Service ──────────────────────────────────────────────
 .PHONY: server-notification-status server-notification-start server-notification-stop server-notification-logs
 .PHONY: server-notify-test server-dead-letter server-svcs-status
@@ -530,8 +594,26 @@ server-dead-letter:
 	@echo "Dead letters: $$(ssh $(SERVER) "redis-cli XLEN notification:dead 2>/dev/null || echo 0")"
 	@ssh $(SERVER) "redis-cli XREAD COUNT 5 STREAMS notification:dead 0 2>/dev/null || true"
 
+.PHONY: timers-disable
+timers-disable:
+	@echo "Disabling systemd timers on server..."
+	ssh $(SERVER) "sudo systemctl stop stockanalysis.timer stockanalysis-positional.timer 2>/dev/null; \
+		sudo systemctl disable stockanalysis.timer stockanalysis-positional.timer 2>/dev/null; \
+		echo 'Timers disabled.'; \
+		sudo systemctl enable stockanalysis-data-gateway 2>/dev/null || true; \
+		sudo systemctl enable stockanalysis-notification 2>/dev/null || true; \
+		echo 'Services will run 24/7.'"
+
+.PHONY: server-enable-always-on
+server-enable-always-on: timers-disable
+	@echo "=== Restarting monolith as always-on service ==="
+	ssh $(SERVER) "sudo systemctl enable stockanalysis.service 2>/dev/null; \
+		sudo systemctl restart stockanalysis.service 2>/dev/null; \
+		echo 'Monolith restarted in always-on mode'"
+
+.PHONY: server-svcs-status
 server-svcs-status:
-	@for svc in redis-server stockanalysis stockanalysis-auth stockanalysis-notification; do \
+	@for svc in redis-server stockanalysis stockanalysis-notification stockanalysis-data-gateway; do \
 		STATUS=$$(ssh $(SERVER) "systemctl is-active $$svc 2>/dev/null || echo not loaded"); \
 		printf "  %-32s %s\n" "$$svc" "$$STATUS"; \
 	done
@@ -557,6 +639,35 @@ auth-force:
 server-auth-force:
 	@echo "Force-refreshing enctoken on server (bypassing once-per-day guard)..."
 	ssh $(SERVER) "cd ~/StockAnalysis && .venv/bin/python auth/auth_login.py --force"
+
+# ─── Data Gateway ─────────────────────────────────────────────────────────────
+.PHONY: run-data-gateway
+
+run-data-gateway:
+	@echo "Starting data-gateway..."
+	@echo "Press Ctrl+C to stop."
+	REDIS_URL=redis://localhost:6379 PYTHONPATH=$(CURDIR) $(PYTHON) services/data_gateway/main.py
+
+.PHONY: run-data-gateway-dev
+
+run-data-gateway-dev:
+	@echo "Starting data-gateway (dev intraday mode)..."
+	@echo "Press Ctrl+C to stop."
+	REDIS_URL=redis://localhost:6379 PYTHONPATH=$(CURDIR) $(PYTHON) services/data_gateway/main.py --dev-intraday
+
+.PHONY: svc-data-gateway-logs svc-data-gateway-check
+
+svc-data-gateway-logs:
+	@tail -50 logs/data-gateway.log 2>/dev/null || echo "No data-gateway logs found."
+
+svc-data-gateway-check:
+	@redis-cli HGETALL service:registry:data-gateway 2>/dev/null || echo "Service registry not found — data-gateway may not be running"
+	@echo ""
+	@echo "Sample price keys:"
+	@redis-cli KEYS "data:price:*" 2>/dev/null | head -5 || echo "No price data yet"
+	@echo "Sample sensibull keys:"
+	@redis-cli KEYS "data:sensibull:*" 2>/dev/null | head -5 || echo "No sensibull data yet"
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Notification Service

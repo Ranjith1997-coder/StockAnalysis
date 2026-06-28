@@ -34,8 +34,8 @@ _LOG_DIR = os.path.join(
 )
 os.makedirs(_LOG_DIR, exist_ok=True)
 
-# Timestamp | Level (7-char padded) | Service (20-char padded) | Message
-_LOG_FORMAT = "%(asctime)s | %(levelname)-7s | %(name)-24s | %(message)s"
+# Timestamp | Level (7-char padded) | Service (24-char padded) | filename:lineno | Message
+_LOG_FORMAT = "%(asctime)s | %(levelname)-7s | %(name)-24s | %(filename)s:%(lineno)d | %(message)s"
 _LOG_DATE_FORMAT = "%d %H:%M:%S"
 
 # Global default — overridable per service via {SERVICE}_LOG_LEVEL env var
