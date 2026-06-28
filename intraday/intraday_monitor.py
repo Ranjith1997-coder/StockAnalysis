@@ -4,12 +4,13 @@ import traceback
 import html
 import argparse
 from notification.Notification import TELEGRAM_NOTIFICATIONS
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 import concurrent.futures
 import common.constants as constant
 import common.shared as shared
 from common.Stock import Stock
 from common.helperFunctions import *
+from common.market_calendar import is_trading_day
 from enum import Enum
 from time import sleep
 from analyser.Analyser import AnalyserOrchestrator
@@ -27,7 +28,6 @@ from analyser.OptionSellerCompositeAnalyser import OptionSellerCompositeAnalyser
 from common.logging_util import logger
 from typing import List, Tuple, Optional
 from enum import Enum
-import yfinance as yf
 from zerodha.zerodha_analysis import ZerodhaTickerManager
 from zerodha.live_options_engine import LiveOptionsEngine
 from dotenv import load_dotenv
@@ -43,7 +43,13 @@ from intelligence.correlator import SignalCorrelator, Confluence
 from intelligence.signal import Signal, Direction, Layer, SignalStrength, weight_to_strength
 from zerodha.live_stock_engine import LiveStockEngine
 from zerodha.futures_fetcher import FuturesFetcher
-from fno.sensibull_fetcher import SensibullFetcher
+from services.common.redis_proxy import RedisProxy
+from services.common.stock_loader import (
+    load_price_data_from_redis,
+    load_sensibull_from_redis,
+    load_zerodha_from_redis,
+)
+from services.common.cycle_subscriber import CycleSubscriber
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -190,7 +196,6 @@ thread_pool: Optional[concurrent.futures.ThreadPoolExecutor] = None  # initialis
 orchestrator : AnalyserOrchestrator =  None
 PRODUCTION = False
 DEV_NOTIFY = False      # True = send Telegram alerts even in dev mode (DEV_NOTIFY=1)
-SHUTDOWN_SYSTEM = False
 ENABLE_ZERODHA_DERIVATIVES = False
 ENABLE_ZERODHA_API = False
 ENABLE_TELEGRAM_BOT = False
@@ -198,6 +203,8 @@ ENABLE_POST_MARKET = False
 ENABLE_LIVE_OPTIONS = False
 LIVE_OPTIONS_ONLY   = False   # When True: skip all regular analysis, run live options engine only
 ENABLE_INTELLIGENCE = False   # When True: SignalBus + Correlator + morning bias + LiveStockEngine
+redis_proxy: Optional[RedisProxy] = None
+cycle_subscriber: Optional[CycleSubscriber] = None
 
 class MonitorResult(Enum):
     SUCCESS = 0
@@ -239,47 +246,32 @@ def monitor(stock: Stock) -> Tuple[MonitorResult, bool, Optional[str]]:
                 return MonitorResult.SUCCESS, False, None
         logger.debug(f"{analysis_type} analysis for {stock.stockName} started.")
         
-        if ENABLE_ZERODHA_DERIVATIVES:
-            try:
-                # Fetch futures data only (ATM IV now sourced from Sensibull)
-                FuturesFetcher(shared.app_ctx.zd_kc).fetch(stock, mode=analysis_type)
-                logger.debug(f"Zerodha futures data fetched successfully for {stock.stockName}")
-            except Exception as e:
-                logger.error(f"Error fetching zerodha futures data for {stock.stockName}: {e}")
-        else:
-            logger.debug("Zerodha derivatives data not enabled for {stock.stockName}")
-
-        _sensibull = SensibullFetcher()
-        _excluded  = stock.stock_symbol in constant.INDEX_ANALYSIS_EXCLUDE
-
+        # Read sensibull + zerodha from data-gateway's Redis hashes
+        # Pure microservice: no direct HTTP fallback. If data is missing,
+        # the stock is skipped this cycle — it will be available next cycle.
+        _excluded = stock.stock_symbol in constant.INDEX_ANALYSIS_EXCLUDE
         if _excluded:
-            logger.debug(f"[monitor] {stock.stock_symbol} is in INDEX_ANALYSIS_EXCLUDE — skipping fetch and analysis")
+            logger.debug(f"[monitor] {stock.stock_symbol} is in INDEX_ANALYSIS_EXCLUDE — skipping")
             return MonitorResult.SUCCESS, False, None
 
-        try:
-            _sensibull.fetch_data(stock, mode=analysis_type)
-            logger.debug(f"Sensibull data fetched successfully for {stock.stockName}")
-        except Exception as e:
-            logger.error(f"Error fetching Sensibull data for {stock.stockName}: {e}")
+        sensibull_ok = load_sensibull_from_redis(redis_proxy, stock)
+        zerodha_ok = load_zerodha_from_redis(redis_proxy, stock)
 
-        # Fetch Sensibull OI chain data (per-strike OI analysis)
-        try:
-            _sensibull.fetch_oi_chain(stock, mode=analysis_type)
-            logger.debug(f"Sensibull OI chain data fetched successfully for {stock.stockName}")
-        except Exception as e:
-            logger.error(f"Error fetching Sensibull OI chain data for {stock.stockName}: {e}")
+        if not sensibull_ok:
+            logger.warning(f"[monitor] No sensibull data in Redis for {stock.stock_symbol} — data pending, skipping")
+            return MonitorResult.NO_DATA, False, f"{stock.stock_symbol} sensibull data pending"
 
-        # Daily history fetches — positional mode only.
-        # Both have fetch-once guards in the fetcher (skipped if already populated today).
-        if shared.app_ctx.mode == shared.Mode.POSITIONAL:
-            try:
-                _sensibull.fetch_iv_chart(stock)
-            except Exception as e:
-                logger.error(f"Error fetching Sensibull IV chart for {stock.stockName}: {e}")
-            try:
-                _sensibull.fetch_oi_history(stock)
-            except Exception as e:
-                logger.error(f"Error fetching Sensibull OI history for {stock.stockName}: {e}")
+        # FuturesFetcher stays in monolith until Phase 1E (auth-service migration).
+        # It writes results back to Redis for other services to use.
+        if ENABLE_ZERODHA_DERIVATIVES:
+            if not zerodha_ok:
+                try:
+                    FuturesFetcher(shared.app_ctx.zd_kc).fetch(stock, mode=analysis_type)
+                    _publish_zerodha_to_redis(stock)
+                except Exception as e:
+                    logger.error(f"Error fetching zerodha futures data for {stock.stockName}: {e}")
+        else:
+            logger.debug("Zerodha derivatives data not enabled for {stock.stockName}")
 
         if stock.is_index:
             trend_found, score_result = (
@@ -529,35 +521,6 @@ def create_stock_and_index_objects(stockName = None, indexName = None, commodity
         shared.app_ctx.index_list.append(index["tradingsymbol"])
         count += 1
 
-    if yfinanceIndexSymbols:
-        # Intraday: fetch 1y daily data so morning bias can run RSI/MACD/EMA on it
-        # Positional: only need a few days for prev_day_ohlcv (full 2y loaded later in fetch_price_data)
-        index_period = "1y" if is_intraday else "5D"
-        prevDayIndexData = yf.download(yfinanceIndexSymbols, period=index_period, interval="1d", group_by='ticker', auto_adjust=True)
-        for index in  shared.app_ctx.index_token_obj_dict.values():
-            try:
-                idx_data = prevDayIndexData[index.stockSymbolYFinance]
-                if idx_data.empty or len(idx_data) < 2:
-                    logger.warning(f"Insufficient yfinance data for {index.stock_symbol} ({index.stockSymbolYFinance}), skipping prev day OHLCV")
-                    continue
-
-                if is_intraday:
-                    ohlcv_row = idx_data.iloc[-1] if is_before_market_open() else idx_data.iloc[-2]
-                else:
-                    ohlcv_row = idx_data.iloc[-2]
-
-                index.set_prev_day_ohlcv(ohlcv_row["Open"], ohlcv_row["Close"],
-                                            ohlcv_row["High"], ohlcv_row["Low"],
-                                            ohlcv_row["Volume"])
-
-                # Store daily data as priceData for morning bias (overwritten by 5m data in intraday loop)
-                if is_intraday:
-                    idx_data.index = idx_data.index.tz_localize('UTC').tz_convert('Asia/Kolkata') if idx_data.index.tz is None else idx_data.index.tz_convert('Asia/Kolkata')
-                    index.priceData = idx_data.dropna(how='all')
-            except (KeyError, IndexError) as e:
-                logger.warning(f"Failed to get prev day data for {index.stock_symbol}: {e}")
-        
-
     count = 0
     yfinanceSymbols = []
     for stock in stock_list:
@@ -570,32 +533,6 @@ def create_stock_and_index_objects(stockName = None, indexName = None, commodity
         shared.app_ctx.stock_token_obj_dict[stock["instrument_token"]] = ticker
         shared.app_ctx.stocks_list.append(stock["tradingsymbol"])
         count += 1
-    
-    if yfinanceSymbols:
-        stock_period = "1y" if is_intraday else "5D"
-        prevDaydata = yf.download(yfinanceSymbols, period=stock_period, interval="1d", group_by='ticker', auto_adjust=True)
-        for stock in shared.app_ctx.stock_token_obj_dict.values():
-            try:
-                stk_data = prevDaydata[stock.stockSymbolYFinance]
-                if stk_data.empty or len(stk_data) < 2:
-                    logger.warning(f"Insufficient yfinance data for {stock.stock_symbol}, skipping prev day OHLCV")
-                    continue
-
-                if is_intraday:
-                    ohlcv_row = stk_data.iloc[-1] if is_before_market_open() else stk_data.iloc[-2]
-                else:
-                    ohlcv_row = stk_data.iloc[-2]
-
-                stock.set_prev_day_ohlcv(ohlcv_row["Open"], ohlcv_row["Close"],
-                                            ohlcv_row["High"], ohlcv_row["Low"],
-                                            ohlcv_row["Volume"])
-
-                # Store daily data as priceData for morning bias (overwritten by 5m data in intraday loop)
-                if is_intraday:
-                    stk_data.index = stk_data.index.tz_localize('UTC').tz_convert('Asia/Kolkata') if stk_data.index.tz is None else stk_data.index.tz_convert('Asia/Kolkata')
-                    stock.priceData = stk_data.dropna(how='all')
-            except (KeyError, IndexError) as e:
-                logger.warning(f"Failed to get prev day data for {stock.stock_symbol}: {e}")
     
     # Create commodity objects
     count = 0
@@ -611,24 +548,6 @@ def create_stock_and_index_objects(stockName = None, indexName = None, commodity
         shared.app_ctx.commodity_list.append(commodity["tradingsymbol"])
         count += 1
 
-    if yfinanceCommoditySymbols:
-        # Commodities trade 24/7, so we always use the most recent close
-        prevDayCommodityData = yf.download(yfinanceCommoditySymbols, period="5d", interval="1d", group_by='ticker')
-        logger.debug(f"Price data fetched to update previous OHLCV for commodities")
-        for commodity in shared.app_ctx.commodity_token_obj_dict.values():
-            try:
-                if len(yfinanceCommoditySymbols) == 1:
-                    commodity_prev_OHLCV_df = prevDayCommodityData.iloc[-2]
-                else:
-                    commodity_prev_OHLCV_df = prevDayCommodityData[commodity.stockSymbolYFinance].iloc[-2]
-                logger.debug(f"Using second-to-last day's data for {commodity.stock_symbol}")
-
-                commodity.set_prev_day_ohlcv(commodity_prev_OHLCV_df["Open"], commodity_prev_OHLCV_df["Close"], 
-                                            commodity_prev_OHLCV_df["High"], commodity_prev_OHLCV_df["Low"], 
-                                            commodity_prev_OHLCV_df["Volume"])
-            except Exception as e:
-                logger.error(f"Error setting prev day OHLCV for {commodity.stock_symbol}: {e}")
-    
     # Create global indices objects
     count = 0
     yfinanceGlobalIndicesSymbols = []
@@ -637,99 +556,13 @@ def create_stock_and_index_objects(stockName = None, indexName = None, commodity
             continue
         
         yfinanceGlobalIndicesSymbols.append(global_index["yfinancetradingsymbol"]) 
-
+        
         ticker = Stock(global_index["name"], global_index["tradingsymbol"], yfinanceSymbol=global_index["yfinancetradingsymbol"], is_index=True)
         shared.app_ctx.global_indices_token_obj_dict[global_index["instrument_token"]] = ticker
         shared.app_ctx.global_indices_list.append(global_index["tradingsymbol"])
         count += 1
 
-    if yfinanceGlobalIndicesSymbols:
-        # Global indices trade at different times, so we fetch recent data
-        prevDayGlobalIndicesData = yf.download(yfinanceGlobalIndicesSymbols, period="5d", interval="1d", group_by='ticker')
-        logger.debug(f"Price data fetched to update previous OHLCV for global indices")
-        for global_index in shared.app_ctx.global_indices_token_obj_dict.values():
-            try:
-                if len(yfinanceGlobalIndicesSymbols) == 1:
-                    global_index_prev_OHLCV_df = prevDayGlobalIndicesData.iloc[-2]
-                else:
-                    global_index_prev_OHLCV_df = prevDayGlobalIndicesData[global_index.stockSymbolYFinance].iloc[-2]
-                logger.debug(f"Using second-to-last day's data for {global_index.stock_symbol}")
-
-                global_index.set_prev_day_ohlcv(global_index_prev_OHLCV_df["Open"], global_index_prev_OHLCV_df["Close"], 
-                                            global_index_prev_OHLCV_df["High"], global_index_prev_OHLCV_df["Low"], 
-                                            global_index_prev_OHLCV_df["Volume"])
-            except Exception as e:
-                logger.error(f"Error setting prev day OHLCV for {global_index.stock_symbol}: {e}")
-
-
-def fetch_price_data(stock_objs, index_objs, commodity_objs=None, global_indices_objs=None):
-    
-    def update_price_data(ticker : Stock, data):
-        try:
-            if shared.app_ctx.mode.name == shared.Mode.POSITIONAL.name:
-                data.index = data.index.tz_localize('UTC').tz_convert('Asia/Kolkata')
-            else:
-                data.index = data.index.tz_convert('Asia/Kolkata')
-
-            # Drop rows where all OHLCV values are NaN (artifact of multi-symbol bulk download alignment)
-            data = data.dropna(how='all')
-
-            # Validate expected OHLCV columns exist
-            expected_cols = {'Open', 'High', 'Low', 'Close', 'Volume'}
-            actual_cols = set(data.columns.tolist())
-            if not expected_cols.issubset(actual_cols):
-                logger.warning(f"{ticker.stock_symbol}: unexpected columns {data.columns.tolist()}, expected {expected_cols}")
-                return
-
-            ticker.priceData = data
-            ticker.last_price_update = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            logger.debug(f"Price data updated for {ticker.stock_symbol} ({len(data)} rows)")
-        except Exception as e:
-            logger.error(f"Error fetching price data for {ticker.stockName}: {e}")
-    
-    stockSymbols = [stock.stockSymbolYFinance for stock in stock_objs]
-    indexSymbols = [index.stockSymbolYFinance for index in index_objs]
-    commoditySymbols = [commodity.stockSymbolYFinance for commodity in commodity_objs] if commodity_objs else []
-    globalIndicesSymbols = [global_index.stockSymbolYFinance for global_index in global_indices_objs] if global_indices_objs else []
-
-    period = "2y" if shared.app_ctx.mode.name == shared.Mode.POSITIONAL.name else "5d"
-    interval = "1d" if shared.app_ctx.mode.name == shared.Mode.POSITIONAL.name else "5m"
-
-    if stockSymbols:
-        stockData = yf.download(stockSymbols, period=period, interval=interval, group_by='ticker', auto_adjust=True)
-        for stock in stock_objs:
-            try:
-                stock_data = stockData[stock.stockSymbolYFinance]
-                update_price_data(stock, stock_data)
-            except KeyError:
-                logger.warning(f"{stock.stock_symbol}: symbol '{stock.stockSymbolYFinance}' not found in yfinance download")
-
-    if indexSymbols:
-        indexData = yf.download(indexSymbols, period=period, interval=interval, group_by='ticker', auto_adjust=True)
-        for index in index_objs:
-            try:
-                index_data = indexData[index.stockSymbolYFinance]
-                update_price_data(index, index_data)
-            except KeyError:
-                logger.warning(f"{index.stock_symbol}: symbol '{index.stockSymbolYFinance}' not found in yfinance download")
-    
-    if commoditySymbols:
-        commodityData = yf.download(commoditySymbols, period=period, interval=interval, group_by='ticker')
-        for commodity in commodity_objs:
-            if len(commoditySymbols) == 1:
-                commodity_data = commodityData
-            else:
-                commodity_data = commodityData[commodity.stockSymbolYFinance]
-            update_price_data(commodity, commodity_data)
-    
-    if globalIndicesSymbols:
-        globalIndicesData = yf.download(globalIndicesSymbols, period=period, interval=interval, group_by='ticker')
-        for global_index in global_indices_objs:
-            if len(globalIndicesSymbols) == 1:
-                global_index_data = globalIndicesData
-            else:
-                global_index_data = globalIndicesData[global_index.stockSymbolYFinance]
-            update_price_data(global_index, global_index_data)
+    # Data is loaded from Redis by _load_initial_data_from_redis() after init.
 
 def process_stock(stock: Stock) -> Tuple[MonitorResult, bool, Optional[str]]:
     mode = shared.app_ctx.mode
@@ -756,22 +589,12 @@ def fetch_and_analyze_stocks() -> List[Tuple[MonitorResult, bool, Optional[str]]
     orchestrator.reset_all_constants()
 
     # ── Price data ────────────────────────────────────────────────────────────
-    # Single bulk yfinance download for all symbols; submitted to the pool so
-    # the main thread is not blocked, and a hard 60s timeout prevents a stalled
-    # yfinance connection from hanging the entire cycle.
-    price_future = thread_pool.submit(
-        fetch_price_data, stock_objs, index_objs, commodity_objs, global_indices_objs
+    # Read from data-gateway's Redis hashes (sub-millisecond)
+    # All 4 asset classes: stocks, indices, commodities, global indices
+    load_price_data_from_redis(
+        redis_proxy, stock_objs, index_objs,
+        commodity_objs, global_indices_objs,
     )
-    try:
-        price_future.result(timeout=60)
-    except concurrent.futures.TimeoutError:
-        logger.error(
-            "Price data fetch timed out after 60s — proceeding with stale "
-            "priceData from last cycle"
-        )
-    except Exception as exc:
-        logger.error(f"Error fetching price data for stocks: {exc}")
-        return [(MonitorResult.ERROR, False, str(exc))]
 
     # ── Per-stock analysis ────────────────────────────────────────────────────
     results: List[Tuple[MonitorResult, bool, Optional[str]]] = []
@@ -1248,23 +1071,18 @@ def compute_morning_bias():
     # the intraday loop). Stored on stock.daily_hv for use by IVAnalyser.
     _compute_daily_hv_all()
 
-    # Fetch Sensibull data before running analysers.
-    # compute_morning_bias() bypasses monitor(), so without this fetch
+    # Read Sensibull data from Redis before running analysers.
+    # compute_morning_bias() bypasses monitor(), so without this load
     # sensibull_ctx["current"]["stats"] stays None and IVAnalyser crashes.
-    _sb = SensibullFetcher()
+    # Data-gateway's initial load already published positional-mode Sensibull data.
 
     try:
         # Indices
         for index in shared.app_ctx.index_token_obj_dict.values():
             if index.stock_symbol in constant.INDEX_ANALYSIS_EXCLUDE:
                 continue
-            try:
-                _sb.fetch_data(index, mode="positional")
-                _sb.fetch_oi_chain(index, mode="positional")
-                _sb.fetch_iv_chart(index)
-                _sb.fetch_oi_history(index)
-            except Exception as e:
-                logger.warning(f"[MorningBias] Sensibull fetch failed for {index.stock_symbol}: {e}")
+            if not load_sensibull_from_redis(redis_proxy, index):
+                logger.warning(f"[MorningBias] No sensibull data in Redis for {index.stock_symbol}")
             orchestrator.run_all_positional(index, index=True)
             for sentiment in ("BULLISH", "BEARISH"):
                 for analysis_type in index.analysis.get(sentiment, {}):
@@ -1282,13 +1100,8 @@ def compute_morning_bias():
 
         # Equities
         for stock in shared.app_ctx.stock_token_obj_dict.values():
-            try:
-                _sb.fetch_data(stock, mode="positional")
-                _sb.fetch_oi_chain(stock, mode="positional")
-                _sb.fetch_iv_chart(stock)
-                _sb.fetch_oi_history(stock)
-            except Exception as e:
-                logger.warning(f"[MorningBias] Sensibull fetch failed for {stock.stock_symbol}: {e}")
+            if not load_sensibull_from_redis(redis_proxy, stock):
+                logger.warning(f"[MorningBias] No sensibull data in Redis for {stock.stock_symbol}")
             orchestrator.run_all_positional(stock, index=False)
             for sentiment in ("BULLISH", "BEARISH"):
                 for analysis_type in stock.analysis.get(sentiment, {}):
@@ -1310,6 +1123,57 @@ def compute_morning_bias():
     for sig in signals_emitted:
         bus.emit(sig)
     logger.info(f"Morning bias computed: {len(signals_emitted)} positional signals emitted to SignalBus")
+
+
+def update_morning_bias():
+    """Fast path: extract bias signals from 8 PM positional analysis results.
+
+    Since the monolith is always running, stock.analysis is still populated
+    from yesterday's 8 PM positional_analysis() run. Just extract the BULLISH/
+    BEARISH results as POSITIONAL layer signals → SignalBus. Zero HTTP, zero
+    re-computation. ~0.5s for 213 stocks.
+
+    Slow path fallback: if analysis dict is empty (monolith restarted overnight),
+    fall back to compute_morning_bias() which re-reads Redis and re-runs
+    all positional analysers. ~120s with 43 HTTP calls.
+    """
+    bus = shared.app_ctx.signal_bus
+    if not bus:
+        return
+
+    all_stocks = list(shared.app_ctx.stock_token_obj_dict.values()) + [
+        idx for idx in shared.app_ctx.index_token_obj_dict.values()
+        if idx.stock_symbol not in constant.INDEX_ANALYSIS_EXCLUDE
+    ]
+
+    has_analysis = any(
+        s.analysis.get("BULLISH") or s.analysis.get("BEARISH")
+        for s in all_stocks
+    )
+
+    if has_analysis:
+        shared.app_ctx.mode = shared.Mode.POSITIONAL
+        signals_emitted = []
+        for stock in all_stocks:
+            for sentiment in ("BULLISH", "BEARISH"):
+                for analysis_type in stock.analysis.get(sentiment, {}):
+                    weight = constant.ANALYSIS_WEIGHTS.get(
+                        analysis_type, constant.ANALYSIS_WEIGHTS.get("DEFAULT", 10)
+                    )
+                    signals_emitted.append(Signal(
+                        symbol=stock.stock_symbol,
+                        direction=Direction[sentiment],
+                        source=analysis_type.lower(),
+                        layer=Layer.POSITIONAL,
+                        strength=weight_to_strength(weight),
+                    ))
+        for sig in signals_emitted:
+            bus.emit(sig)
+        shared.app_ctx.mode = shared.Mode.INTRADAY
+        logger.info(f"Morning bias (fast path): {len(signals_emitted)} signals from 8 PM analysis")
+    else:
+        logger.info("Morning bias (slow path): no 8 PM analysis found — recomputing from Redis")
+        compute_morning_bias()
 
 
 # ---------------------------------------------------------------------------
@@ -1487,6 +1351,10 @@ def intraday_analysis(loop = True, loop_wait_time = 30, max_cycles = 0):
             f"/{max_cycles}" if max_cycles > 0 else "",
         ))
 
+        # Wait for data-gateway to publish current cycle's data
+        if not _wait_for_cycle_ready():
+            logger.warning("[cycle] Cycle signal timeout — using last cycle's data")
+
         try:
             results = fetch_and_analyze_stocks()
             process_monitor_results(results)
@@ -1572,6 +1440,11 @@ def positional_analysis():
     TELEGRAM_NOTIFICATIONS.send_notification("\U0001F4CA <b>EOD Analysis Started</b> \U0001F4CA", parse_mode="HTML")
     orchestrator.reset_all_constants()
     stock_alerts = []
+
+    # Wait for data-gateway to publish current cycle's data
+    if not _wait_for_cycle_ready():
+        logger.warning("[cycle] Cycle signal timeout — using last cycle's data")
+
     try:
         results = fetch_and_analyze_stocks()
         process_monitor_results(results)
@@ -1633,7 +1506,6 @@ def init():
     global thread_pool
     global orchestrator
     global PRODUCTION
-    global SHUTDOWN_SYSTEM
     global ENABLE_ZERODHA_DERIVATIVES
     global ENABLE_ZERODHA_API
     global ENABLE_TELEGRAM_BOT
@@ -1642,6 +1514,8 @@ def init():
     global LIVE_OPTIONS_ONLY
     global ENABLE_INTELLIGENCE
     global DEV_NOTIFY
+    global redis_proxy
+    global cycle_subscriber
 
 
     if os.getenv(constant.ENV_PRODUCTION, "0") == "1":
@@ -1655,13 +1529,18 @@ def init():
             DEV_NOTIFY = True
             TELEGRAM_NOTIFICATIONS.dev_notify = True
             logger.info("DEV_NOTIFY=1 — Telegram alerts enabled in dev mode")
-    
-    if os.getenv(constant.ENV_SHUTDOWN, "0") == "1":
-        logger.info("Shutdown mode enabled")
-        SHUTDOWN_SYSTEM = True
-    else:
-        logger.info("Shutdown mode disabled")
-        SHUTDOWN_SYSTEM = False
+
+    redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
+    redis_proxy = RedisProxy(redis_url)
+    try:
+        redis_proxy.get("ping")
+        logger.info(f"[cycle] Connected to Redis at {redis_url}")
+    except Exception as e:
+        logger.error(f"[cycle] Cannot connect to Redis at {redis_url}: {e}")
+        sys.exit(1)
+
+    cycle_subscriber = CycleSubscriber(redis_proxy)
+    cycle_subscriber.start()
     
     if os.getenv(constant.ENV_ENABLE_ZERODHA_DERIVATIVES, "0") == "1":
         logger.info("Zerodha Derivative analysis enabled")
@@ -1754,6 +1633,10 @@ def init():
 
     create_stock_and_index_objects(args.stock, args.index)
 
+    # Wait for data-gateway's initial cycle signal via stream catch-up
+    cycle_subscriber.catch_up_on_startup(timeout=120)
+    _load_initial_data_from_redis()
+
     # Register equity and index tokens in the registry
     _register_base_tokens()
 
@@ -1839,80 +1722,132 @@ def parse_arguments():
     )
     return parser.parse_args()
 
-def start_stock_analysis():
+# ═══════════════════════════════════════════════════════════════════════════
+# Always-running loop helpers
+# ═══════════════════════════════════════════════════════════════════════════
 
-    if PRODUCTION:
-        if datetime.now().time() < time(9,15):
-            now = datetime.now()
-            preopen_time = now.replace(hour=9, minute=7, second=0, microsecond=0)
-            market_open_time = now.replace(hour=9, minute=15, second=0, microsecond=0)
+def _wait_until(hour: int, minute: int):
+    """Sleep until specified time today. Returns immediately if already past."""
+    while True:
+        now = datetime.now()
+        target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        sleep_sec = (target - now).total_seconds()
+        if sleep_sec <= 0:
+            return
+        chunk = min(sleep_sec, 60)
+        logger.debug(f"[schedule] Waiting until {hour:02d}:{minute:02d} ({sleep_sec:.0f}s remaining)")
+        sleep(chunk)
 
-            # --- Pre-market reports go to the POSITIONAL chat ---
-            TELEGRAM_NOTIFICATIONS.is_intraday = False
-            TELEGRAM_NOTIFICATIONS.send_notification("\U0001F4CB <b>Pre-Market Analysis Started</b> \U0001F4CB", parse_mode="HTML")
 
-            # --- Global Cues Report (available 24/7) — send immediately ---
-            try:
-                logger.info("Sending global cues & FII/DII report...")
-                run_global_cues_report()
-                logger.info("Global cues report sent successfully")
-            except Exception as e:
-                logger.error(f"Global cues report failed: {e}")
+def _sleep_until_midnight():
+    """Sleep until midnight. Re-checks every 5 min (allows holiday detection)."""
+    while True:
+        now = datetime.now()
+        midnight = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+        sleep_sec = (midnight - now).total_seconds()
+        if sleep_sec <= 0:
+            break
+        sleep(min(sleep_sec, 300))
 
-            # --- Sleep until 9:07 AM for NSE pre-open data ---
-            now = datetime.now()
-            if now.time() < time(9, 7):
-                sleep_until_preopen = (preopen_time - now).total_seconds()
-                logger.info(f"Sleeping for {sleep_until_preopen:.0f}s until 9:07 AM for pre-open report")
-                sleep(sleep_until_preopen)
 
-            # --- NSE Pre-Open Session Report (only meaningful 9:00-9:08 AM) ---
-            try:
-                logger.info("Sending NSE pre-open session report...")
-                run_preopen_report()
-                logger.info("Pre-open session report sent successfully")
-            except Exception as e:
-                logger.error(f"Pre-open session report failed: {e}")
+def _refresh_zerodha_auth():
+    """Refresh Zerodha enctoken via TOTP (was stockanalysis-auth.service)."""
+    if not ENABLE_ZERODHA_API:
+        return
+    try:
+        from auth.auth_login import generate_enctoken
+        success = generate_enctoken()
+        if success:
+            load_dotenv(override=True)
+            # Reload enctoken for KiteConnect
+            encToken_raw = os.getenv(constant.ENV_ZERODHA_ENC_TOKEN)
+            shared.app_ctx.zd_kc.set_enctoken(encToken_raw)
+            logger.info("Zerodha auth refreshed successfully")
+        else:
+            logger.error("Zerodha auth refresh failed")
+    except Exception as e:
+        logger.error(f"Zerodha auth refresh error: {e}")
 
-            # --- Switch back to INTRADAY chat for market-hours notifications ---
-            TELEGRAM_NOTIFICATIONS.is_intraday = True
 
-            # --- Sleep until 9:15 AM for market open ---
-            now = datetime.now()
-            if now.time() < time(9, 15):
-                sleep_until_open = (market_open_time - now).total_seconds()
-                logger.info(f"Sleeping for {sleep_until_open:.0f}s until 9:15 AM market open")
-                sleep(sleep_until_open)
+def _run_daily_loop():
+    """Always-running main loop. Self-schedules pre-market, intraday, positional.
 
-        # Compute morning bias — run positional on yesterday's data, emit to SignalBus
+    Production mode only — dev mode uses start_stock_analysis() as before.
+    """
+    global _morning_bias_done
+
+    while True:
+        # ── Holiday check ──
+        if PRODUCTION:
+            if not is_trading_day():
+                today_str = datetime.now().date().strftime("%A, %d %b %Y")
+                logger.info("Today (%s) is not an NSE trading day. Sleeping until midnight.", today_str)
+                TELEGRAM_NOTIFICATIONS.is_intraday = False
+                TELEGRAM_NOTIFICATIONS.send_notification(
+                    "\U0001F4C5 <b>Market Holiday</b>\n\n"
+                    f"Today is <b>{today_str}</b> and NSE is <b>closed</b>.\n"
+                    "No analysis will run. Sleeping until next trading day.\U0001F3D6\uFE0F",
+                    parse_mode="HTML",
+                )
+                _sleep_until_midnight()
+                continue
+
+        # ── Wait for pre-market time ──
+        _wait_until(9, 0)
+        logger.info("=== Pre-market phase ===")
+
+        # Refresh auth (was separate systemd oneshot)
+        _refresh_zerodha_auth()
+
+        TELEGRAM_NOTIFICATIONS.is_intraday = False
+        TELEGRAM_NOTIFICATIONS.send_notification(
+            "\U0001F4CB <b>Pre-Market Analysis Started</b> \U0001F4CB", parse_mode="HTML"
+        )
+
+        try:
+            run_global_cues_report()
+        except Exception as e:
+            logger.error(f"Global cues report failed: {e}")
+
+        # ── Pre-open report at 9:07 ──
+        _wait_until(9, 7)
+        try:
+            run_preopen_report()
+        except Exception as e:
+            logger.error(f"Pre-open report failed: {e}")
+
+        TELEGRAM_NOTIFICATIONS.is_intraday = True
+
+        # ── Morning bias (fast path from 8 PM analysis) ──
         if ENABLE_INTELLIGENCE:
             try:
-                compute_morning_bias()
+                update_morning_bias()
             except Exception as e:
-                logger.error(f"Morning bias computation failed: {e}")
+                logger.error(f"Morning bias failed: {e}")
 
-        is_in_time_period = isNowInTimePeriod(time(9,15), time(15,30), datetime.now().time())
-        if LIVE_OPTIONS_ONLY:
-            live_options_analysis()
-        elif is_in_time_period:
-            intraday_analysis(
-                max_cycles=int(os.getenv(constant.ENV_DEV_MAX_CYCLES, "0")),
-                loop_wait_time=int(os.getenv(constant.ENV_DEV_LOOP_WAIT, "30")),
-            )
-        else:
-            positional_analysis()
+        # ── Intraday analysis (9:15 - 15:30) ──
+        _wait_until(9, 15)
+        logger.info("=== Intraday phase ===")
+        intraday_analysis(
+            max_cycles=int(os.getenv(constant.ENV_DEV_MAX_CYCLES, "0")),
+            loop_wait_time=int(os.getenv(constant.ENV_DEV_LOOP_WAIT, "30")),
+        )
 
-        logger.info("shutting down the system.")
-        TELEGRAM_NOTIFICATIONS.send_notification("\U0001F6D1 <b>System Shutdown</b> \U0001F6D1", parse_mode="HTML")
-        # Stop the Telegram bot so run_polling() unblocks and the process exits
-        if ENABLE_TELEGRAM_BOT:
-            from notification.bot_listener import stop_telegram_bot
-            stop_telegram_bot()
-        # Shutdown system
-        if SHUTDOWN_SYSTEM:
-            from subprocess import run
-            run(["/sbin/shutdown", "-h", "now"])
-    else:
+        # ── Wait for positional (15:30 - 20:00) ──
+        logger.info("=== Intraday complete. Waiting for 8 PM positional analysis ===")
+        _wait_until(20, 0)
+
+        # ── Positional analysis (20:00) ──
+        logger.info("=== Positional phase ===")
+        positional_analysis()
+
+        # ── Done for today ──
+        _morning_bias_done = False
+        logger.info("=== Daily cycle complete. Sleeping until midnight ===")
+        _sleep_until_midnight()
+
+
+def start_stock_analysis():
         logger.info("Running in development mode. No shutdown operation.")
 
         if ENABLE_INTELLIGENCE:
@@ -1936,6 +1871,73 @@ def start_stock_analysis():
         if ENABLE_TELEGRAM_BOT:
             from notification.bot_listener import stop_telegram_bot
             stop_telegram_bot()
+
+def _publish_zerodha_to_redis(stock):
+    """Write zerodha_ctx futures data to Redis so data-gateway / analysis-engine can read it."""
+    if redis_proxy is None:
+        return
+    ctx = stock.zerodha_ctx
+    futures_data_current = ctx.get("futures_data", {}).get("current", pd.DataFrame())
+    futures_data_next = ctx.get("futures_data", {}).get("next", pd.DataFrame())
+    futures_mdata_current = ctx.get("futures_mdata", {}).get("current")
+    futures_mdata_next = ctx.get("futures_mdata", {}).get("next")
+
+    mapping = {}
+    if not futures_data_current.empty:
+        mapping["futures_data_current_json"] = futures_data_current.to_json(orient="split", date_format="iso")
+    else:
+        mapping["futures_data_current_json"] = "{}"
+    if not futures_data_next.empty:
+        mapping["futures_data_next_json"] = futures_data_next.to_json(orient="split", date_format="iso")
+    else:
+        mapping["futures_data_next_json"] = "{}"
+
+    mdata = {}
+    if futures_mdata_current is not None and not futures_mdata_current.empty:
+        mdata["current"] = futures_mdata_current.to_dict(orient="records")[0] if len(futures_mdata_current) > 0 else None
+    else:
+        mdata["current"] = None
+    if futures_mdata_next is not None and not futures_mdata_next.empty:
+        mdata["next"] = futures_mdata_next.to_dict(orient="records")[0] if len(futures_mdata_next) > 0 else None
+    else:
+        mdata["next"] = None
+    mapping["futures_mdata_json"] = __import__("json").dumps(mdata, default=str)
+
+    redis_proxy.hset(f"data:zerodha:{stock.stock_symbol}", mapping=mapping)
+
+
+def _wait_for_cycle_ready(timeout: float = 120.0) -> bool:
+    """Wait for the next data-gateway cycle signal via Pub/Sub subscriber.
+
+    Returns True if signal received, False on timeout (stale data fallback).
+    """
+    if cycle_subscriber is None:
+        return False
+    return cycle_subscriber.wait_for_cycle(timeout=timeout)
+
+
+def _load_initial_data_from_redis():
+    """Load initial price + sensibull data from data-gateway's Redis hashes."""
+    logger.info("[cycle] Loading initial data from Redis...")
+
+    stock_objs = list(shared.app_ctx.stock_token_obj_dict.values())
+    index_objs = list(shared.app_ctx.index_token_obj_dict.values())
+    commodity_objs = list(shared.app_ctx.commodity_token_obj_dict.values())
+    global_indices_objs = list(shared.app_ctx.global_indices_token_obj_dict.values())
+
+    updated = load_price_data_from_redis(
+        redis_proxy, stock_objs, index_objs,
+        commodity_objs, global_indices_objs,
+    )
+    logger.info(f"[cycle] Loaded price data for {updated} symbols")
+
+    sensibull_loaded = 0
+    for stock in stock_objs + index_objs:
+        if load_sensibull_from_redis(redis_proxy, stock):
+            sensibull_loaded += 1
+
+    logger.info(f"[cycle] Loaded sensibull data for {sensibull_loaded} symbols")
+
 
 def _shutdown_background_services():
     """
@@ -1970,37 +1972,9 @@ def _shutdown_background_services():
 
 if __name__ =="__main__":
 
-    # ── Market Holiday Gatekeeper ─────────────────────────────────────────────
-    # Check before any heavy initialisation (yfinance, Zerodha, orchestrators).
-    # In production mode only — dev mode always runs so engineers can test freely.
-    if os.getenv("PRODUCTION", "0") == "1":
-        from common.market_calendar import is_trading_day
-        if not is_trading_day():
-            today_str = datetime.now().date().strftime("%A, %d %b %Y")
-            logger.info("Today (%s) is not an NSE trading day. Sending Telegram notification and exiting.", today_str)
-
-            # Send holiday notification via the positional channel (same as pre-market reports)
-            TELEGRAM_NOTIFICATIONS.is_production = True
-            TELEGRAM_NOTIFICATIONS.is_intraday = False
-            TELEGRAM_NOTIFICATIONS.send_notification(
-                f"\U0001F4C5 <b>Market Holiday — System Not Started</b>\n\n"
-                f"Today is <b>{today_str}</b> and NSE is <b>closed</b>.\n"
-                f"No intraday analysis will run. Have a good holiday! \U0001F3D6\uFE0F",
-                parse_mode="HTML",
-            )
-
-            if os.getenv(constant.ENV_SHUTDOWN, "0") == "1":
-                logger.info("SHUTDOWN_SYSTEM enabled — shutting down machine.")
-                from subprocess import run as _run
-                _run(["/sbin/shutdown", "-h", "now"])
-
-            sys.exit(0)
-    # ─────────────────────────────────────────────────────────────────────────
-
     # ── Dev-mode premarket-only shortcut ─────────────────────────────────────
     # Run with: python3 intraday_monitor.py --premarket
-    # Skips all heavy init (yfinance bulk download, Zerodha, orchestrators).
-    # Works without PRODUCTION=1 — useful for testing the report locally.
+    # Skips all heavy init. Works without PRODUCTION=1.
     _pre_args = argparse.ArgumentParser(add_help=False)
     _pre_args.add_argument("--premarket", action="store_true")
     _known, _ = _pre_args.parse_known_args()
@@ -2016,19 +1990,21 @@ if __name__ =="__main__":
     # ─────────────────────────────────────────────────────────────────────────
 
     init()
-    if ENABLE_TELEGRAM_BOT:
-        thread = threading.Thread(target=start_stock_analysis)
-        thread.start()
-        init_telegram_bot()
+    if PRODUCTION:
+        # Always-running daily loop (self-schedules pre-market, intraday, positional)
+        if ENABLE_TELEGRAM_BOT:
+            thread = threading.Thread(target=_run_daily_loop)
+            thread.start()
+            init_telegram_bot()
+        else:
+            _run_daily_loop()
     else:
-        start_stock_analysis()
-
-    
-
-    
-
-
-    
-
+        # Dev mode — single run, exit after (unchanged behavior)
+        if ENABLE_TELEGRAM_BOT:
+            thread = threading.Thread(target=start_stock_analysis)
+            thread.start()
+            init_telegram_bot()
+        else:
+            start_stock_analysis()
     
     

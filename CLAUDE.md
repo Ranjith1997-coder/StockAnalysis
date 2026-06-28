@@ -37,4 +37,4 @@
 - `make test-fast` : Pytest suite (stop on first fail)
 - `make lint` / `make format` / `make typecheck` : Ruff / Pyright
 - `make deploy` : rsync + SSH to production
-- `make server-logs-500` : Check production `stock_monitor.log`
+- `make server-logs-500` : Check production `monolith.log`

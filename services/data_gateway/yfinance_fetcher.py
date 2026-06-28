@@ -35,6 +35,8 @@ def fetch_initial_daily_data(redis_proxy: "RedisProxy", is_intraday: bool):
 
     _fetch_index_initial(redis_proxy, index_list, is_intraday)
     _fetch_stock_initial(redis_proxy, stock_list, is_intraday)
+    _fetch_commodity_initial(redis_proxy, commodity_list, is_intraday)
+    _fetch_global_indices_initial(redis_proxy, global_indices_list, is_intraday)
 
 
 def _fetch_index_initial(redis_proxy, index_list, is_intraday):
@@ -146,8 +148,105 @@ def _fetch_stock_initial(redis_proxy, stock_list, is_intraday):
         logger.error(f"[yfinance] Error fetching initial stock data: {e}")
 
 
+def _fetch_commodity_initial(redis_proxy, commodity_list, is_intraday):
+    symbols = [c.get("yfinancetradingsymbol", c["tradingsymbol"]) for c in commodity_list]
+    if not symbols:
+        return
+    period = "1y" if is_intraday else "5D"
+    logger.info(f"[yfinance] Fetching initial daily data for {len(symbols)} commodities ({period})")
+    try:
+        data = yf.download(symbols, period=period, interval="1d", group_by="ticker", auto_adjust=True, progress=False)
+        for c in commodity_list:
+            name = c["tradingsymbol"]
+            yf_sym = c.get("yfinancetradingsymbol", name)
+            try:
+                if len(symbols) == 1:
+                    sym_data = data
+                else:
+                    sym_data = data[yf_sym]
+                if sym_data.empty or len(sym_data) < 2:
+                    logger.warning(f"[yfinance] Insufficient data for commodity {name}, skipping")
+                    continue
+                ohlcv_row = sym_data.iloc[-2]
+                prev_day = {
+                    "OPEN": float(ohlcv_row["Open"]),
+                    "HIGH": float(ohlcv_row["High"]),
+                    "LOW": float(ohlcv_row["Low"]),
+                    "CLOSE": float(ohlcv_row["Close"]),
+                    "VOLUME": float(ohlcv_row["Volume"]),
+                }
+                sym_data.index = (
+                    sym_data.index.tz_localize("UTC").tz_convert("Asia/Kolkata")
+                    if sym_data.index.tz is None
+                    else sym_data.index.tz_convert("Asia/Kolkata")
+                )
+                sym_data = sym_data.dropna(how="all")
+                mapping = {
+                    "priceData_json": sym_data.to_json(orient="split", date_format="iso"),
+                    "prevDayOHLCV_json": __import__("json").dumps(prev_day, default=str),
+                    "ltp": "",
+                    "ltp_change_perc": "",
+                    "daily_hv": "",
+                }
+                redis_proxy.hset(f"data:price:{name}", mapping=mapping)
+                logger.info(f"[yfinance] Published initial data for commodity {name} ({len(sym_data)} rows)")
+            except (KeyError, IndexError) as e:
+                logger.warning(f"[yfinance] Failed to get initial data for commodity {name}: {e}")
+    except Exception as e:
+        logger.error(f"[yfinance] Error fetching initial commodity data: {e}")
+
+
+def _fetch_global_indices_initial(redis_proxy, global_indices_list, is_intraday):
+    symbols = [g.get("yfinancetradingsymbol", g["tradingsymbol"]) for g in global_indices_list]
+    if not symbols:
+        return
+    period = "1y" if is_intraday else "5D"
+    logger.info(f"[yfinance] Fetching initial daily data for {len(symbols)} global indices ({period})")
+    try:
+        data = yf.download(symbols, period=period, interval="1d", group_by="ticker", auto_adjust=True, progress=False)
+        for g in global_indices_list:
+            name = g["tradingsymbol"]
+            yf_sym = g.get("yfinancetradingsymbol", name)
+            try:
+                if len(symbols) == 1:
+                    sym_data = data
+                else:
+                    sym_data = data[yf_sym]
+                if sym_data.empty or len(sym_data) < 2:
+                    logger.warning(f"[yfinance] Insufficient data for global index {name}, skipping")
+                    continue
+                ohlcv_row = sym_data.iloc[-2]
+                prev_day = {
+                    "OPEN": float(ohlcv_row["Open"]),
+                    "HIGH": float(ohlcv_row["High"]),
+                    "LOW": float(ohlcv_row["Low"]),
+                    "CLOSE": float(ohlcv_row["Close"]),
+                    "VOLUME": float(ohlcv_row["Volume"]),
+                }
+                sym_data.index = (
+                    sym_data.index.tz_localize("UTC").tz_convert("Asia/Kolkata")
+                    if sym_data.index.tz is None
+                    else sym_data.index.tz_convert("Asia/Kolkata")
+                )
+                sym_data = sym_data.dropna(how="all")
+                mapping = {
+                    "priceData_json": sym_data.to_json(orient="split", date_format="iso"),
+                    "prevDayOHLCV_json": __import__("json").dumps(prev_day, default=str),
+                    "ltp": "",
+                    "ltp_change_perc": "",
+                    "daily_hv": "",
+                }
+                redis_proxy.hset(f"data:price:{name}", mapping=mapping)
+                logger.info(f"[yfinance] Published initial data for global index {name} ({len(sym_data)} rows)")
+            except (KeyError, IndexError) as e:
+                logger.warning(f"[yfinance] Failed to get initial data for global index {name}: {e}")
+    except Exception as e:
+        logger.error(f"[yfinance] Error fetching initial global indices data: {e}")
+
+
 def fetch_cycle_data(redis_proxy: "RedisProxy", stock_symbols: list[str], index_symbols: list[str],
-                     commodity_symbols: list[str] = None, global_indices_symbols: list[str] = None):
+                     commodity_symbols: list[str] = None, global_indices_symbols: list[str] = None,
+                     yf_to_key_map: dict[str, str] = None):
     """
     Fetch intraday 5-min or positional daily data for the current cycle.
     Publishes updated priceData to Redis.
@@ -157,6 +256,7 @@ def fetch_cycle_data(redis_proxy: "RedisProxy", stock_symbols: list[str], index_
         index_symbols: list of yfinance symbols for indices
         commodity_symbols: list of yfinance symbols for commodities
         global_indices_symbols: list of yfinance symbols for global indices
+        yf_to_key_map: optional dict mapping yfinance symbol -> Redis key (tradingsymbol)
     """
     import os
     from dotenv import load_dotenv
@@ -173,19 +273,20 @@ def fetch_cycle_data(redis_proxy: "RedisProxy", stock_symbols: list[str], index_
     t0 = time.time()
 
     if stock_symbols:
-        _download_group(redis_proxy, stock_symbols, period, interval, "stock")
+        _download_group(redis_proxy, stock_symbols, period, interval, "stock", yf_to_key_map)
     if index_symbols:
-        _download_group(redis_proxy, index_symbols, period, interval, "index")
+        _download_group(redis_proxy, index_symbols, period, interval, "index", yf_to_key_map)
     if commodity_symbols:
-        _download_group(redis_proxy, commodity_symbols, period, interval, "commodity")
+        _download_group(redis_proxy, commodity_symbols, period, interval, "commodity", yf_to_key_map)
     if global_indices_symbols:
-        _download_group(redis_proxy, global_indices_symbols, period, interval, "global_index")
+        _download_group(redis_proxy, global_indices_symbols, period, interval, "global_index", yf_to_key_map)
 
     elapsed = time.time() - t0
     logger.info(f"[yfinance] Cycle fetch complete: {elapsed:.1f}s ({len(stock_symbols)} stocks, {len(index_symbols)} indices)")
 
 
-def _download_group(redis_proxy, symbols: list[str], period: str, interval: str, group_name: str):
+def _download_group(redis_proxy, symbols: list[str], period: str, interval: str, group_name: str,
+                     yf_to_key_map: dict[str, str] = None):
     if not symbols:
         return
 
@@ -221,8 +322,11 @@ def _download_group(redis_proxy, symbols: list[str], period: str, interval: str,
                 logger.warning(f"[yfinance] {symbol}: unexpected columns {sym_data.columns.tolist()}")
                 continue
 
-            # Derive stock symbol key from yfinance symbol (strip .NS)
-            stock_key = symbol.replace(".NS", "")
+            # Derive Redis key: use yf_to_key_map if available, otherwise strip .NS suffix
+            if yf_to_key_map and symbol in yf_to_key_map:
+                stock_key = yf_to_key_map[symbol]
+            else:
+                stock_key = symbol.replace(".NS", "")
             mapping = {
                 "priceData_json": sym_data.to_json(orient="split", date_format="iso"),
                 "last_price_update": str(pd.Timestamp.now(tz="Asia/Kolkata")),
