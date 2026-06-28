@@ -86,6 +86,35 @@ def inspect_overview() -> dict:
         "options_source": ctx.options_source,
         "error_count": ctx.error_count,
         "monitor_results": dict(ctx.monitor_result_counts),
+        "sensibull_ws": _inspect_sensibull_feed(ctx),
+    }
+
+
+def _inspect_sensibull_feed(ctx) -> dict:
+    """Inspect the Sensibull WebSocket feed(s)."""
+    feeds = ctx.sensibull_feed
+    if not feeds:
+        return {"active": False, "feed_count": 0, "feeds": []}
+    feeds_list = feeds if isinstance(feeds, list) else [feeds]
+    feed_infos = []
+    for i, feed in enumerate(feeds_list):
+        thread = getattr(feed, "_thread", None)
+        stop_event = getattr(feed, "_stop_event", None)
+        subs = getattr(feed, "_subscriptions", [])
+        feed_infos.append({
+            "index": i,
+            "thread_alive": thread.is_alive() if thread else False,
+            "stopped": stop_event.is_set() if stop_event else True,
+            "subscription_count": _safe_len(subs),
+            "subscriptions": [
+                {"underlying": s.get("underlying"), "expiry": s.get("expiry")}
+                for s in (subs if isinstance(subs, list) else [])
+            ],
+        })
+    return {
+        "active": True,
+        "feed_count": len(feeds_list),
+        "feeds": feed_infos,
     }
 
 
@@ -280,6 +309,7 @@ def inspect_counters() -> dict:
             getattr(ctx.narrator._client, "_daily_tokens", 0)
             if ctx.narrator and getattr(ctx.narrator, "_client", None) else 0
         ),
+        "sensibull_ws": _inspect_sensibull_feed(ctx),
         "memory_rss_mb": round(_get_rss_mb(), 1),
     }
 
@@ -303,6 +333,7 @@ def inspect_memory() -> dict:
         "ticker_52w_high_count": len(shared.ticker_52_week_high_list),
         "ticker_52w_low_count": len(shared.ticker_52_week_low_list),
         "sensibull_feed_active": ctx.sensibull_feed is not None,
+        "sensibull_feed": _inspect_sensibull_feed(ctx),
         "memory_rss_mb": round(_get_rss_mb(), 1),
     }
 
