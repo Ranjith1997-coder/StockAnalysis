@@ -6,87 +6,94 @@ StockAnalysis is an automated analysis system for Indian equity and derivatives 
 
 ---
 
+---
+
 ## Operating Modes
 
-The system runs in two primary modes, orchestrated from `intraday/intraday_monitor.py`:
+The monolith (`intraday/intraday_monitor.py`) runs 24/7 as an always-on systemd service. It self-schedules the daily flow internally — no timers, no restarts:
 
-| Mode | When | Data Interval | Loop |
-|------|------|---------------|------|
-| **INTRADAY** | 9:15 AM – 3:30 PM | 5-min candles (yfinance) + live WebSocket ticks (Zerodha) | Every ~310 seconds |
-| **POSITIONAL** | After 4:00 PM (EOD) | Daily candles — 90-day daily for futures, 2-year daily for equity | Single run |
-| **LIVE OPTIONS** | 9:15 AM – 3:30 PM (opt-in) | Per WebSocket tick (~ms) for NIFTY/BANKNIFTY/SENSEX options | Continuous |
+| Phase | Time (IST) | Description |
+|-------|-----------|-------------|
+| **IDLE** | 00:00 – 09:00 | Overnight — all services idle, Redis keeps yesterday's positional data |
+| **PRE-MARKET** | 09:00 – 09:15 | Global cues report (sector, FII/DII, F&O OI, NSE indices) + NSE pre-open at 09:07 + morning bias |
+| **INTRADAY** | 09:15 – 15:30 | Analysis loop every ~310s — reads fresh data from Redis (published by data-gateway) |
+| **WAITING** | 15:30 – 20:00 | Idle — data-gateway fetches positional data at 19:00 |
+| **POSITIONAL** | 20:00 – ~20:30 | EOD analysis — reads 2y daily data + positional Sensibull from Redis |
+| **IDLE** | 20:30 – 24:00 | Overnight — analysis + priceData retained in memory for next morning's bias |
 
-Mode selection in production (`PRODUCTION=1`) is time-based. In dev mode, `DEV_INTRADAY=1` or `DEV_POSITIONAL=1` select manually.
+Mode selection in production (`PRODUCTION=1`) is time-based via `_run_daily_loop()`. In dev mode, `DEV_INTRADAY=1` or `DEV_POSITIONAL=1` select manually via `start_stock_analysis()`.
 
 ---
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                    Microservices (Phase 1)                       │
-│                                                                  │
-│  ┌──────────┐        ┌──────────────────┐                       │
-│  │  Redis 7 │◄───────│  Monolith (until │                       │
-│  │ (message │   LB   │  fully extracted)│                       │
-│  │  broker) │        │ intraday_monitor │                       │
-│  └────┬─────┘        │  .py             │                       │
-│       │              └────────┬─────────┘                       │
-│       │  notification:jobs    │ send_notification()             │
-│       │  (stream)             │  ─→ Redis (primary)             │
-│       │                       │   → HTTP (fallback)             │
-│       ▼                       ▼                                 │
-│  ┌───────────────────────────────┐                              │
-│  │  notification-service         │  (EXTRACTED — Phase 1B)       │
-│  │  services/notification-       │                              │
-│  │  service/main.py              │                              │
-│  │    └── Consumes Redis stream  │                              │
-│  │    └── Telegram + Discord     │                              │
-│  │    └── Retry + dead letter    │                              │
-│  └───────────────────────────────┘                              │
-│                                                                  │
-│  Services to extract (planned):                                 │
-│    □ data-gateway     — yfinance + Sensibull + Zerodha WS       │
-│    □ analysis-engine  — 12 analysers + scoring                  │
-│    □ orchestrator     — cycle coordination                      │
-│    □ intelligence     — SignalBus + Correlator + LLM            │
-│    □ bot-service      — Telegram bot commands                   │
-└─────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    Always-Running Microservices (Phase 1A)                   │
+│                                                                              │
+│  ┌──────────┐    ┌──────────────────┐    ┌───────────────────────────┐      │
+│  │  Redis 7 │◄───│  Data Gateway    │    │  Monolith                 │      │
+│  │ (message │    │  (24/7)          │    │  (24/7 — self-scheduling) │      │
+│  │  broker) │    │                  │    │                           │      │
+│  │          │    │  09:15-15:30:    │    │  09:00: pre-market        │      │
+│  │          │    │    yfinance 5m   │    │  09:07: NSE pre-open      │      │
+│  │          │    │    + Sensibull   │    │  09:10: morning bias      │      │
+│  │          │    │    (parallel)    │    │  09:15: intraday loop     │      │
+│  │          │    │    → data:price:* │    │  15:30: idle              │      │
+│  │          │    │    → data:sensibull:* │  20:00: positional analysis│     │
+│  │          │    │                  │    │                           │      │
+│  │          │    │  19:00-19:30:    │    │  Reads from Redis:        │      │
+│  │          │    │    positional    │    │    data:price:*            │      │
+│  │          │    │    (2y daily)    │    │    data:sensibull:*        │      │
+│  │          │    │    ONE fetch     │    │    data:zerodha:*         │      │
+│  │          │    │                  │    │                           │      │
+│  │          │    │  Otherwise:      │    │  Writes notifications:    │      │
+│  │          │    │    idle          │    │    → notification:jobs    │      │
+│  │          │    │    (heartbeat)   │    │      (Redis stream)       │      │
+│  │          │    └────────┬─────────┘    └───────────┬───────────────┘      │
+│  │          │             │                          │                       │
+│  │          │  data:cycle_stream         notification:jobs                   │
+│  │          │  data:cycle_ready          (Redis stream)                      │
+│  │          │  (Pub/Sub)                                                    │
+│  │          │                          │                                    │
+│  │          │             ┌────────────▼──────────────────────────────┐     │
+│  │          │             │  Notification Service (24/7)              │     │
+│  │          │             │  services/notification-service/main.py    │     │
+│  │          │             │    └── Consumes notification:jobs stream  │     │
+│  │          │             │    └── Telegram + Discord dispatch        │     │
+│  │          │             │    └── 3x retry + dead letter             │     │
+│  │          │             └───────────────────────────────────────────┘     │
+│  └──────────┘                                                                │
+│                                                                              │
+│  Cycle sync: data-gateway publishes cycle_ready (Pub/Sub) after each fetch. │
+│  Monolith's CycleSubscriber blocks until signal arrives — zero data lag.    │
+│                                                                              │
+│  Services to extract (future phases):                                        │
+│    □ analysis-engine  — 12 analysers + scoring (Phase 1C)                   │
+│    □ coordinator      — cycle coordination (Phase 1D)                       │
+│    □ intelligence     — SignalBus + Correlator + LLM                         │
+│    □ bot-service      — Telegram bot commands                                │
+└─────────────────────────────────────────────────────────────────────────────┘
 
-Current monolith flow:
-intraday/intraday_monitor.py          ← Main entry point & orchestration
-         |
-         ├── create_stock_and_index_objects()   yfinance daily data download
-         ├── update_zerodha_option_chain()       Kite instruments API → zerodha_ctx
-         ├── FuturesFetcher.fetch()              Kite historical API → futures_data
-         ├── SensibullFetcher.fetch_data()       Sensibull insights → sensibull_ctx
-         ├── SensibullFetcher.fetch_oi_chain()   Sensibull OI chain → sensibull_ctx
-         ├── SensibullFetcher.fetch_iv_chart()   (positional only) daily IV history
-         ├── SensibullFetcher.fetch_oi_history() (positional only) daily OI/PCR history
-         └── AnalyserOrchestrator.run_all_*()    Runs registered analysers
-                   |
-                   ├── VolumeAnalyser           (active)
-                   ├── TechnicalAnalyser        (active)
-                   ├── CandleStickAnalyser      (active)
-                   ├── IVAnalyser               (active)
-                   ├── FuturesAnalyser          (active)
-                   ├── PCRAnalyser              (active)
-                   ├── MaxPainAnalyser          (active)
-                   ├── OIChainAnalyser          (active)
-                   ├── PanicModeAnalyser        (active — MUST be last before composite)
-                   └── OptionSellerCompositeAnalyser  (active — MUST be registered after PanicModeAnalyser)
+Data flow:
+  data-gateway → Redis hashes (data:price:*, data:sensibull:*, data:zerodha:*)
+                 → Redis stream (data:cycle_stream) + Pub/Sub (data:cycle_ready)
+  monolith     → reads Redis hashes (sub-millisecond)
+                 → writes notification:jobs stream
+  notification → reads notification:jobs → sends Telegram/Discord
 ```
 
 ---
 
 ## Data Sources
 
-| Source | What is fetched | Module |
-|--------|-----------------|--------|
-| **Zerodha Kite API** (historical) | Futures OHLCV + OI (daily 90-day, 5-min intraday) | `zerodha/futures_fetcher.py` |
-| **Zerodha WebSocket** | Live equity/index ticks, option chain ticks, futures ticks | `zerodha/zerodha_analysis.py` |
-| **Sensibull** | OI chain per-strike, PCR, ATM IV, max pain, IV chart history, daily OI/PCR history | `fno/sensibull_fetcher.py` |
-| **yfinance** | Equity/index OHLCV — 1y daily at startup, 5-min intraday during market hours, 2y daily for positional | `intraday/intraday_monitor.py` |
+| Source | What is fetched | Module | Who fetches |
+|--------|-----------------|--------|-------------|
+| **Zerodha Kite API** (historical) | Futures OHLCV + OI (daily 90-day, 5-min intraday) | `zerodha/futures_fetcher.py` | Monolith (inline, until Phase 1E) |
+| **Zerodha WebSocket** | Live equity/index ticks, option chain ticks, futures ticks | `zerodha/zerodha_analysis.py` | Monolith (inline) |
+| **Sensibull** | OI chain per-strike, PCR, ATM IV, max pain, IV chart history, daily OI/PCR history | `services/data_gateway/sensibull_fetcher.py` | **Data-gateway** (parallel, 10 workers) |
+| **yfinance** | Equity/index/commodity/global OHLCV — 1y daily at startup, 5-min intraday, 2y daily for positional | `services/data_gateway/yfinance_fetcher.py` | **Data-gateway** |
+| **NSE** | Holiday calendar, pre-open data, FII/DII flows, sector performance | `premarket/premarket_report.py`, `post_market_analysis/` | Monolith (self-contained HTTP) |
 
 ---
 
@@ -148,7 +155,7 @@ total_score = base_score + alignment_bonus
 When `ENABLE_INTELLIGENCE=1`:
 - **SignalBus**: thread-safe pub/sub event bus — all analysers emit `Signal` objects
 - **SignalCorrelator**: detects cross-layer confluence (LIVE + INTRADAY + POSITIONAL alignment)
-- **Morning bias**: runs positional analysers at startup on 1y daily data, seeds correlator buffer
+- **Morning bias**: extracts positional bias signals from 8 PM analysis results (fast path — zero HTTP, ~0.5s). Falls back to full recompute from Redis if monolith restarted overnight.
 - **LiveStockEngine**: per-tick VWAP cross, bid/ask imbalance, ORB, day high/low break signals
 
 When `ENABLE_NARRATOR=1` (requires `GEMINI_API_KEY`):
@@ -164,8 +171,7 @@ When `ENABLE_NARRATOR=1` (requires `GEMINI_API_KEY`):
 
 | Variable | Purpose |
 |----------|---------|
-| `PRODUCTION` | `1` = production mode (time-based mode selection), `0` = dev |
-| `SHUTDOWN` | `1` = shutdown system after EOD analysis |
+| `PRODUCTION` | `1` = production mode (always-running daily loop), `0` = dev |
 | `DEV_INTRADAY` | `1` = dev intraday mode |
 | `DEV_POSITIONAL` | `1` = dev positional mode |
 | `NO_OF_STOCKS` | Max stocks to analyze (`-1` = all) |
@@ -209,16 +215,30 @@ When `ENABLE_NARRATOR=1` (requires `GEMINI_API_KEY`):
 | `OPTIONS_SOURCE` | `zerodha` | `zerodha` or `sensibull` for live option tick source |
 | `HEALTHCHECK_URL` | (empty) | Dead-man's switch ping URL (e.g., healthchecks.io) |
 
-### Redis (required for notification service)
+### Redis (required — all services use Redis)
 
 | Variable | Purpose |
 |----------|---------|
 | `REDIS_URL` | Redis connection string (default: `redis://localhost:6379`) |
 | `NOTIFICATION_CHANNEL` | `telegram`, `discord`, or `both` |
+| `SENSIBULL_WORKERS` | Parallel Sensibull fetch workers (default: `10`) |
 
-### Per-Service Logging
+### Logging (unified across all services)
 
-All services log to `logs/{service_name}.log` with 10 MB rotating files (3 backups). Per-service log level override:
+All services use `services/common/logging.py` via `get_logger("service-name")`. The monolith's `common/logging_util.py` is a thin shim that delegates to the same factory — all 44+ modules that import it get the unified logger transparently.
+
+Log files (10 MB rotating, 3 backups each):
+
+| File | Service |
+|------|---------|
+| `logs/monolith.log` | Monolith (intraday + positional) |
+| `logs/data-gateway.log` | Data gateway |
+| `logs/notification-service.log` | Notification service |
+| `logs/cycle-subscriber.log` | Cycle subscriber (internal) |
+
+Format: `28 13:26:31 | WARNING | SA.monolith | intraday_monitor.py:1234 | message`
+
+Per-service log level override:
 
 ```bash
 LOG_LEVEL=INFO NOTIFICATION_LOG_LEVEL=DEBUG make run-dev
@@ -241,17 +261,20 @@ Requires `ZERODHA_USER`, `ZERODHA_PASS`, and `ZERODHA_TOTP_SECRET` in `.env`.
 python auth/auth_login.py   # generates enctoken and writes it to .env
 ```
 
-In production the `stockanalysis-auth.service` systemd unit (see `scripts/system_config`) runs this automatically at boot, **before** the intraday monitor starts. The `stockanalysis.service` and `stockanalysis-positional.service` both `Require=` the auth service, so a failed login halts the analysis service instead of running with an expired token.
+In production, the monolith refreshes auth **inline** at 9:00 AM each trading day via `_refresh_zerodha_auth()` inside `_run_daily_loop()`. No separate auth service or systemd unit is needed.
 
-`scripts/system_config` contains all four systemd unit files needed for a full EC2 deployment:
+### systemd Services (always-running)
 
-| Unit | Trigger | Purpose |
-|------|---------|--------|
-| `stockanalysis-auth.service` | At boot | TOTP login — writes fresh enctoken to `.env` |
-| `stockanalysis.service` | Via timer | Intraday monitor during market hours |
-| `stockanalysis.timer` | Mon–Fri 03:30 UTC (9:00 AM IST) | Triggers intraday service |
-| `stockanalysis-positional.service` | Via timer | EOD positional analysis |
-| `stockanalysis-positional.timer` | Mon–Fri 14:30 UTC (8:00 PM IST) | Triggers positional service |
+All services run 24/7 with `Restart=always`. `scripts/system_config` contains the unit definitions:
+
+| Unit | Runs | Purpose |
+|------|------|---------|
+| `redis-server.service` | 24/7 (apt-managed) | Redis message broker (128MB, no persistence) |
+| `stockanalysis-notification.service` | 24/7 | Notification stream consumer → Telegram/Discord |
+| `stockanalysis-data-gateway.service` | 24/7 (self-scheduling) | yfinance + Sensibull → Redis hashes + cycle signals |
+| `stockanalysis.service` | 24/7 (self-scheduling) | Monolith — pre-market, intraday, positional analysis |
+
+No timers. No auth service. The monolith self-schedules the entire daily flow internally.
 
 ---
 
@@ -320,6 +343,12 @@ make redis-stop                    # Stop Redis service
 make redis-status                  # Check Redis status + memory
 make redis-config                  # Apply production config (128MB, no persistence)
 
+# Data Gateway
+make run-data-gateway            # Start data-gateway (foreground)
+make run-data-gateway-dev        # Start data-gateway (dev intraday mode)
+make svc-data-gateway-check      # Check data-gateway Redis registry + data keys
+make svc-data-gateway-logs       # Tail data-gateway log
+
 # Notification Service
 make run-notification              # Start notification service (foreground)
 make svc-notify-test               # Send test notification to Redis stream
@@ -339,7 +368,7 @@ make typecheck                     # pyright type check
 
 # Maintenance
 make update-derivatives            # Refresh final_derivatives_list.json
-make logs                          # Monolith log (legacy)
+make logs                          # Monolith log (monolith.log)
 make logs-follow                   # Follow monolith log live
 make logs-all                      # View last 20 lines of every service log
 make logs-all-follow               # Follow all service logs live
@@ -363,7 +392,13 @@ make server-redis-config           # Apply Redis config on server
 make server-notification-status    # Notification service status on server
 make server-notification-logs      # Notification service logs on server
 make server-notify-test            # Send test notification via server Redis
+make server-data-gateway-status    # Data-gateway status on server
+make server-data-gateway-start     # Start data-gateway on server
+make server-data-gateway-stop      # Stop data-gateway on server
+make server-data-gateway-logs      # Data-gateway logs on server
 make server-svcs-status            # All StockAnalysis service statuses
+make timers-disable                # Disable old timers, enable always-on services
+make server-enable-always-on       # Restart monolith as always-on service
 make update-enctoken TOKEN=<tok>   # Update ZERODHA_ENC_TOKEN on server .env
 ```
 
@@ -391,12 +426,12 @@ StockAnalysis/
 ├── premarket/         # Global cues, bonds, commodities, pre-open report
 ├── scripts/           # deploy.py, service_stop.py (holiday-aware), system_config (systemd units)
 ├── sentiment/         # FinBERT news sentiment
-├── services/          # Microservices (Phase 1 — extracted services)
-│   ├── common/        # Shared infra: logging.py, redis_client.py, stock_proxy.py, health.py
-│   ├── notification-service/  # Notification stream consumer (EXTRACTED — Phase 1B)
-│   ├── data-gateway/  # yfinance + Sensibull + Zerodha WS (code ready, not deployed)
+├── services/          # Microservices (Phase 1A — extracted services)
+│   ├── common/        # Shared infra: logging.py, redis_proxy.py, stock_loader.py, cycle_subscriber.py, stock_proxy.py, health.py
+│   ├── notification-service/  # Notification stream consumer (EXTRACTED)
+│   ├── data_gateway/  # yfinance + Sensibull fetcher → Redis (EXTRACTED — Phase 1A)
 │   ├── coordinator/   # Orchestrator + intelligence + bot (compact mode, designed)
-│   └── *-service/     # Future: orchestrator, analysis-engine, intelligence, bot, auth
+│   └── *-service/     # Future: orchestrator, analysis-engine, intelligence, bot
 ├── tests/             # 951 tests across 41 files
 ├── zerodha/           # WebSocket lifecycle, TickStore, FuturesFetcher, LiveOptionsEngine
 ├── Makefile
@@ -408,22 +443,28 @@ StockAnalysis/
 
 | File | Purpose |
 |------|---------|
-| `intraday/intraday_monitor.py` | Main entry point, orchestration loop, observability layers |
+| `intraday/intraday_monitor.py` | Main entry point — always-running daily loop, orchestration, observability |
+| `services/data_gateway/main.py` | Data gateway — self-scheduling yfinance + Sensibull fetcher → Redis (24/7) |
+| `services/data_gateway/sensibull_fetcher.py` | Parallel Sensibull fetcher (10 workers) → Redis hashes |
+| `services/data_gateway/yfinance_fetcher.py` | yfinance fetcher → Redis hashes (initial load + intraday/positional cycles) |
+| `services/notification-service/main.py` | Notification stream consumer → Telegram/Discord (24/7) |
+| `services/common/cycle_subscriber.py` | Redis Pub/Sub + stream subscriber for cycle sync (monolith ↔ data-gateway) |
+| `services/common/stock_loader.py` | Sync Stock object reconstruction from Redis hashes |
+| `services/common/logging.py` | Unified per-service logger factory (`get_logger("service-name")`) |
+| `services/common/redis_proxy.py` | Redis client wrapper (hset, hgetall, xadd, xreadgroup, publish, pubsub) |
+| `common/logging_util.py` | Thin shim → delegates to `services/common/logging.py` (44 modules import this) |
 | `common/Stock.py` | Core data model; delegates live ticks to TickStore |
 | `common/constants.py` | ANALYSIS_WEIGHTS, priority thresholds, env var names, category sets |
 | `common/shared.py` | AppContext singleton, Mode enum, global state |
 | `common/scoring.py` | Score calculation, alignment bonus, should_notify() |
 | `analyser/OptionSellerCompositeAnalyser.py` | Option-seller composite setups: GAMMA_TRAP, RANGE_BOUND_SETUP, SKEW_FADE_SETUP |
-| `auth/auth_login.py` | Automated TOTP Zerodha login — writes fresh enctoken to `.env` |
-| `scripts/system_config` | systemd unit files for EC2 deployment (auth + intraday + positional services + timers) |
+| `auth/auth_login.py` | Automated TOTP Zerodha login — called inline by monolith at 9 AM |
+| `scripts/system_config` | systemd unit files (notification + data-gateway + monolith — all always-on) |
 | `analyser/Analyser.py` | BaseAnalyzer (decorator framework) + AnalyserOrchestrator |
-| `zerodha/futures_fetcher.py` | FuturesFetcher — Kite historical futures data |
-| `fno/sensibull_fetcher.py` | SensibullFetcher — Sensibull API (insights, OI chain, IV chart, OI history) |
-| `notification/Notification.py` | Telegram message sender — routes through Redis by default, direct HTTP fallback |
+| `zerodha/futures_fetcher.py` | FuturesFetcher — Kite historical futures data (still inline in monolith) |
+| `fno/sensibull_fetcher.py` | SensibullFetcher — legacy, used by dev mode only (production uses data-gateway) |
+| `notification/Notification.py` | Telegram message sender — routes through Redis stream |
 | `notification/bot_listener.py` | Telegram bot entry point (Command Router) |
-| `services/notification-service/main.py` | Notification stream consumer (EXTRACTED — Phase 1B) |
-| `services/common/logging.py` | Per-service logger factory (`get_logger("service-name")`) |
-| `services/common/stock_proxy.py` | Stock object ↔ Redis serialization |
 | `configs/redis.conf` | Redis configuration (128MB maxmemory, no persistence) |
 
 ---
