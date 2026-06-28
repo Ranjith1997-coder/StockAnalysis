@@ -55,6 +55,7 @@ except ImportError:
 API_ID = os.environ.get("TELEGRAM_API_ID", "")
 API_HASH = os.environ.get("TELEGRAM_API_HASH", "")
 BOT_USERNAME = os.environ.get("TELEGRAM_BOT_USERNAME", "")
+DEBUG_CHAT_ID = os.environ.get("TELEGRAM_DEBUG_CHAT_ID", "")
 SESSION_PATH = os.environ.get(
     "TELEGRAM_SESSION_PATH",
     os.path.expanduser("~/.config/stockanalysis/debug_session"),
@@ -99,15 +100,22 @@ def _strip_html(text: str) -> str:
     return text
 
 
+async def _resolve_bot_id(client) -> int:
+    """Resolve the bot's user ID from its username."""
+    if not BOT_USERNAME:
+        return 0
+    entity = await client.get_entity(BOT_USERNAME)
+    return entity.id
+
+
 async def _run(command: str) -> None:
     if not API_ID or not API_HASH:
         print("ERROR: TELEGRAM_API_ID and TELEGRAM_API_HASH must be set in .env")
         print("Get them from https://my.telegram.org → API Development Tools")
         sys.exit(1)
 
-    if not BOT_USERNAME:
-        print("ERROR: TELEGRAM_BOT_USERNAME must be set in .env")
-        print("Example: TELEGRAM_BOT_USERNAME=stock_notification_2_bot")
+    if not DEBUG_CHAT_ID:
+        print("ERROR: TELEGRAM_DEBUG_CHAT_ID must be set in .env")
         sys.exit(1)
 
     # Ensure session directory exists
@@ -118,17 +126,20 @@ async def _run(command: str) -> None:
     client = TelegramClient(SESSION_PATH, int(API_ID), API_HASH)
     await client.start()
 
-    # Send the command to the bot
-    await client.send_message(BOT_USERNAME, command)
+    # Send the command to the debug GROUP (not directly to the bot).
+    # The bot is a member of the group and sees /-prefixed commands,
+    # then replies in the group.  This ensures debug_chat_only() passes.
+    group_entity = await client.get_entity(int(DEBUG_CHAT_ID))
+    await client.send_message(group_entity, command)
 
-    # Wait for the bot's response
+    # Wait for the bot's response in the group
+    bot_id = await _resolve_bot_id(client)
     deadline = time.time() + RESPONSE_TIMEOUT
     response_text = None
     while time.time() < deadline:
         await asyncio.sleep(1)
-        async for msg in client.iter_messages(BOT_USERNAME, limit=1):
-            if msg.text and not msg.out:
-                # Only accept messages received after we sent our command
+        async for msg in client.iter_messages(group_entity, limit=5):
+            if msg.text and not msg.out and msg.sender_id == bot_id:
                 if msg.date.timestamp() > (time.time() - RESPONSE_TIMEOUT):
                     response_text = msg.text
                     break
