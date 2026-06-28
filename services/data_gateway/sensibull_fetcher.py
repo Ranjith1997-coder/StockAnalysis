@@ -153,6 +153,167 @@ def fetch_sensibull_oi_chain(symbol: str, per_expiry_map: dict, mode: str = "int
     return None
 
 
+def fetch_iv_chart(symbol: str) -> pd.DataFrame | None:
+    """
+    Fetch 2-year daily IV chart for a single symbol (positional source).
+
+    Returns:
+        DataFrame with columns: date, iv_close, price_close (~2yr daily rows)
+        or None on error.
+    """
+    try:
+        encoded = quote(symbol, safe="")
+        url = f"{SENSIBULL_BASE}/iv_chart/{encoded}"
+        response = requests.get(url, timeout=(5, 15))
+        response.raise_for_status()
+        data = response.json()
+
+        if not (data.get("success") and "payload" in data):
+            logger.warning(f"[Sensibull] IV chart unsuccessful for {symbol}")
+            return None
+
+        iv_ohlc = data["payload"].get("iv_ohlc_data", {})
+        if not iv_ohlc:
+            logger.warning(f"[Sensibull] No IV chart data for {symbol}")
+            return None
+
+        rows = []
+        for date_str, entry in iv_ohlc.items():
+            iv_close = entry.get("iv")
+            if iv_close is None:
+                continue
+            price_close = entry.get("close")
+            rows.append({
+                "date": date_str,
+                "iv_close": float(iv_close),
+                "price_close": float(price_close) if price_close is not None else None,
+            })
+
+        if not rows:
+            return None
+
+        df = pd.DataFrame(rows).sort_values("date").reset_index(drop=True)
+        return df
+
+    except requests.exceptions.Timeout:
+        logger.error(f"[Sensibull] Timeout fetching IV chart for {symbol}")
+    except requests.exceptions.RequestException as e:
+        logger.error(f"[Sensibull] Request error for IV chart {symbol}: {e}")
+    except Exception as e:
+        logger.error(f"[Sensibull] Error fetching IV chart for {symbol}: {e}")
+    return None
+
+
+def fetch_oi_history(symbol: str, per_expiry_map: dict) -> pd.DataFrame | None:
+    """
+    Fetch ~181-day daily OI history for a single symbol (positional source).
+
+    Args:
+        symbol: stock/index symbol
+        per_expiry_map: from fetch_sensibull_data() output (needed for expiry body)
+
+    Returns:
+        DataFrame with columns: date, spot, call_oi, put_oi, futures_oi,
+        call_oi_change, put_oi_change, future_oi_change, pcr, max_pain
+        or None on error.
+    """
+    try:
+        sorted_expiries = sorted(per_expiry_map.keys())
+        if not sorted_expiries:
+            logger.warning(f"[Sensibull] No expiry data for {symbol}, skipping OI history")
+            return None
+
+        nearest = sorted_expiries[0]
+        futures_expiry = sorted_expiries[1] if len(sorted_expiries) > 1 else sorted_expiries[0]
+
+        options_expiries_body = {
+            exp: {"enabled": exp == nearest} for exp in sorted_expiries
+        }
+        futures_expiries_body = {
+            exp: {"enabled": exp == futures_expiry} for exp in sorted_expiries
+        }
+
+        payload = {
+            "underlying": symbol,
+            "interval": "1D",
+            "chart_keys": ["oi_options", "oi_futures", "oi_change_options",
+                           "oi_change_futures", "pcr", "max_pain"],
+            "client_atm_strikes_map": {},
+            "offset": None,
+            "oi_options": {
+                "strikes_below_atm": "all", "strikes_above_atm": "all",
+                "expiries": options_expiries_body, "is_custom": False,
+                "custom_strikes": [], "strike_range_min": 0, "strike_range_max": 999999,
+            },
+            "oi_futures": {"expiries": futures_expiries_body},
+            "oi_change_options": {
+                "strikes_below_atm": "all", "strikes_above_atm": "all",
+                "expiries": options_expiries_body, "is_custom": False,
+                "custom_strikes": [], "strike_range_min": 0, "strike_range_max": 999999,
+            },
+            "oi_change_futures": {"expiries": futures_expiries_body},
+            "pcr": {
+                "strikes_below_atm": "all", "strikes_above_atm": "all",
+                "expiries": options_expiries_body, "is_custom": False,
+                "automatic_expiry": False, "custom_strikes": [],
+                "strike_range_min": 0, "strike_range_max": 999999,
+            },
+            "max_pain": {"expiries": options_expiries_body, "automatic_expiry": False},
+        }
+
+        url = f"{SENSIBULL_BASE}/compute_intraday"
+        response = requests.post(url, json=payload, timeout=(5, 20))
+        response.raise_for_status()
+        data = response.json()
+
+        if not (data.get("success") and "payload" in data):
+            logger.warning(f"[Sensibull] OI history unsuccessful for {symbol}")
+            return None
+
+        chart_data = data["payload"].get("chart_data", {})
+        if not chart_data:
+            logger.warning(f"[Sensibull] No OI history data for {symbol}")
+            return None
+
+        rows = []
+        for dt_str, entry in chart_data.items():
+            oi_opt = entry.get("oi_options", {}) or {}
+            oi_fut = entry.get("oi_futures", {}) or {}
+            chg_opt = entry.get("oi_change_options", {}) or {}
+            chg_fut = entry.get("oi_change_futures", {}) or {}
+            pcr_d = entry.get("pcr_data", {}) or {}
+            mp_d = entry.get("max_pain_data", {}) or {}
+            rows.append({
+                "date": dt_str[:10],
+                "spot": entry.get("spot"),
+                "call_oi": oi_opt.get("call_oi"),
+                "put_oi": oi_opt.get("put_oi"),
+                "futures_oi": oi_fut.get("futures_oi"),
+                "call_oi_change": chg_opt.get("call_oi_change"),
+                "put_oi_change": chg_opt.get("put_oi_change"),
+                "future_oi_change": chg_fut.get("future_oi_change"),
+                "pcr": pcr_d.get("pcr"),
+                "max_pain": mp_d.get("max_pain"),
+            })
+
+        if not rows:
+            return None
+
+        df = (pd.DataFrame(rows)
+              .sort_values("date")
+              .reset_index(drop=True)
+              .dropna(subset=["call_oi", "put_oi"]))
+        return df
+
+    except requests.exceptions.Timeout:
+        logger.error(f"[Sensibull] Timeout fetching OI history for {symbol}")
+    except requests.exceptions.RequestException as e:
+        logger.error(f"[Sensibull] Request error for OI history {symbol}: {e}")
+    except Exception as e:
+        logger.error(f"[Sensibull] Error fetching OI history for {symbol}: {e}")
+    return None
+
+
 def build_historical_row(symbol: str, sensibull_data: dict) -> dict:
     """Build a single historical_data row from the Sensibull insights payload."""
     stats = sensibull_data.get("stats", {})
@@ -187,7 +348,9 @@ def build_historical_row(symbol: str, sensibull_data: dict) -> dict:
 
 
 def publish_to_redis(redis_proxy, symbol: str, current_data: dict | None,
-                     oi_chain: dict | None, existing_ctx: dict | None, mode: str = "intraday"):
+                     oi_chain: dict | None, existing_ctx: dict | None, mode: str = "intraday",
+                     iv_chart: pd.DataFrame | None = None,
+                     oi_history: pd.DataFrame | None = None):
     """
     Publish Sensibull data to Redis hashes.
 
@@ -198,6 +361,8 @@ def publish_to_redis(redis_proxy, symbol: str, current_data: dict | None,
         oi_chain: OI chain result dict (or None)
         existing_ctx: existing sensibull_ctx from Redis (or empty dict)
         mode: "intraday" or "positional"
+        iv_chart: fetched iv_chart_history DataFrame (or None to keep existing)
+        oi_history: fetched oi_history DataFrame (or None to keep existing)
     """
     ctx = existing_ctx or {}
     if current_data:
@@ -229,6 +394,12 @@ def publish_to_redis(redis_proxy, symbol: str, current_data: dict | None,
         if len(history) > 15:
             history = history[-15:]
         ctx["oi_chain_history"] = history
+
+    if iv_chart is not None:
+        ctx["iv_chart_history"] = iv_chart
+
+    if oi_history is not None:
+        ctx["oi_history"] = oi_history
 
     # Serialize to Redis
     mapping = {
@@ -281,8 +452,29 @@ def fetch_and_publish_cycle(redis_proxy, stock_symbols: list[str], index_symbols
             # Step 2: Fetch OI chain
             oi_chain = fetch_sensibull_oi_chain(symbol, per_expiry_map, mode)
 
+            # Step 2b: Fetch positional sources (iv_chart + oi_history) once per day
+            iv_chart = None
+            oi_hist = None
+            if mode == "positional":
+                today = str(datetime.date.today())
+
+                existing_iv = existing_ctx.get("iv_chart_history")
+                if existing_iv is None or existing_iv.empty:
+                    iv_chart = fetch_iv_chart(symbol)
+                elif "date" in existing_iv.columns and len(existing_iv) > 0:
+                    if existing_iv["date"].iloc[-1] < today:
+                        iv_chart = fetch_iv_chart(symbol)
+
+                existing_oi = existing_ctx.get("oi_history")
+                if existing_oi is None or existing_oi.empty:
+                    oi_hist = fetch_oi_history(symbol, per_expiry_map)
+                elif "date" in existing_oi.columns and len(existing_oi) > 0:
+                    if existing_oi["date"].iloc[-1] < today:
+                        oi_hist = fetch_oi_history(symbol, per_expiry_map)
+
             # Step 3: Publish to Redis
-            publish_to_redis(redis_proxy, symbol, current_data, oi_chain, existing_ctx, mode)
+            publish_to_redis(redis_proxy, symbol, current_data, oi_chain,
+                             existing_ctx, mode, iv_chart=iv_chart, oi_history=oi_hist)
             successes += 1
 
         except Exception as e:
@@ -333,7 +525,27 @@ def fetch_and_publish_cycle_parallel(redis_proxy, stock_symbols: list[str], inde
             per_expiry_map = current_data.get("per_expiry_map", {})
             oi_chain = fetch_sensibull_oi_chain(symbol, per_expiry_map, mode)
 
-            publish_to_redis(redis_proxy, symbol, current_data, oi_chain, existing_ctx, mode)
+            iv_chart = None
+            oi_hist = None
+            if mode == "positional":
+                today = str(datetime.date.today())
+
+                existing_iv = existing_ctx.get("iv_chart_history")
+                if existing_iv is None or existing_iv.empty:
+                    iv_chart = fetch_iv_chart(symbol)
+                elif "date" in existing_iv.columns and len(existing_iv) > 0:
+                    if existing_iv["date"].iloc[-1] < today:
+                        iv_chart = fetch_iv_chart(symbol)
+
+                existing_oi = existing_ctx.get("oi_history")
+                if existing_oi is None or existing_oi.empty:
+                    oi_hist = fetch_oi_history(symbol, per_expiry_map)
+                elif "date" in existing_oi.columns and len(existing_oi) > 0:
+                    if existing_oi["date"].iloc[-1] < today:
+                        oi_hist = fetch_oi_history(symbol, per_expiry_map)
+
+            publish_to_redis(redis_proxy, symbol, current_data, oi_chain,
+                             existing_ctx, mode, iv_chart=iv_chart, oi_history=oi_hist)
             with lock:
                 success_count[0] += 1
 
