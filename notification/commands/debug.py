@@ -55,6 +55,8 @@ async def cmd_debug(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     d = inspect_overview()
     ws_icon = "🟢" if d["ws_connected"] else "🔴"
+    sb = d.get("sensibull_ws", {})
+    sb_icon = "🟢" if sb.get("active") else "⚪"
     lines = [
         "🔧 <b>Debug Overview</b>",
         f"⏰ {datetime.now().strftime('%H:%M:%S')}",
@@ -65,9 +67,24 @@ async def cmd_debug(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "",
         f"<b>Instruments:</b> 📈{d['stocks']}  🏦{d['indices']}  🛢{d['commodities']}  🌍{d['global_indices']}",
         "",
-        f"{ws_icon} <b>WebSocket</b>",
+        f"{ws_icon} <b>Zerodha WebSocket</b>",
         f"  Ticks: {d['ws_tick_count']}  |  Reconnects: {d['ws_reconnects']}",
         f"  Queue: {d['tick_queue_depth']}  |  Unknown tokens: {d['unknown_tokens']}",
+        "",
+    ]
+    if sb.get("active"):
+        for feed in sb.get("feeds", []):
+            alive = "🟢" if feed["thread_alive"] else "🔴"
+            subs = feed.get("subscriptions", [])
+            sub_str = ", ".join(f"{s['underlying']}:{s['expiry']}" for s in subs) if subs else "—"
+            lines += [
+                f"{alive} <b>Sensibull WebSocket #{feed['index']}</b>",
+                f"  Subs: {feed['subscription_count']}  |  Thread: {'alive' if feed['thread_alive'] else 'dead'}",
+                f"  {sub_str}",
+            ]
+    else:
+        lines += [f"{sb_icon} <b>Sensibull WebSocket</b>: Not started"]
+    lines += [
         "",
         "🧠 <b>Intelligence</b>",
         f"  Signals: {d['signals_emitted']}  |  Confluences: {d['confluences']}",
