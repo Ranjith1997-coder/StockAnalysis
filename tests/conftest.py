@@ -22,13 +22,32 @@ class FakeStock:
         change_perc: float = 1.5,
         prev_close: float = 98.5,
     ):
+        import pandas as pd
+        self.stockName = symbol
         self.stock_symbol = symbol
+        self.is_index = False
         self.ltp = ltp
         self.ltp_change_perc = change_perc
-        self.prevDayOHLCV = {"CLOSE": prev_close}
+        self.daily_hv = 25.0
+        self.prevDayOHLCV = {"OPEN": 98, "HIGH": 101, "LOW": 97, "CLOSE": prev_close, "VOLUME": 1000000}
+        self._priceData = pd.DataFrame()
         self.zerodha_ctx = {}
         self.futures_live = {}
         self.zerodha_data = {}
+        self.sensibull_ctx = {
+            "last_fetch_time": None,
+            "current": {},
+            "historical_data": pd.DataFrame(),
+            "oi_chain_history": [],
+            "iv_chart_history": pd.DataFrame(),
+            "oi_history": pd.DataFrame(),
+        }
+        self.analysis = {"Timestamp": None, "BULLISH": {}, "BEARISH": {}, "NEUTRAL": {}, "NoOfTrends": 0}
+        self.options_aggregate = {}
+
+    @property
+    def priceData(self):
+        return self._priceData
 
 
 @pytest.fixture
@@ -61,6 +80,12 @@ class FakeAppCtx:
         self.narrator = None
         self.last_equity_tick_time = 0.0
         self.llm_budget_warned = False
+        self.options_source = "zerodha"
+        self.sensibull_feed = None
+        self.intraday_cycle_count = 0
+        self.monitor_result_counts = {"SUCCESS": 0, "NO_DATA": 0, "ERROR": 0}
+        self.error_count = 0
+        self.last_cycle_time = 0.0
 
 
 @pytest.fixture
@@ -83,6 +108,13 @@ def patch_app_ctx(fake_ctx):
 
 def make_update(chat_id: int = 12345):
     """Return (update, context) mocks suitable for passing to bot command handlers."""
+    # Ensure guard allows the test chat ID (force-set, overriding .env)
+    import os
+    os.environ["TELEGRAM_ALLOWED_CHAT_IDS"] = str(chat_id)
+    os.environ["TELEGRAM_DEBUG_CHAT_ID"] = ""
+    from notification.commands._guard import init_guard
+    init_guard()
+
     update = MagicMock()
     update.effective_chat.id = chat_id
 

@@ -9,7 +9,6 @@ In Phase 2, this will be replaced by the async redis.asyncio client.
 from __future__ import annotations
 
 import redis
-from typing import Any
 
 
 class RedisProxy:
@@ -61,6 +60,15 @@ class RedisProxy:
 
     def pubsub(self):
         return self._client.pubsub()
+
+    def hkeys(self, name: str) -> list:
+        return self._client.hkeys(name)
+
+    def xlen(self, stream: str) -> int:
+        return self._client.xlen(stream)
+
+    def xread(self, streams: dict, count: int | None = None, block: int | None = None) -> list | None:
+        return self._client.xread(streams, count=count, block=block)
 
     def close(self):
         self._client.close()

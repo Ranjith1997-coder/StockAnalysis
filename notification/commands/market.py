@@ -9,6 +9,7 @@ from telegram.ext import ContextTypes
 
 import common.shared as shared
 from common.logging_util import logger
+from notification.commands._guard import guard
 from notification.commands._helpers import find_stock_by_symbol, build_gainers_losers
 
 # Supported symbols for options commands
@@ -81,6 +82,7 @@ def _resolve_options_stock(symbol: str):
     return stock, None
 
 
+@guard
 async def cmd_ltp(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not context.args:
         await context.bot.send_message(
@@ -127,6 +129,7 @@ async def cmd_ltp(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
+@guard
 async def cmd_gainers(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     gainers, _ = build_gainers_losers()
     if not gainers:
@@ -143,6 +146,7 @@ async def cmd_gainers(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     )
 
 
+@guard
 async def cmd_losers(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     _, losers = build_gainers_losers()
     if not losers:
@@ -159,6 +163,7 @@ async def cmd_losers(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     )
 
 
+@guard
 async def cmd_watchlist(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     ctx = shared.app_ctx
     parts = []
@@ -303,6 +308,7 @@ async def cmd_watchlist(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             )
 
 
+@guard
 async def cmd_holidays(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         from common.market_calendar import is_trading_day, get_upcoming_holidays
@@ -337,6 +343,7 @@ async def cmd_holidays(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 # /straddle <SYMBOL> — ATM straddle premium + expected 1-SD range
 # ═══════════════════════════════════════════════════════════════════════════
 
+@guard
 async def cmd_straddle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     symbol = context.args[0].upper().strip() if context.args else ""
     stock, err = _resolve_options_stock(symbol)
@@ -406,6 +413,7 @@ async def cmd_straddle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 # /walls <SYMBOL> — institutional OI walls (support & resistance)
 # ═══════════════════════════════════════════════════════════════════════════
 
+@guard
 async def cmd_walls(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     symbol = context.args[0].upper().strip() if context.args else ""
     stock, err = _resolve_options_stock(symbol)

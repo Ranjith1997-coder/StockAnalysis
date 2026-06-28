@@ -304,10 +304,13 @@ def monitor(stock: Stock) -> Tuple[MonitorResult, bool, Optional[str]]:
 
 def process_monitor_results(results):
     for result, trend_found, message in results:
+        shared.app_ctx.monitor_result_counts[result.name] = \
+            shared.app_ctx.monitor_result_counts.get(result.name, 0) + 1
         if result == MonitorResult.NO_DATA:
             if message:
                 logger.warning(message)
         elif result == MonitorResult.ERROR:
+            shared.app_ctx.error_count += 1
             logger.error(f"Error during monitoring: {message}")
         elif trend_found:
             logger.info(f"Trend found: \n{message}")
@@ -1346,6 +1349,8 @@ def intraday_analysis(loop = True, loop_wait_time = 30, max_cycles = 0):
 
     while(is_in_time_period or not PRODUCTION):
         cycle += 1
+        shared.app_ctx.intraday_cycle_count = cycle
+        shared.app_ctx.last_cycle_time = time.time()
         logger.info("current iteration time : {}  cycle={}{}".format(
             datetime.now(), cycle,
             f"/{max_cycles}" if max_cycles > 0 else "",

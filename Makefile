@@ -64,6 +64,10 @@ help:
 	@echo "    clean         Remove __pycache__, .pyc, pytest cache"
 	@echo "    clean-all     clean + remove .venv"
 	@echo ""
+	@echo "  Debug"
+	@echo "    debug          Send debug command to bot: make debug CMD='overview'"
+	@echo "    debug-tunnel   Open SSH tunnel for debug port"
+	@echo ""
 	@echo "  Server (hacker@100.92.21.31)"
 	@echo "    server-ssh          Open interactive SSH session"
 	@echo "    server-logs         Tail last 50 lines of monolith.log on server"
@@ -706,3 +710,21 @@ svc-notify-test:
 
 svc-dead-letter:
 	@redis-cli XREAD COUNT 10 STREAMS notification:dead 0 2>/dev/null || echo "No dead letters"
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Debug Client (Telethon terminal → Telegram bot)
+# ──────────────────────────────────────────────────────────────────────────────
+.PHONY: debug debug-tunnel
+
+## debug          Send a debug command to the bot from terminal
+##                Usage: make debug CMD="overview"  or  make debug CMD="stock RELIANCE"
+CMD ?= overview
+debug:
+	@PYTHONPATH=$(CURDIR) $(PYTHON) scripts/debug_cli.py $(CMD)
+
+## debug-tunnel   Open SSH tunnel for debug port (future HTTP debug server)
+debug-tunnel:
+	@echo "Opening SSH tunnel to server..."
+	@ssh -L 8765:localhost:8765 $(SERVER) -N &
+	@echo "Tunnel active. Press Ctrl+C to close."
+	@wait
