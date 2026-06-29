@@ -141,21 +141,20 @@ class TestGexRegime:
         regime_data = s.analysis["NEUTRAL"]["GEX_REGIME"]
         assert regime_data.magnitude == "MILD"
 
-    def test_banknifty_uses_correct_lot_size(self, intraday_ctx):
-        """BANKNIFTY lot_size=15 should produce smaller GEX than NIFTY lot_size=75."""
+    def test_higher_oi_produces_higher_gex(self, intraday_ctx):
+        """GEX scales with OI (absolute shares), not lot_size."""
         a = GEXAnalyser()
         a.reset_constants()
 
-        def _run(symbol, lot):
+        def _run(symbol, ce_oi, pe_oi):
             s = _stock_with_gamma(symbol, spot=52000.0, ce_gamma=0.002, pe_gamma=0.001,
-                                   ce_oi=100_000, pe_oi=100_000)
+                                   ce_oi=ce_oi, pe_oi=pe_oi)
             a.analyse_gex_regime(s)
             return s.options_aggregate["gex_total"]
 
-        nifty_gex = _run("NIFTY", 75)
-        banknifty_gex = _run("BANKNIFTY", 15)
-        # NIFTY lot (75) is 5× BANKNIFTY lot (15) — GEX should reflect that
-        assert nifty_gex > banknifty_gex
+        low_oi_gex  = _run("NIFTY", 100_000, 100_000)
+        high_oi_gex = _run("NIFTY", 500_000, 100_000)
+        assert high_oi_gex > low_oi_gex
 
 
 # ── GEX_FLIP_PROXIMITY ─────────────────────────────────────────────────────────

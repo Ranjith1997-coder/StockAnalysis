@@ -5,9 +5,12 @@ GEX (Gamma Exposure) measures how much delta-hedging dealers must do when
 spot moves.  Dealers are short whatever retail bought:
 
     per_strike_gex = (CE_gamma × CE_OI − PE_gamma × PE_OI)
-                     × lot_size × spot² / 1e7   [₹ crores]
+                     × spot² × 0.01 / 1e7   [₹ crores]
 
     Net GEX = Σ per_strike_gex
+
+    OI is in absolute shares (Zerodha WS convention), not lots.
+    0.01 normalises to a 1% move in spot (standard GEX convention).
 
     Positive GEX → dealers long gamma → they sell rallies / buy dips → market PINS
     Negative GEX → dealers short gamma → they amplify moves → market TRENDS
@@ -158,8 +161,11 @@ class GEXAnalyser(BaseAnalyzer):
         if spot <= 0:
             return 0.0, 0.0, 0.0, {}, None
 
-        lot_size = constant.INDEX_LOT_SIZES.get(stock.stock_symbol, 1)
-        normaliser = 1e7  # express in ₹ crores
+        # GEX = gamma × OI × spot² × 0.01
+        #   - OI from Zerodha WS is in absolute shares (not lots), so no lot_size
+        #   - 0.01 normalises to a 1% move in spot (standard GEX convention)
+        #   - /1e7 converts rupees → ₹ crores
+        normaliser = 1e7
 
         total_gex_ce = 0.0
         total_gex_pe = 0.0
@@ -174,8 +180,8 @@ class GEXAnalyser(BaseAnalyzer):
             ce_oi    = ce.get("oi", 0) or 0
             pe_oi    = pe.get("oi", 0) or 0
 
-            gex_ce = ce_gamma * ce_oi * lot_size * (spot ** 2) / normaliser
-            gex_pe = pe_gamma * pe_oi * lot_size * (spot ** 2) / normaliser
+            gex_ce = ce_gamma * ce_oi * (spot ** 2) * 0.01 / normaliser
+            gex_pe = pe_gamma * pe_oi * (spot ** 2) * 0.01 / normaliser
 
             strike_gex = gex_ce - gex_pe
             gex_by_strike[float(strike)] = strike_gex
