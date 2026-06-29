@@ -720,6 +720,12 @@ def fetch_and_analyze_stocks() -> List[Tuple[MonitorResult, bool, Optional[str]]
         commodity_objs, global_indices_objs,
     )
 
+    for obj in stock_objs + index_objs + commodity_objs + global_indices_objs:
+        try:
+            obj.update_latest_data()
+        except Exception:
+            pass
+
     return _dispatch_and_collect_stream(stock_objs, index_objs)
 
 def get_top_gainers_and_losers(stock_objs):
