@@ -1864,12 +1864,13 @@ def _refresh_zerodha_auth():
             shared.app_ctx.zd_kc.update_enctoken(encToken_raw)
 
             # Publish enctoken to Redis for data-gateway
+            now_ts = datetime.now().timestamp()
             redis_proxy.hset("auth:zerodha", mapping={
                 "enctoken": encToken_raw,
-                "issued_at": str(time.time()),
+                "issued_at": str(now_ts),
                 "user_id": os.getenv("ZERODHA_USER", ""),
             })
-            redis_proxy.publish("auth:enctoken_refreshed", f"issued_at={int(time.time())}")
+            redis_proxy.publish("auth:enctoken_refreshed", f"issued_at={int(now_ts)}")
             logger.info("Zerodha auth refreshed — enctoken published to Redis")
         else:
             logger.error("Zerodha auth refresh failed")
