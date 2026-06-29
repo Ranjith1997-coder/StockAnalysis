@@ -572,6 +572,40 @@ def _analysis_collection_deadline(reporting_buffer: int = 15) -> float:
     return _time.time() + max(60, budget)
 
 
+def _publish_options_snapshot(index_objs: list) -> None:
+    """Publish live options tick snapshot to Redis for GEX analyser in workers.
+
+    For each index in LIVE_OPTIONS_INDICES, serialises the monolith's in-memory
+    options_live (WS2 + Sensibull greeks) to a Redis hash so stateless analysis
+    workers can run GEXAnalyser.  Uses DELETE + HSET to remove stale strikes
+    from WS2 re-centering.
+    """
+    for idx in index_objs:
+        if idx.stock_symbol not in constant.LIVE_OPTIONS_INDICES:
+            continue
+        ts = idx._tick_store
+        if not ts.options_live:
+            continue
+
+        mapping = {}
+        for strike, sides in ts.options_live.items():
+            strike_key = str(float(strike))
+            for opt_type in ("CE", "PE"):
+                tick = sides.get(opt_type)
+                if tick:
+                    mapping[f"{strike_key}_{opt_type}"] = json.dumps(tick, default=str)
+
+        if not mapping:
+            continue
+
+        key = f"data:options_live:{idx.stock_symbol}"
+        redis_proxy.delete(key)
+        redis_proxy.hset(key, mapping=mapping)
+
+    n_indices = sum(1 for i in index_objs if i.stock_symbol in constant.LIVE_OPTIONS_INDICES)
+    logger.debug(f"[stream] Published options_live snapshot for {n_indices} indices")
+
+
 def _dispatch_and_collect_stream(
     stock_objs: list, index_objs: list
 ) -> List[Tuple[MonitorResult, bool, Optional[str]]]:
@@ -595,6 +629,8 @@ def _dispatch_and_collect_stream(
         "cycle_id": cycle_id,
         "last_cycle_time": str(_time.time()),
     })
+
+    _publish_options_snapshot(index_objs)
 
     jobs = []
     for obj in index_objs + stock_objs:

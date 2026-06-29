@@ -203,6 +203,34 @@ def load_zerodha_from_redis(redis: RedisProxy, stock: Stock) -> bool:
     return True
 
 
+def load_options_live_from_redis(redis: RedisProxy, stock: Stock) -> bool:
+    """Load live options tick data from Redis into Stock's TickStore.
+
+    Reads `data:options_live:{symbol}` hash (published by monolith at cycle
+    boundary) and populates `stock._tick_store.options_live` with per-strike
+    CE/PE tick dicts including gamma/oi from WS2 + Sensibull.
+    """
+    raw = redis.hgetall(f"data:options_live:{stock.stock_symbol}")
+    if not raw:
+        return False
+
+    options_live: dict[float, dict] = {}
+    for key, value in raw.items():
+        parts = key.rsplit("_", 1)
+        if len(parts) != 2:
+            continue
+        strike = float(parts[0])
+        opt_type = parts[1]
+        if strike not in options_live:
+            options_live[strike] = {}
+        options_live[strike][opt_type] = safe_json_loads(value) or {}
+
+    if options_live:
+        stock._tick_store.options_live = options_live
+        return True
+    return False
+
+
 def _dict_to_df(data: Any) -> pd.DataFrame:
     if data is None:
         return None

@@ -14,12 +14,15 @@ import time
 import common.constants as constant
 import common.shared as shared
 from analyser.Analyser import AnalyserOrchestrator
+from analyser.GEXAnalyser import GEXAnalyser
 from services.common.redis_proxy import RedisProxy
 from services.common.stock_loader import (
     load_stock_from_redis,
     load_sensibull_from_redis,
     load_zerodha_from_redis,
+    load_options_live_from_redis,
 )
+from services.common.serialization import safe_json_dumps, safe_json_loads
 from common.logging_util import logger
 
 
@@ -54,6 +57,48 @@ def _result_dict(
         "duration_ms": str(duration_ms),
         "timestamp": str(time.time()),
     }
+
+
+def _load_gex_state(redis: RedisProxy, orchestrator: AnalyserOrchestrator, stock) -> None:
+    """Load previous cycle's GEX state from Redis for cross-cycle analysis.
+
+    Reads `data:gex_state:{symbol}` (persisted by the previous worker cycle)
+    and sets:
+      - gex_analyser._prev_gex_by_strike[symbol] for GEX_WALL_BREACH
+      - stock.options_aggregate["gex_regime"] for regime flip detection
+    """
+    raw = redis.hgetall(f"data:gex_state:{stock.stock_symbol}")
+    if not raw:
+        return
+
+    gex_by_strike_raw = safe_json_loads(raw.get("gex_by_strike_json", "{}")) or {}
+    gex_by_strike = {float(k): v for k, v in gex_by_strike_raw.items()}
+    gex_regime = raw.get("gex_regime", "")
+
+    for analyser in orchestrator.analysers:
+        if isinstance(analyser, GEXAnalyser):
+            if not hasattr(analyser, "_prev_gex_by_strike"):
+                analyser._prev_gex_by_strike = {}
+            analyser._prev_gex_by_strike[stock.stock_symbol] = gex_by_strike
+            break
+
+    if gex_regime:
+        stock.options_aggregate["gex_regime"] = gex_regime
+
+
+def _persist_gex_state(redis: RedisProxy, stock) -> None:
+    """Persist current cycle's GEX state to Redis for next cycle's workers."""
+    agg = stock.options_aggregate
+    gex_by_strike = agg.get("gex_by_strike", {})
+    gex_by_strike_str = {str(k): v for k, v in gex_by_strike.items()}
+
+    mapping = {
+        "gex_by_strike_json": safe_json_dumps(gex_by_strike_str),
+        "gex_regime": agg.get("gex_regime") or "",
+        "gex_total": str(agg.get("gex_total", 0.0)),
+        "gex_flip_level": str(agg.get("gex_flip_level") or ""),
+    }
+    redis.hset(f"data:gex_state:{stock.stock_symbol}", mapping=mapping)
 
 
 def process_job(
@@ -127,6 +172,10 @@ def process_job(
 
     load_zerodha_from_redis(redis, stock)
 
+    if is_index and symbol in constant.LIVE_OPTIONS_INDICES:
+        load_options_live_from_redis(redis, stock)
+        _load_gex_state(redis, orchestrator, stock)
+
     orchestrator.reset_all_constants()
 
     try:
@@ -168,6 +217,9 @@ def process_job(
 
     is_52w_high = "52-week-high" in stock.analysis.get("BULLISH", {})
     is_52w_low = "52-week-low" in stock.analysis.get("BEARISH", {})
+
+    if is_index and symbol in constant.LIVE_OPTIONS_INDICES:
+        _persist_gex_state(redis, stock)
 
     return _result_dict(
         job_id, cycle_id, symbol, is_index,
