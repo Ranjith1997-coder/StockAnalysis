@@ -1861,7 +1861,7 @@ def _refresh_zerodha_auth():
         if success:
             load_dotenv(override=True)
             encToken_raw = os.getenv(constant.ENV_ZERODHA_ENC_TOKEN)
-            shared.app_ctx.zd_kc.set_enctoken(encToken_raw)
+            shared.app_ctx.zd_kc.update_enctoken(encToken_raw)
 
             # Publish enctoken to Redis for data-gateway
             redis_proxy.hset("auth:zerodha", mapping={
