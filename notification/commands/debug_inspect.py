@@ -62,6 +62,19 @@ def inspect_overview() -> dict:
             llm_tokens = getattr(client, "_daily_tokens", 0)
             llm_limit = getattr(client, "DAILY_TOKEN_LIMIT", 900_000)
 
+    # WS2 (options) details
+    ws2_subscribed = 0
+    ws2_reconnects = 0
+    if tm and getattr(tm, "_kt_options", None):
+        kt_opt = tm._kt_options
+        ws2_subscribed = _safe_len(getattr(kt_opt, "subscribed_tokens", {}))
+        ws2_reconnects = getattr(kt_opt, "reconnect_attempts", 0) if hasattr(kt_opt, "reconnect_attempts") else 0
+
+    # WS1 (base) subscription count
+    ws1_subscribed = 0
+    if tm and getattr(tm, "_kt_base", None):
+        ws1_subscribed = _safe_len(getattr(tm._kt_base, "subscribed_tokens", {}))
+
     return {
         "mode": ctx.mode.name if ctx.mode else "NOT_SET",
         "production": os.getenv("PRODUCTION", "0") == "1",
@@ -79,6 +92,9 @@ def inspect_overview() -> dict:
         "ws_reconnects": getattr(tm, "reconnect_attempts", 0) if tm else 0,
         "tick_queue_depth": tm.tick_queue.qsize() if tm else 0,
         "unknown_tokens": _safe_len(getattr(tm, "_unknown_tokens", set())) if tm else 0,
+        "ws1_subscribed": ws1_subscribed,
+        "ws2_subscribed": ws2_subscribed,
+        "ws2_reconnects": ws2_reconnects,
         "llm_tokens_used": llm_tokens,
         "llm_token_limit": llm_limit,
         "llm_budget_pct": round(llm_tokens / llm_limit * 100, 1) if llm_limit else 0,
