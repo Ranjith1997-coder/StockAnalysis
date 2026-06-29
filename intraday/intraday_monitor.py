@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+import time as _time
 import traceback
 import html
 import argparse
@@ -566,9 +567,9 @@ def _analysis_collection_deadline(reporting_buffer: int = 15) -> float:
         Unix timestamp (time.time() + seconds) at which collection should stop.
     """
     if shared.app_ctx.mode == shared.Mode.POSITIONAL:
-        return time.time() + 180  # 3 min for positional (single run, no next-bar pressure)
+        return _time.time() + 180  # 3 min for positional (single run, no next-bar pressure)
     budget = _time_to_next_5min_bar() - reporting_buffer
-    return time.time() + max(60, budget)
+    return _time.time() + max(60, budget)
 
 
 def _dispatch_and_collect_stream(
@@ -592,7 +593,7 @@ def _dispatch_and_collect_stream(
     redis_proxy.hset("orchestrator:state", mapping={
         "mode": mode_str,
         "cycle_id": cycle_id,
-        "last_cycle_time": str(time.time()),
+        "last_cycle_time": str(_time.time()),
     })
 
     jobs = []
@@ -614,8 +615,8 @@ def _dispatch_and_collect_stream(
     results_by_job = {}
     deadline = _analysis_collection_deadline()
 
-    while len(results_by_job) < expected and time.time() < deadline:
-        remaining_ms = int((deadline - time.time()) * 1000)
+    while len(results_by_job) < expected and _time.time() < deadline:
+        remaining_ms = int((deadline - _time.time()) * 1000)
         block_ms = min(remaining_ms, 5000)
         if block_ms <= 0:
             break
@@ -1449,7 +1450,7 @@ def intraday_analysis(loop = True, loop_wait_time = 30, max_cycles = 0):
     while(is_in_time_period or not PRODUCTION):
         cycle += 1
         shared.app_ctx.intraday_cycle_count = cycle
-        shared.app_ctx.last_cycle_time = time.time()
+        shared.app_ctx.last_cycle_time = _time.time()
         logger.info("current iteration time : {}  cycle={}{}".format(
             datetime.now(), cycle,
             f"/{max_cycles}" if max_cycles > 0 else "",
