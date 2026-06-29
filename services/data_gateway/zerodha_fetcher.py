@@ -150,7 +150,7 @@ def _fetch_one_symbol(
                              f"retry {attempt + 1}/{retries}, sleeping {delay + jitter:.1f}s")
                 time.sleep(delay + jitter)
                 delay = min(delay * 2, 8.0)
-            elif "403" in err_str or "TokenException" in err_str:
+            elif "403" in err_str or "TokenException" in err_str or "Bad Request" in err_str:
                 raise
             else:
                 logger.error(f"[zerodha-fetcher] Error fetching {symbol} "
@@ -287,9 +287,9 @@ class ZerodhaFuturesManager:
                 )
             except Exception as e:
                 err_str = str(e)
-                if "403" in err_str or "TokenException" in err_str:
+                if "403" in err_str or "TokenException" in err_str or "Bad Request" in err_str:
                     self._has_enctoken = False
-                    self.request_refresh(reason="403 on current expiry")
+                    self.request_refresh(reason=f"{err_str[:40]} on current expiry")
                 logger.error(f"[zerodha-fetcher] {symbol} current expiry fetch failed: {e}")
                 return symbol, False
 
@@ -305,9 +305,9 @@ class ZerodhaFuturesManager:
                         next_result = pd.DataFrame()
                 except Exception as e:
                     err_str = str(e)
-                    if "403" in err_str or "TokenException" in err_str:
+                    if "403" in err_str or "TokenException" in err_str or "Bad Request" in err_str:
                         self._has_enctoken = False
-                        self.request_refresh(reason="403 on next expiry")
+                        self.request_refresh(reason=f"{err_str[:40]} on next expiry")
                     logger.warning(f"[zerodha-fetcher] {symbol} next expiry fetch failed: {e}")
 
             # Serialize and publish to Redis

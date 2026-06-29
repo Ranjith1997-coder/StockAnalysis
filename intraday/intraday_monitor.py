@@ -1679,6 +1679,8 @@ def init():
     cycle_subscriber = CycleSubscriber(redis_proxy)
     cycle_subscriber.start()
 
+    _start_auth_commands_consumer()
+
     try:
         redis_proxy.xgroup_create(
             constant.ANALYSIS_RESULTS_GROUP,
@@ -1882,6 +1884,49 @@ def _sleep_until_midnight():
         if sleep_sec <= 0:
             break
         sleep(min(sleep_sec, 300))
+ 
+
+def _start_auth_commands_consumer():
+    """Background thread consuming auth:commands stream for reactive enctoken refresh.
+
+    The data-gateway publishes 'refresh_enctoken' commands when it gets 403/Bad Request
+    from Zerodha. This consumer calls _refresh_zerodha_auth() and publishes the new
+    token to Redis, which the data-gateway picks up via Pub/Sub.
+    """
+    import threading as _th
+    from time import sleep as _sleep
+
+    def _consume():
+        stream = "auth:commands"
+        group = "monolith"
+        consumer = "auth-consumer-1"
+        try:
+            redis_proxy.xgroup_create(group, stream, mkstream=True)
+        except Exception:
+            pass
+        logger.info("[auth] Started auth:commands consumer thread")
+        while True:
+            try:
+                messages = redis_proxy.xreadgroup(group, consumer, {stream: ">"}, count=1, block=10000)
+                if not messages:
+                    continue
+                entries = messages[0][1] if isinstance(messages, list) and messages else []
+                for msg_id, fields in entries:
+                    command = fields.get("command", "")
+                    if command == "refresh_enctoken":
+                        reason = fields.get("reason", "unknown")
+                        logger.info(f"[auth] Received refresh_enctoken command (reason={reason})")
+                        _refresh_zerodha_auth()
+                    try:
+                        redis_proxy.xack(stream, group, msg_id)
+                    except Exception:
+                        pass
+            except Exception as e:
+                logger.error(f"[auth] Consumer error: {e}")
+                _sleep(5)
+
+    t = _th.Thread(target=_consume, daemon=True, name="auth-commands-consumer")
+    t.start()
 
 
 def _refresh_zerodha_auth():
@@ -1992,6 +2037,12 @@ def _run_daily_loop():
 
         # ── Wait for positional (15:30 - 20:00) ──
         logger.info("=== Intraday complete. Waiting for 8 PM positional analysis ===")
+
+        # Refresh enctoken before positional window — data-gateway's positional
+        # fetch runs at 19:00 and needs a valid token (the 09:00 token has expired).
+        _wait_until(18, 50)
+        _refresh_zerodha_auth()
+
         _wait_until(20, 0)
 
         # ── Positional analysis (20:00) ──
