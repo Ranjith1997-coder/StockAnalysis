@@ -70,9 +70,10 @@ async def cmd_debug(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "",
         f"{ws_icon} <b>Zerodha WS1 (equity + index)</b>",
         f"  Ticks: {d['ws_tick_count']}  |  Reconnects: {d['ws_reconnects']}",
-        f"  Queue: {d['tick_queue_depth']}  |  Unknown tokens: {d['unknown_tokens']}",
+        f"  Subs: {d.get('ws1_subscribed', 0)}  |  Queue: {d['tick_queue_depth']}  |  Unknown: {d['unknown_tokens']}",
         "",
         f"{ws_opt_icon} <b>Zerodha WS2 (options)</b>",
+        f"  Subs: {d.get('ws2_subscribed', 0)}  |  Reconnects: {d.get('ws2_reconnects', 0)}",
         "",
     ]
     if sb.get("active"):
