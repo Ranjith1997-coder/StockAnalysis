@@ -745,22 +745,12 @@ def get_top_gainers_and_losers(stock_objs):
 
     for _ , stock in stock_objs.items():
         try:
-            # Assuming stock.priceData contains a DataFrame with 'Close' prices
-            if not stock.is_price_data_empty() and stock.prevDayOHLCV is not None:
-                current_close = stock.priceData['Close'].iloc[-1]
-                # previous_close = stock.priceData['Close'].iloc[-2]
-                previous_close = stock.prevDayOHLCV['CLOSE']
-                change_percent = percentageChange(current_close, previous_close)
-
-                # Check if change_percent is a valid number
-                if not isinstance(change_percent, float) or change_percent != change_percent:  # NaN check
-                    logger.warning(f"Invalid percentage change for {stock.stock_symbol}: {change_percent} current close {current_close}, previous close {previous_close}")
-                    continue
-                
-                if change_percent > 0:
-                    gainers.append((stock.stock_symbol, change_percent))
-                else:
-                    losers.append((stock.stock_symbol, change_percent))
+            if stock.ltp is None or stock.ltp_change_perc is None:
+                continue
+            if stock.ltp_change_perc > 0:
+                gainers.append((stock.stock_symbol, stock.ltp_change_perc))
+            else:
+                losers.append((stock.stock_symbol, stock.ltp_change_perc))
         except Exception as e:
             logger.error(f"Error calculating percentage change for {stock.stock_symbol}: {e}")
 
