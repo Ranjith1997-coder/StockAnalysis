@@ -726,6 +726,9 @@ def fetch_and_analyze_stocks() -> List[Tuple[MonitorResult, bool, Optional[str]]
         except Exception as e:
             logger.debug(f"[cycle] update_latest_data failed for {obj.stock_symbol}: {e}")
 
+    n_with_ltp = sum(1 for o in index_objs if o.ltp is not None)
+    logger.info(f"[cycle] update_latest_data: {n_with_ltp}/{len(index_objs)} indices have ltp")
+
     return _dispatch_and_collect_stream(stock_objs, index_objs)
 
 def get_top_gainers_and_losers(stock_objs):
