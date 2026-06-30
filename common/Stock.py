@@ -82,12 +82,26 @@ class Stock:
         if valid_closes.empty:
             logger.warning(f"[Stock] No valid Close prices in priceData for {self.stock_symbol} — ltp not updated")
             return
-        current_close = valid_closes.iloc[-1]
+
+        # Prefer live WS tick (real-time) over DataFrame close (stale 5-min bar)
+        ws_price = self._tick_store._zerodha_data.get("last_price", 0)
+        if ws_price and ws_price > 0:
+            current_close = ws_price
+        else:
+            current_close = valid_closes.iloc[-1]
+
         if self.prevDayOHLCV is None:
             logger.warning(f"[Stock] prevDayOHLCV not set for {self.stock_symbol} — ltp_change_perc will be 0")
             self.ltp = current_close
             return
+
         previous_close = self.prevDayOHLCV['CLOSE']
+        if previous_close is None or str(previous_close) == "nan":
+            logger.warning(f"[Stock] prevDayOHLCV CLOSE is NaN for {self.stock_symbol} — ltp_change_perc will be None")
+            self.ltp = current_close
+            self.ltp_change_perc = None
+            return
+
         change_percent = percentageChange(current_close, previous_close)
         self.ltp = current_close
         self.ltp_change_perc = change_percent
