@@ -327,7 +327,7 @@ def main():
         price_ok = True
         try:
             fetch_cycle_data(redis, yf_stocks, yf_indices, yf_commodities, yf_globals,
-                             yf_to_key_map=yf_to_key_map)
+                             yf_to_key_map=yf_to_key_map, mode=mode)
         except Exception as e:
             logger.error(f"[data-gateway] yfinance cycle fetch failed: {e}")
             price_ok = False

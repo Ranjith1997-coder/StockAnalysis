@@ -246,7 +246,7 @@ def _fetch_global_indices_initial(redis_proxy, global_indices_list, is_intraday)
 
 def fetch_cycle_data(redis_proxy: "RedisProxy", stock_symbols: list[str], index_symbols: list[str],
                      commodity_symbols: list[str] = None, global_indices_symbols: list[str] = None,
-                     yf_to_key_map: dict[str, str] = None):
+                     yf_to_key_map: dict[str, str] = None, mode: str = None):
     """
     Fetch intraday 5-min or positional daily data for the current cycle.
     Publishes updated priceData to Redis.
@@ -257,16 +257,20 @@ def fetch_cycle_data(redis_proxy: "RedisProxy", stock_symbols: list[str], index_
         commodity_symbols: list of yfinance symbols for commodities
         global_indices_symbols: list of yfinance symbols for global indices
         yf_to_key_map: optional dict mapping yfinance symbol -> Redis key (tradingsymbol)
+        mode: "intraday" or "positional" — overrides env var detection.
+              If None, falls back to env vars (legacy behaviour).
     """
-    import os
-    from dotenv import load_dotenv
-    load_dotenv()
+    if mode is not None:
+        is_positional = mode == "positional"
+    else:
+        import os
+        from dotenv import load_dotenv
+        load_dotenv()
+        is_prod = os.getenv("PRODUCTION", "0") == "1"
+        is_dev_intraday = os.getenv("DEV_INTRADAY", "0") == "1"
+        is_dev_positional = os.getenv("DEV_POSITIONAL", "0") == "1"
+        is_positional = is_dev_positional or (is_prod and not is_dev_intraday)
 
-    is_prod = os.getenv("PRODUCTION", "0") == "1"
-    is_dev_intraday = os.getenv("DEV_INTRADAY", "0") == "1"
-    is_dev_positional = os.getenv("DEV_POSITIONAL", "0") == "1"
-
-    is_positional = is_dev_positional or (is_prod and not is_dev_intraday)
     period = "2y" if is_positional else "5d"
     interval = "1d" if is_positional else "5m"
 
