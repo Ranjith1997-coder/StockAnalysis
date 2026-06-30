@@ -1566,6 +1566,7 @@ def intraday_analysis(loop = True, loop_wait_time = 30, max_cycles = 0):
 
 def positional_analysis():
     shared.app_ctx.mode = shared.Mode.POSITIONAL
+    TELEGRAM_NOTIFICATIONS.is_intraday = False
     if PRODUCTION:
         if datetime.now().time() > time(16,0):
             logger.info("Market time closed")
