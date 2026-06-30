@@ -344,9 +344,11 @@ def main():
             sensibull_fail = len(stock_symbols) + len(index_symbols)
 
         # ── Zerodha futures data ──────────────────────────────────────────────
+        # Futures are only fetched in positional mode — intraday analysis
+        # doesn't use futures_data from Redis (workers use priceData + sensibull).
         futures_ok = 0
         futures_fail = 0
-        if zerodha_mgr.has_enctoken():
+        if mode == "positional" and zerodha_mgr.has_enctoken():
             try:
                 futures_ok, futures_fail = zerodha_mgr.fetch_and_publish(
                     redis,
@@ -356,7 +358,9 @@ def main():
             except Exception as e:
                 logger.error(f"[data-gateway] Zerodha futures fetch failed: {e}")
                 futures_fail = len(stock_symbols) + len(index_symbols)
-        else:
+        elif mode == "intraday":
+            logger.debug("[data-gateway] Skipping futures fetch (intraday mode)")
+        elif not zerodha_mgr.has_enctoken():
             logger.debug("[data-gateway] No enctoken yet — skipping futures fetch")
 
         # ── Publish cycle signal ────────────────────────────────────────────
