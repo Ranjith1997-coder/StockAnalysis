@@ -723,8 +723,8 @@ def fetch_and_analyze_stocks() -> List[Tuple[MonitorResult, bool, Optional[str]]
     for obj in stock_objs + index_objs + commodity_objs + global_indices_objs:
         try:
             obj.update_latest_data()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"[cycle] update_latest_data failed for {obj.stock_symbol}: {e}")
 
     return _dispatch_and_collect_stream(stock_objs, index_objs)
 
