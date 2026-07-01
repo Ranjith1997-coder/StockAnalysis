@@ -34,7 +34,8 @@ def refresh_stock_from_redis(symbol: str) -> bool:
 
     Loads data:tick:*, data:options_live:*, data:options_agg:* into the
     Stock's TickStore so bot commands see fresh data without WS connections.
-    Also updates stock.ltp and ltp_change_perc.
+    Also loads priceData + prevDayOHLCV if not already loaded, and updates
+    stock.ltp and ltp_change_perc.
     """
     stock = find_stock_by_symbol(symbol)
     if stock is None:
@@ -43,7 +44,15 @@ def refresh_stock_from_redis(symbol: str) -> bool:
     if redis is None:
         return False
     try:
-        from services.common.stock_loader import load_tick_from_redis
+        from services.common.stock_loader import load_tick_from_redis, load_price_data_from_redis
+
+        # Load priceData if not already loaded (needed for update_latest_data)
+        if stock.is_price_data_empty():
+            load_price_data_from_redis(
+                redis, [stock] if not stock.is_index else [],
+                [stock] if stock.is_index else [],
+            )
+
         load_tick_from_redis(redis, stock)
         stock.update_latest_data()
         return True
