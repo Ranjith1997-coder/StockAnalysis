@@ -45,11 +45,25 @@ def _feed_health_lines() -> list[str]:
     ctx = shared.app_ctx
     now = time.time()
 
+    # Read equity tick time from market-data service registry (fallback to monolith)
+    last_equity_tick = 0.0
+    try:
+        from notification.commands._helpers import _get_redis
+        _r = _get_redis()
+        if _r is not None:
+            _md = _r.hgetall("service:registry:market-data")
+            if _md.get("status") == "healthy":
+                last_equity_tick = float(_md.get("last_equity_tick", 0))
+    except Exception:
+        pass
+    if last_equity_tick == 0.0:
+        last_equity_tick = ctx.last_equity_tick_time
+
     # Equity tick lag
-    if ctx.last_equity_tick_time == 0.0:
+    if last_equity_tick == 0.0:
         lines.append("  Equity ticks: ⚪ No ticks received yet")
     else:
-        lag = now - ctx.last_equity_tick_time
+        lag = now - last_equity_tick
         if not _is_market_hours():
             lines.append(f"  Equity ticks: ⚪ Market closed (last: {lag:.0f}s ago)")
         elif lag <= _FEED_STALE_SECS:
@@ -57,16 +71,35 @@ def _feed_health_lines() -> list[str]:
         else:
             lines.append(f"  Equity ticks: 🔴 <b>{lag:.0f}s ago — STALE!</b>")
 
-    # Options aggregate lag (from TickStore on index objects)
+    # Options aggregate lag — read from Redis hashes (market-data service snapshots)
     opt_lags = []
-    for _, index_obj in ctx.index_token_obj_dict.items():
-        ts_obj = getattr(index_obj, "_tick_store", None)
-        if ts_obj is None:
-            # Try direct attribute if TickStore is inlined
-            ts_obj = index_obj
-        last_opt = getattr(ts_obj, "options_aggregate", {}).get("last_updated", 0.0)
-        if last_opt > 0:
-            opt_lags.append((index_obj.stock_symbol, now - last_opt))
+    try:
+        from notification.commands._helpers import _get_redis
+        _r = _get_redis()
+        if _r is not None:
+            for _, index_obj in ctx.index_token_obj_dict.items():
+                agg_raw = _r.hgetall(f"data:options_agg:{index_obj.stock_symbol}")
+                if agg_raw:
+                    last_val = agg_raw.get("last_updated")
+                    if last_val:
+                        try:
+                            last_opt = float(last_val)
+                            if last_opt > 0:
+                                opt_lags.append((index_obj.stock_symbol, now - last_opt))
+                        except (ValueError, TypeError):
+                            pass
+    except Exception:
+        pass
+
+    if not opt_lags:
+        # Fallback: read from in-memory TickStore
+        for _, index_obj in ctx.index_token_obj_dict.items():
+            ts_obj = getattr(index_obj, "_tick_store", None)
+            if ts_obj is None:
+                ts_obj = index_obj
+            last_opt = getattr(ts_obj, "options_aggregate", {}).get("last_updated", 0.0)
+            if last_opt > 0:
+                opt_lags.append((index_obj.stock_symbol, now - last_opt))
 
     if not opt_lags:
         lines.append("  Options feed: ⚪ No options data yet")

@@ -447,7 +447,6 @@ async def test_cmd_watchlist_websocket_connected(clean_ctx):
     await bl.cmd_watchlist(update, context)
     text = context.bot.send_message.call_args.kwargs.get("text", "")
     assert "Connected" in text
-    assert "Full (Equity + Index)" in text
 
 @pytest.mark.asyncio
 async def test_cmd_watchlist_websocket_disconnected(clean_ctx):

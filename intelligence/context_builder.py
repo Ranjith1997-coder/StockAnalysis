@@ -219,6 +219,7 @@ class ContextBuilder:
         if stock is None:
             return MarketContext(symbol=symbol)
 
+        self._refresh_from_redis(stock)
         zd = stock.zerodha_data
         agg = stock.options_aggregate
 
@@ -264,6 +265,7 @@ class ContextBuilder:
         if stock is None:
             return IndexMarketContext(symbol=symbol)
 
+        self._refresh_from_redis(stock)
         zd = stock.zerodha_data
         agg = stock.options_aggregate
 
@@ -341,9 +343,19 @@ class ContextBuilder:
                     return obj
         return None
 
+    def _refresh_from_redis(self, stock):
+        """Refresh live tick data from Redis (market-data service snapshots)."""
+        try:
+            from intraday.intraday_monitor import redis_proxy
+            from services.common.stock_loader import load_tick_from_redis
+            load_tick_from_redis(redis_proxy, stock)
+        except Exception:
+            pass
+
     def _get_vix(self) -> float | None:
         for obj in shared.app_ctx.index_token_obj_dict.values():
             if obj.stock_symbol == "INDIA_VIX":
+                self._refresh_from_redis(obj)
                 return obj.zerodha_data.get("last_price") or obj.ltp
         return None
 

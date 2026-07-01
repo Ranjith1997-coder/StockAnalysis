@@ -10,7 +10,7 @@ from telegram.ext import ContextTypes
 import common.shared as shared
 from common.logging_util import logger
 from notification.commands._guard import guard
-from notification.commands._helpers import find_stock_by_symbol, build_gainers_losers
+from notification.commands._helpers import find_stock_by_symbol, build_gainers_losers, refresh_stock_from_redis
 
 # Supported symbols for options commands
 _OPTIONS_SYMBOLS = {"NIFTY", "BANKNIFTY"}
@@ -45,7 +45,7 @@ def _session_wall_delta(symbol: str, wall_type: str, minutes: int = 375) -> tupl
     import common.shared as _shared
     tm = _shared.app_ctx.zd_ticker_manager
     if tm is None:
-        return None
+        return None  # WS moved to market-data service — no in-process history
     engine = getattr(tm, "live_options_engine", None)
     if engine is None:
         return None
@@ -73,12 +73,10 @@ def _resolve_options_stock(symbol: str):
     stock = find_stock_by_symbol(symbol)
     if stock is None:
         return None, f"❌ <b>{symbol}</b> not found in tracked instruments."
-    agg = getattr(stock, "options_aggregate", None)
-    if agg is None or agg.get("last_updated", 0.0) == 0.0:
-        return None, (
-            f"⚠️ No options data yet for <b>{symbol}</b>.\n"
-            "WebSocket may not be connected or options not yet subscribed."
-        )
+
+    # Refresh live tick data from Redis (market-data service snapshots)
+    refresh_stock_from_redis(symbol)
+
     return stock, None
 
 
@@ -102,6 +100,9 @@ async def cmd_ltp(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             parse_mode="HTML",
         )
         return
+
+    # Refresh live tick data from Redis
+    refresh_stock_from_redis(symbol)
 
     ltp = stock.ltp
     change = stock.ltp_change_perc
@@ -196,19 +197,30 @@ async def cmd_watchlist(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     parts.append(f"<code>{', '.join(globals_list) if globals_list else '—'}</code>\n")
 
     ws_connected = False
-    tm = ctx.zd_ticker_manager
-    if tm is not None:
-        ws_connected = tm.connected
+    ws1_subs = 0
+    ws2_subs = 0
+    # Read WS status from market-data service registry (WS moved to separate service)
+    try:
+        from notification.commands._helpers import _get_redis
+        _r = _get_redis()
+        if _r is not None:
+            _md = _r.hgetall("service:registry:market-data")
+            if _md.get("status") == "healthy":
+                ws_connected = _md.get("ws1_connected", "False") == "True"
+                ws1_subs = int(_md.get("ws1_subs", 0))
+                ws2_subs = int(_md.get("ws2_subs", 0))
+    except Exception:
+        pass
+    # Fallback: check monolith's own tm (still set in dev or if WS not yet moved)
+    if not ws_connected:
+        tm = ctx.zd_ticker_manager
+        if tm is not None:
+            ws_connected = tm.connected
     ws_icon = "🟢" if ws_connected else "🔴"
     parts.append(f"{ws_icon} <b>Zerodha WebSocket</b>: {'Connected' if ws_connected else 'Disconnected'}")
-
-    if ws_connected and tm is not None:
-        idx_only = getattr(tm, "index_only_mode", False)
-        eq_tokens = len(ctx.stock_token_obj_dict) if not idx_only else 0
-        idx_tokens = len(ctx.index_token_obj_dict)
-        parts.append(f"  Mode: <b>{'Index-only' if idx_only else 'Full (Equity + Index)'}</b>")
-        parts.append(f"  Equity tokens: <b>{eq_tokens}</b>")
-        parts.append(f"  Index tokens: <b>{idx_tokens}</b>")
+    if ws_connected:
+        if ws1_subs or ws2_subs:
+            parts.append(f"  WS1 subs: <b>{ws1_subs}</b> | WS2 subs: <b>{ws2_subs}</b>")
 
     registry = ctx.token_registry
     if registry is not None:
@@ -252,6 +264,25 @@ async def cmd_watchlist(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     for token, stock in ctx.index_token_obj_dict.items():
         zctx = getattr(stock, "zerodha_ctx", None)
         if zctx and zctx.get("futures_mdata", {}).get("current"):
+            # Read futures live data from Redis (market-data service snapshot)
+            try:
+                from notification.commands._helpers import _get_redis
+                _r = _get_redis()
+                if _r is not None:
+                    _fl = _r.hgetall(f"data:futures_live:{stock.stock_symbol}")
+                    if _fl:
+                        ltp_val = float(_fl.get("current_ltp", 0)) or None
+                        oi_val = float(_fl.get("current_oi", 0)) or None
+                        info = f"<b>{stock.stock_symbol}</b>"
+                        if ltp_val:
+                            info += f" LTP: <code>{ltp_val:.2f}</code>"
+                        if oi_val:
+                            info += f" OI: <code>{oi_val:,.0f}</code>"
+                        futures_symbols.append(info)
+                        continue
+            except Exception:
+                pass
+            # Fallback: in-memory futures_live
             live = getattr(stock, "futures_live", {})
             cur = live.get("current", {})
             ltp_val = cur.get("ltp")
