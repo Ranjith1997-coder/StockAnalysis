@@ -39,6 +39,77 @@ def fetch_initial_daily_data(redis_proxy: "RedisProxy", is_intraday: bool):
     _fetch_global_indices_initial(redis_proxy, global_indices_list, is_intraday)
 
 
+def refresh_prev_day_ohlcv(redis_proxy: "RedisProxy"):
+    """Refresh prevDayOHLCV for all symbols using latest 1d data.
+
+    Called once per trading day (after market open) to ensure prevDayOHLCV
+    reflects the most recent completed trading day, not the day the data-gateway
+    was started.  Uses a 5-day 1d download and takes iloc[-2] as previous day
+    (iloc[-1] may be today's partial bar).
+    """
+    stock_list, index_list, commodity_list, global_indices_list = get_stock_objects_from_json()
+    _refresh_group_prev_day(redis_proxy, index_list, "index")
+    _refresh_group_prev_day(redis_proxy, stock_list, "stock")
+    _refresh_group_prev_day(redis_proxy, commodity_list, "commodity")
+    _refresh_group_prev_day(redis_proxy, global_indices_list, "global_index")
+    logger.info("[yfinance] prevDayOHLCV refresh complete for all symbols")
+
+
+def _refresh_group_prev_day(redis_proxy, obj_list, group_name):
+    """Fetch 5d 1d data for a group and update prevDayOHLCV_json in Redis."""
+    if not obj_list:
+        return
+
+    if group_name == "stock":
+        symbols = [o["tradingsymbol"] + ".NS" for o in obj_list]
+        key_fn = lambda o: o["tradingsymbol"]
+        yf_fn = lambda o: o["tradingsymbol"] + ".NS"
+    elif group_name == "index":
+        symbols = [o["yfinancetradingsymbol"] for o in obj_list]
+        key_fn = lambda o: o["tradingsymbol"]
+        yf_fn = lambda o: o["yfinancetradingsymbol"]
+    else:
+        symbols = [o.get("yfinancetradingsymbol", o["tradingsymbol"]) for o in obj_list]
+        key_fn = lambda o: o["tradingsymbol"]
+        yf_fn = lambda o: o.get("yfinancetradingsymbol", o["tradingsymbol"])
+
+    try:
+        data = yf.download(symbols, period="5d", interval="1d", group_by="ticker",
+                           auto_adjust=True, progress=False)
+    except Exception as e:
+        logger.error(f"[yfinance] prevDay refresh download failed ({group_name}): {e}")
+        return
+
+    updated = 0
+    for obj in obj_list:
+        symbol = yf_fn(obj)
+        name = key_fn(obj)
+        try:
+            if len(symbols) == 1:
+                sym_data = data
+            else:
+                sym_data = data[symbol]
+
+            if sym_data.empty or len(sym_data) < 2:
+                continue
+
+            ohlcv_row = sym_data.iloc[-2]
+            prev_day = {
+                "OPEN": float(ohlcv_row["Open"]),
+                "HIGH": float(ohlcv_row["High"]),
+                "LOW": float(ohlcv_row["Low"]),
+                "CLOSE": float(ohlcv_row["Close"]),
+                "VOLUME": float(ohlcv_row["Volume"]),
+            }
+            redis_proxy.hset(f"data:price:{name}",
+                             mapping={"prevDayOHLCV_json": __import__("json").dumps(prev_day, default=str)})
+            updated += 1
+        except (KeyError, IndexError, Exception) as e:
+            logger.debug(f"[yfinance] prevDay refresh skip {name}: {e}")
+
+    logger.info(f"[yfinance] prevDayOHLCV refreshed for {updated}/{len(obj_list)} {group_name}s")
+
+
 def _fetch_index_initial(redis_proxy, index_list, is_intraday):
     symbols = [idx["yfinancetradingsymbol"] for idx in index_list]
     if not symbols:
