@@ -229,8 +229,11 @@ class Stock:
 
     def check_52_week_status(self):
         close_df = self.priceData[['Close']]
-        close_df['rolling_max_prev'] = close_df['Close'].shift(1).rolling(window=252).max()
-        close_df['rolling_min_prev'] = close_df['Close'].shift(1).rolling(window=252).min()
+        window = min(252, len(close_df) - 1)
+        if window < 2:
+            return 0
+        close_df['rolling_max_prev'] = close_df['Close'].shift(1).rolling(window=252, min_periods=window).max()
+        close_df['rolling_min_prev'] = close_df['Close'].shift(1).rolling(window=252, min_periods=window).min()
 
         is_52_week_high = (close_df['Close'].iloc[-1] > close_df['rolling_max_prev'].iloc[-1])
         is_52_week_low = (close_df['Close'].iloc[-1] < close_df['rolling_min_prev'].iloc[-1])

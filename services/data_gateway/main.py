@@ -293,6 +293,16 @@ def main():
     while _running:
         cycle_count += 1
 
+        # ── Daily prevDayOHLCV refresh (once per day, before any phase checks) ──
+        today_str = str(datetime.date.today())
+        if _prevday_refresh_date != today_str:
+            try:
+                logger.info(f"[data-gateway] Refreshing prevDayOHLCV for {today_str}...")
+                refresh_prev_day_ohlcv(redis)
+                _prevday_refresh_date = today_str
+            except Exception as e:
+                logger.error(f"[data-gateway] prevDayOHLCV refresh failed: {e}")
+
         # ── Determine whether to fetch data this cycle ──────────────────
         if is_prod:
             action, mode = _determine_fetch_action(is_prod)
@@ -320,16 +330,6 @@ def main():
             _update_beat(redis, cycle_count, "idle", status_detail="positional_done")
             _sleep_seconds(IDLE_SLEEP)
             continue
-
-        # ── Daily prevDayOHLCV refresh (once per day, after market open) ──
-        today_str = str(datetime.date.today())
-        if _prevday_refresh_date != today_str:
-            try:
-                logger.info(f"[data-gateway] Refreshing prevDayOHLCV for {today_str}...")
-                refresh_prev_day_ohlcv(redis)
-                _prevday_refresh_date = today_str
-            except Exception as e:
-                logger.error(f"[data-gateway] prevDayOHLCV refresh failed: {e}")
 
         # ── Fetch data ──────────────────────────────────────────────────
         cycle_start = time.time()
