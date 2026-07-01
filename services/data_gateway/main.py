@@ -40,7 +40,7 @@ from common.helperFunctions import get_stock_objects_from_json, isNowInTimePerio
 from common.market_calendar import is_trading_day
 from common import constants as constant
 from services.common.redis_proxy import RedisProxy
-from services.data_gateway.yfinance_fetcher import fetch_initial_daily_data, fetch_cycle_data
+from services.data_gateway.yfinance_fetcher import fetch_initial_daily_data, fetch_cycle_data, refresh_prev_day_ohlcv
 from services.data_gateway.sensibull_fetcher import (
     fetch_and_publish_cycle_parallel,
     INDEX_ANALYSIS_EXCLUDE,
@@ -66,6 +66,7 @@ POSITIONAL_FETCH_END = _time(19, 30)
 # Global state
 _running = True
 _positional_done_date = None  # date string when positional fetch completed (prevents redundant cycles)
+_prevday_refresh_date = None  # date string when prevDayOHLCV was last refreshed
 
 
 def signal_handler(signum, frame):
@@ -178,7 +179,7 @@ def _sleep_seconds(seconds: int):
 
 
 def main():
-    global _running, _positional_done_date
+    global _running, _positional_done_date, _prevday_refresh_date
 
     parser = argparse.ArgumentParser(description="StockAnalysis Data Gateway")
     parser.add_argument("--dev-intraday", action="store_true", help="Dev intraday mode")
@@ -319,6 +320,16 @@ def main():
             _update_beat(redis, cycle_count, "idle", status_detail="positional_done")
             _sleep_seconds(IDLE_SLEEP)
             continue
+
+        # ── Daily prevDayOHLCV refresh (once per day, after market open) ──
+        today_str = str(datetime.date.today())
+        if _prevday_refresh_date != today_str:
+            try:
+                logger.info(f"[data-gateway] Refreshing prevDayOHLCV for {today_str}...")
+                refresh_prev_day_ohlcv(redis)
+                _prevday_refresh_date = today_str
+            except Exception as e:
+                logger.error(f"[data-gateway] prevDayOHLCV refresh failed: {e}")
 
         # ── Fetch data ──────────────────────────────────────────────────
         cycle_start = time.time()
