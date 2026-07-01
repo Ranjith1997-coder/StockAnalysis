@@ -206,8 +206,8 @@ def load_zerodha_from_redis(redis: RedisProxy, stock: Stock) -> bool:
 def load_options_live_from_redis(redis: RedisProxy, stock: Stock) -> bool:
     """Load live options tick data from Redis into Stock's TickStore.
 
-    Reads `data:options_live:{symbol}` hash (published by monolith at cycle
-    boundary) and populates `stock._tick_store.options_live` with per-strike
+    Reads `data:options_live:{symbol}` hash (published by market-data service)
+    and populates `stock._tick_store.options_live` with per-strike
     CE/PE tick dicts including gamma/oi from WS2 + Sensibull.
     """
     raw = redis.hgetall(f"data:options_live:{stock.stock_symbol}")
@@ -229,6 +229,55 @@ def load_options_live_from_redis(redis: RedisProxy, stock: Stock) -> bool:
         stock._tick_store.options_live = options_live
         return True
     return False
+
+
+def load_tick_from_redis(redis: RedisProxy, stock: Stock) -> bool:
+    """Load live tick data (equity + options aggregate) from Redis into TickStore.
+
+    Reads `data:tick:{symbol}` and `data:options_agg:{symbol}` hashes published
+    by the market-data service's 1-second snapshot publisher. Populates:
+      - stock._tick_store._zerodha_data (last_price, ohlc, volume, buy/sell qty)
+      - stock._tick_store.options_aggregate (PCR, ATM, walls, gex_*, ...)
+      - stock._tick_store.options_live (via load_options_live_from_redis)
+
+    Returns True if any data was loaded.
+    """
+    loaded = False
+
+    # Equity/index tick
+    tick_raw = redis.hgetall(f"data:tick:{stock.stock_symbol}")
+    if tick_raw:
+        zd = stock._tick_store._zerodha_data
+        for field in ("last_price", "open", "high", "low", "close",
+                       "volume_traded", "total_buy_quantity", "total_sell_quantity",
+                       "average_traded_price", "change"):
+            val = tick_raw.get(field)
+            if val is not None and val != "":
+                try:
+                    zd[field] = float(val)
+                except (ValueError, TypeError):
+                    pass
+        loaded = True
+
+    # Options aggregate
+    agg_raw = redis.hgetall(f"data:options_agg:{stock.stock_symbol}")
+    if agg_raw:
+        agg = stock._tick_store.options_aggregate
+        for k, v in agg_raw.items():
+            if v is None or v == "":
+                continue
+            # Try numeric conversion, keep string if it fails
+            try:
+                agg[k] = float(v)
+            except (ValueError, TypeError):
+                agg[k] = v
+        loaded = True
+
+    # Options live (per-strike)
+    if load_options_live_from_redis(redis, stock):
+        loaded = True
+
+    return loaded
 
 
 def _dict_to_df(data: Any) -> pd.DataFrame:

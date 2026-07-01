@@ -48,6 +48,8 @@ from services.common.stock_loader import (
     load_price_data_from_redis,
     load_sensibull_from_redis,
     load_zerodha_from_redis,
+    load_tick_from_redis,
+    load_options_live_from_redis,
 )
 from services.common.cycle_subscriber import CycleSubscriber
 
@@ -147,14 +149,22 @@ def check_data_freshness(stock, stale_threshold_sec=120):
     except Exception:
         pass  # fail-open — assume trading day
 
-    # Gate 3: check the timestamp
-    options_agg = getattr(stock, "options_aggregate", None)
-    if not options_agg:
-        return True  # no options tracking for this stock — nothing to check
-
-    last_updated = options_agg.get("last_updated")
-    if not last_updated:
-        return True  # field not populated yet (0.0 = never written)
+    # Gate 3: check the timestamp — prefer Redis (market-data service snapshot)
+    last_updated = None
+    try:
+        last_val = redis_proxy.hget(f"data:options_agg:{stock.stock_symbol}", "last_updated")
+        if last_val:
+            last_updated = float(last_val)
+    except Exception:
+        pass
+    if last_updated is None:
+        # Fallback: in-memory options_aggregate
+        options_agg = getattr(stock, "options_aggregate", None)
+        if not options_agg:
+            return True  # no options tracking for this stock — nothing to check
+        last_updated = options_agg.get("last_updated")
+        if not last_updated:
+            return True  # field not populated yet (0.0 = never written)
 
     if isinstance(last_updated, (int, float)):
         age = now.timestamp() - last_updated
@@ -630,7 +640,7 @@ def _dispatch_and_collect_stream(
         "last_cycle_time": str(_time.time()),
     })
 
-    _publish_options_snapshot(index_objs)
+    # options_live snapshot is now published by the market-data service every 1 second
 
     jobs = []
     for obj in index_objs + stock_objs:
@@ -719,6 +729,14 @@ def fetch_and_analyze_stocks() -> List[Tuple[MonitorResult, bool, Optional[str]]
         redis_proxy, stock_objs, index_objs,
         commodity_objs, global_indices_objs,
     )
+
+    # Load live tick data from market-data service's Redis snapshots
+    # (data:tick:*, data:options_agg:*) so update_latest_data() has real-time prices
+    for obj in stock_objs + index_objs:
+        try:
+            load_tick_from_redis(redis_proxy, obj)
+        except Exception:
+            pass
 
     for obj in stock_objs + index_objs + commodity_objs + global_indices_objs:
         try:
@@ -1990,20 +2008,10 @@ def _run_daily_loop():
         # Refresh auth (was separate systemd oneshot)
         _refresh_zerodha_auth()
 
-        # ── 09:00 — Connect Zerodha dual WebSockets ──
-        # WS1 (base) for equity + index ticks.
-        # WS2 (options) for option ticks (no 500-instrument limit).
-        # Both use the fresh enctoken from _refresh_zerodha_auth().
-        _start_zerodha_ws()
-
-        # ── 09:00 — Start Sensibull live option chain feed ──
-        # 15-min buffer before market opens so connection issues are
-        # discovered early and can retry before intraday starts.
-        if ENABLE_LIVE_OPTIONS and shared.app_ctx.options_source in ("sensibull", "both"):
-            tm = shared.app_ctx.zd_ticker_manager
-            if tm and tm.live_options_engine and not shared.app_ctx.sensibull_feed:
-                _enrichment_only = (shared.app_ctx.options_source == "both")
-                _start_sensibull_feed(tm.live_options_engine, enrichment_only=_enrichment_only)
+        # ── 09:00 — WebSocket connections are managed by market-data service ──
+        # The market-data service owns WS1+WS2+Sensibull and publishes 1-second
+        # snapshots to Redis. The monolith just needs a valid enctoken in Redis
+        # (published by _refresh_zerodha_auth above) for the service to connect.
 
         TELEGRAM_NOTIFICATIONS.is_intraday = False
         TELEGRAM_NOTIFICATIONS.send_notification(
@@ -2053,11 +2061,7 @@ def _run_daily_loop():
         logger.info("=== Positional phase ===")
         positional_analysis()
 
-        # ── Stop Sensibull feeds after market close (no longer needed) ──
-        _stop_sensibull_feed()
-
-        # ── Disconnect Zerodha WebSockets until tomorrow ──
-        _stop_zerodha_ws()
+        # ── WebSocket connections are managed by market-data service (stays connected) ──
 
         # ── Done for today ──
         _morning_bias_done = False

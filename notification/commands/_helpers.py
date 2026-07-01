@@ -2,6 +2,16 @@
 from __future__ import annotations
 
 import common.shared as shared
+from common.logging_util import logger
+
+
+def _get_redis():
+    """Get the monolith's Redis proxy (lazy import to avoid circular deps)."""
+    try:
+        from intraday.intraday_monitor import redis_proxy
+        return redis_proxy
+    except Exception:
+        return None
 
 
 def find_stock_by_symbol(symbol: str):
@@ -19,9 +29,42 @@ def find_stock_by_symbol(symbol: str):
     return None
 
 
+def refresh_stock_from_redis(symbol: str) -> bool:
+    """Refresh a Stock's live tick data from Redis (market-data service snapshots).
+
+    Loads data:tick:*, data:options_live:*, data:options_agg:* into the
+    Stock's TickStore so bot commands see fresh data without WS connections.
+    Also updates stock.ltp and ltp_change_perc.
+    """
+    stock = find_stock_by_symbol(symbol)
+    if stock is None:
+        return False
+    redis = _get_redis()
+    if redis is None:
+        return False
+    try:
+        from services.common.stock_loader import load_tick_from_redis
+        load_tick_from_redis(redis, stock)
+        stock.update_latest_data()
+        return True
+    except Exception as e:
+        logger.debug(f"[helpers] refresh_stock_from_redis({symbol}): {e}")
+        return False
+
+
 def build_gainers_losers():
     """Compute top 5 gainers and losers from live stock data."""
     from common.helperFunctions import percentageChange
+
+    redis = _get_redis()
+    if redis is not None:
+        from services.common.stock_loader import load_tick_from_redis
+        for _, stock in shared.app_ctx.stock_token_obj_dict.items():
+            try:
+                load_tick_from_redis(redis, stock)
+                stock.update_latest_data()
+            except Exception:
+                continue
 
     gainers, losers = [], []
     for _, stock in shared.app_ctx.stock_token_obj_dict.items():

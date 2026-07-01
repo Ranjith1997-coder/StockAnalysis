@@ -47,6 +47,29 @@ def _fmt_age(ts) -> str:
 
 # ── inspection functions ─────────────────────────────────────────────────────
 
+def _read_market_data_registry() -> dict:
+    """Read market-data service stats from Redis service registry."""
+    try:
+        from notification.commands._helpers import _get_redis
+        _r = _get_redis()
+        if _r is None:
+            return {}
+        raw = _r.hgetall("service:registry:market-data")
+        if not raw or raw.get("status") != "healthy":
+            return {}
+        return {
+            "ws_connected": raw.get("ws1_connected", "False") == "True",
+            "ws_options_connected": raw.get("ws2_connected", "False") == "True",
+            "ws_tick_count": int(raw.get("tick_count", 0)),
+            "ws1_subscribed": int(raw.get("ws1_subs", 0)),
+            "ws2_subscribed": int(raw.get("ws2_subs", 0)),
+            "sensibull_feeds": int(raw.get("sensibull_feeds", 0)),
+            "last_equity_tick": _fmt_age(float(raw.get("last_equity_tick", 0))),
+        }
+    except Exception:
+        return {}
+
+
 def inspect_overview() -> dict:
     ctx = shared.app_ctx
     tm = ctx.zd_ticker_manager
@@ -62,18 +85,39 @@ def inspect_overview() -> dict:
             llm_tokens = getattr(client, "_daily_tokens", 0)
             llm_limit = getattr(client, "DAILY_TOKEN_LIMIT", 900_000)
 
-    # WS2 (options) details
-    ws2_subscribed = 0
-    ws2_reconnects = 0
-    if tm and getattr(tm, "_kt_options", None):
-        kt_opt = tm._kt_options
-        ws2_subscribed = _safe_len(getattr(kt_opt, "subscribed_tokens", {}))
-        ws2_reconnects = getattr(kt_opt, "reconnect_attempts", 0) if hasattr(kt_opt, "reconnect_attempts") else 0
-
-    # WS1 (base) subscription count
-    ws1_subscribed = 0
-    if tm and getattr(tm, "_kt_base", None):
-        ws1_subscribed = _safe_len(getattr(tm._kt_base, "subscribed_tokens", {}))
+    # Read WS stats from market-data service registry (fallback to monolith's tm)
+    md = _read_market_data_registry()
+    if md:
+        ws_connected = md["ws_connected"]
+        ws_options_connected = md["ws_options_connected"]
+        ws_tick_count = md["ws_tick_count"]
+        ws1_subscribed = md["ws1_subscribed"]
+        ws2_subscribed = md["ws2_subscribed"]
+        ws2_reconnects = 0  # not published yet
+        tick_queue_depth = 0
+        unknown_tokens = 0
+        ws_reconnects = 0
+        last_equity_tick = md["last_equity_tick"]
+        sensibull_info = {"active": md["sensibull_feeds"] > 0, "feed_count": md["sensibull_feeds"], "feeds": []}
+    else:
+        # Fallback: read from monolith's own tm (dev mode or transition period)
+        ws2_subscribed = 0
+        ws2_reconnects = 0
+        if tm and getattr(tm, "_kt_options", None):
+            kt_opt = tm._kt_options
+            ws2_subscribed = _safe_len(getattr(kt_opt, "subscribed_tokens", {}))
+            ws2_reconnects = getattr(kt_opt, "reconnect_attempts", 0) if hasattr(kt_opt, "reconnect_attempts") else 0
+        ws1_subscribed = 0
+        if tm and getattr(tm, "_kt_base", None):
+            ws1_subscribed = _safe_len(getattr(tm._kt_base, "subscribed_tokens", {}))
+        ws_connected = tm.connected if tm else False
+        ws_options_connected = getattr(tm, "options_connected", False) if tm else False
+        ws_tick_count = getattr(tm, "_tick_count", 0) if tm else 0
+        ws_reconnects = getattr(tm, "reconnect_attempts", 0) if tm else 0
+        tick_queue_depth = tm.tick_queue.qsize() if tm else 0
+        unknown_tokens = _safe_len(getattr(tm, "_unknown_tokens", set())) if tm else 0
+        last_equity_tick = _fmt_age(ctx.last_equity_tick_time)
+        sensibull_info = _inspect_sensibull_feed(ctx)
 
     return {
         "mode": ctx.mode.name if ctx.mode else "NOT_SET",
@@ -86,12 +130,12 @@ def inspect_overview() -> dict:
         "global_indices": len(ctx.global_indices_token_obj_dict),
         "signals_emitted": signals_emitted,
         "confluences": confluences,
-        "ws_connected": tm.connected if tm else False,
-        "ws_options_connected": getattr(tm, "options_connected", False) if tm else False,
-        "ws_tick_count": getattr(tm, "_tick_count", 0) if tm else 0,
-        "ws_reconnects": getattr(tm, "reconnect_attempts", 0) if tm else 0,
-        "tick_queue_depth": tm.tick_queue.qsize() if tm else 0,
-        "unknown_tokens": _safe_len(getattr(tm, "_unknown_tokens", set())) if tm else 0,
+        "ws_connected": ws_connected,
+        "ws_options_connected": ws_options_connected,
+        "ws_tick_count": ws_tick_count,
+        "ws_reconnects": ws_reconnects,
+        "tick_queue_depth": tick_queue_depth,
+        "unknown_tokens": unknown_tokens,
         "ws1_subscribed": ws1_subscribed,
         "ws2_subscribed": ws2_subscribed,
         "ws2_reconnects": ws2_reconnects,
@@ -99,11 +143,11 @@ def inspect_overview() -> dict:
         "llm_token_limit": llm_limit,
         "llm_budget_pct": round(llm_tokens / llm_limit * 100, 1) if llm_limit else 0,
         "memory_rss_mb": round(_get_rss_mb(), 1),
-        "last_equity_tick": _fmt_age(ctx.last_equity_tick_time),
+        "last_equity_tick": last_equity_tick,
         "options_source": ctx.options_source,
         "error_count": ctx.error_count,
         "monitor_results": dict(ctx.monitor_result_counts),
-        "sensibull_ws": _inspect_sensibull_feed(ctx),
+        "sensibull_ws": sensibull_info,
     }
 
 
@@ -139,6 +183,10 @@ def inspect_stock(symbol: str) -> dict:
     stock = find_stock_by_symbol(symbol)
     if stock is None:
         return {"error": f"Symbol {symbol} not found in tracked instruments"}
+
+    # Refresh live tick data from Redis (market-data service snapshots)
+    from notification.commands._helpers import refresh_stock_from_redis
+    refresh_stock_from_redis(symbol)
 
     pd_data = stock.priceData
     price_info = {}
