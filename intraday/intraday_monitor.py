@@ -29,8 +29,6 @@ from analyser.PanicModeAnalyser import PanicModeAnalyser
 from analyser.OptionSellerCompositeAnalyser import OptionSellerCompositeAnalyser
 from common.logging_util import logger
 from typing import List, Tuple, Optional
-from zerodha.zerodha_analysis import ZerodhaTickerManager
-from zerodha.live_options_engine import LiveOptionsEngine
 from dotenv import load_dotenv
 from notification.bot_listener import init_telegram_bot
 import threading
@@ -42,7 +40,6 @@ from common.token_registry import TokenRegistry, TokenInfo, TokenType
 from intelligence.signal_bus import SignalBus
 from intelligence.correlator import SignalCorrelator, Confluence
 from intelligence.signal import Signal, Direction, Layer, weight_to_strength
-from zerodha.live_stock_engine import LiveStockEngine
 from services.common.redis_proxy import RedisProxy
 from services.common.stock_loader import (
     load_price_data_from_redis,
@@ -1286,184 +1283,6 @@ def update_morning_bias():
 # Sensibull WS helpers — used when OPTIONS_SOURCE=sensibull
 # ---------------------------------------------------------------------------
 
-def _get_nearest_expiry_str(index_stock) -> str | None:
-    """Return nearest expiry as 'YYYY-MM-DD' from already-populated zerodha_ctx."""
-    try:
-        chain_df = index_stock.zerodha_ctx.get("option_chain", {}).get("current")
-        if chain_df is not None and not chain_df.empty:
-            expiry = chain_df["expiry"].iloc[0]
-            if hasattr(expiry, "strftime"):
-                return expiry.strftime("%Y-%m-%d")
-            return str(expiry)[:10]
-    except Exception as exc:
-        logger.warning(f"[Sensibull] could not resolve expiry for {index_stock.stock_symbol}: {exc}")
-    return None
-
-
-def _start_zerodha_ws() -> None:
-    """Connect Zerodha dual WebSockets at 09:00 after auth refresh."""
-    if not ENABLE_ZERODHA_API:
-        logger.info("[ws] Zerodha API disabled — skipping WS connect")
-        return
-    tm = shared.app_ctx.zd_ticker_manager
-    if tm is None:
-        logger.warning("[ws] ZerodhaTickerManager not initialised")
-        return
-    if tm.connected:
-        logger.info("[ws] Zerodha WS already connected")
-        return
-    enc_raw = os.getenv(constant.ENV_ZERODHA_ENC_TOKEN, "")
-    if not enc_raw:
-        logger.warning("[ws] ZERODHA_ENC_TOKEN not set — Zerodha WS not connected")
-        return
-    tm.update_enctoken(quote(enc_raw, safe=""))
-    if tm.connect():
-        logger.info("[ws] Zerodha WS1 (base) + WS2 (options) connected")
-    else:
-        logger.warning("[ws] Zerodha WS connect failed — use /enctoken via Telegram bot to retry")
-
-
-def _stop_zerodha_ws() -> None:
-    """Disconnect Zerodha WS after market close."""
-    tm = shared.app_ctx.zd_ticker_manager
-    if tm is None or not tm.connected:
-        return
-    try:
-        tm.close_connection()
-        tm.stop_tick_processor()
-        logger.info("[ws] Zerodha WS1 + WS2 disconnected after market close")
-    except Exception as e:
-        logger.warning(f"[ws] Zerodha WS disconnect error: {e}")
-
-
-def _start_sensibull_feed(live_options_engine, enrichment_only: bool = False) -> None:
-    """
-    Create one SensibullFeed per supported symbol and start them.
-    The underlying token is read directly from index_token_obj_dict — the dict
-    key IS the NSE/BSE instrument token, which Sensibull also uses as the
-    underlying identifier. No separate token mapping is needed.
-    Expiry is resolved from the zerodha_ctx already populated at startup.
-    Feeds are stored in ``shared.app_ctx.sensibull_feed``.
-
-    Args:
-        enrichment_only: When True (OPTIONS_SOURCE=both), Sensibull only writes
-                         Greeks/IV fields to existing Zerodha-subscribed strikes
-                         and does NOT trigger on_aggregate_updated. Zerodha is
-                         the authoritative tick source and engine trigger.
-    """
-    from fno.sensibull_feed import SensibullFeed
-    from fno.sensibull_adapter import SensibullAdapter
-    from notification.Notification import TELEGRAM_NOTIFICATIONS
-
-    adapter = SensibullAdapter()
-    feeds: list[SensibullFeed] = []
-    started_symbols: list[str] = []
-
-    for underlying_token, index_stock in shared.app_ctx.index_token_obj_dict.items():
-        symbol = index_stock.stock_symbol
-        if symbol not in constant.LIVE_OPTIONS_INDICES:
-            continue
-
-        expiry = _get_nearest_expiry_str(index_stock)
-        if not expiry:
-            # Allow manual override as a last resort
-            expiry = os.getenv(f"SENSIBULL_EXPIRY_{symbol}", "")
-        if not expiry:
-            logger.error(
-                f"[Sensibull] cannot resolve expiry for {symbol}. "
-                f"Set SENSIBULL_EXPIRY_{symbol}=YYYY-MM-DD or ensure zerodha option chain is loaded."
-            )
-            continue
-
-        subscriptions = [{"underlying": underlying_token, "expiry": expiry}]
-        captured_stock = index_stock  # explicit closure capture
-
-        def make_callback(stock):
-            def _on_snapshot(token: int, data: dict) -> None:
-                try:
-                    adapter.apply(stock, data, live_options_engine,
-                                  enrichment_only=enrichment_only)
-                except Exception as exc:
-                    logger.error(f"[Sensibull] snapshot error for {stock.stock_symbol}: {exc}")
-            return _on_snapshot
-
-        feed = SensibullFeed(subscriptions, on_snapshot=make_callback(captured_stock))
-        feed.start()
-        feeds.append(feed)
-        started_symbols.append(symbol)
-        logger.info(f"[Sensibull] feed started for {symbol} (underlying_token={underlying_token}, expiry={expiry}, enrichment_only={enrichment_only})")
-
-    if feeds:
-        shared.app_ctx.sensibull_feed = feeds
-        mode_label = "Enrichment" if enrichment_only else "Primary"
-        TELEGRAM_NOTIFICATIONS.send_live_options_notification(
-            f"📡 <b>Sensibull Live Feed Started [{mode_label}]</b> — {', '.join(started_symbols)}"
-        )
-        logger.info(f"[Sensibull] {len(feeds)} feed(s) running [{mode_label}]: {started_symbols}")
-    else:
-        logger.error("[Sensibull] no feeds started — check symbol/expiry configuration")
-
-
-def _stop_sensibull_feed() -> None:
-    """Stop all Sensibull WebSocket feeds cleanly after market close."""
-    feeds = shared.app_ctx.sensibull_feed
-    if not feeds:
-        return
-    feeds_list = feeds if isinstance(feeds, list) else [feeds]
-    for feed in feeds_list:
-        try:
-            feed.stop()
-        except Exception as e:
-            logger.warning(f"[Sensibull] stop error: {e}")
-    shared.app_ctx.sensibull_feed = None
-    logger.info(f"[Sensibull] {len(feeds_list)} feed(s) stopped")
-
-
-def live_options_analysis():
-    """
-    Live options only mode — WebSocket + LiveOptionsEngine, no regular analysis.
-    Auto-connects WebSocket using the encToken already in the environment.
-    Runs until market close (or indefinitely in dev mode).
-    """
-    from notification.Notification import TELEGRAM_NOTIFICATIONS as TG
-    from urllib.parse import quote as _quote
-
-    tm = shared.app_ctx.zd_ticker_manager
-    if tm is None:
-        logger.error("ZerodhaTickerManager not initialised — cannot start live options analysis")
-        return
-
-    # Auto-connect if not already connected
-    if not tm.connected:
-        enc_raw = os.getenv(constant.ENV_ZERODHA_ENC_TOKEN, "")
-        if enc_raw:
-            tm.update_enctoken(_quote(enc_raw, safe=""))
-            if tm.connect():
-                logger.info("Live options WebSocket connected")
-                from time import sleep as _sleep
-                _sleep(3)   # wait for first index ticks
-                if shared.app_ctx.options_source in ("sensibull", "both"):
-                    _enrichment_only = (shared.app_ctx.options_source == "both")
-                    _start_sensibull_feed(tm.live_options_engine, enrichment_only=_enrichment_only)
-                else:
-                    tm.subscribe_live_options(wait_for_ticks=True)
-            else:
-                logger.error("WebSocket connect failed — live options analysis aborted")
-                return
-        else:
-            logger.error("ZERODHA_ENC_TOKEN not set — cannot auto-connect")
-            return
-
-    TG.send_live_options_notification("🟢 <b>Live Options Tracking Started</b>")
-    logger.info("Live options analysis running — WebSocket handling alerts")
-
-    while isNowInTimePeriod(time(9, 15), time(15, 30), datetime.now().time()) or not PRODUCTION:
-        sleep(30)
-
-    TG.send_live_options_notification("🔴 <b>Live Options Tracking Stopped — Market Closed</b>")
-    logger.info("Live options analysis stopped — market closed")
-
-
 def intraday_analysis(loop = True, loop_wait_time = 30, max_cycles = 0):
     """
     Run intraday analysis loop.
@@ -1478,27 +1297,12 @@ def intraday_analysis(loop = True, loop_wait_time = 30, max_cycles = 0):
     """
     shared.app_ctx.mode = shared.Mode.INTRADAY
 
-    # Sensibull feed is normally started at 09:00 in _run_daily_loop().
-    # In dev mode (no _run_daily_loop), start it here as a fallback.
-    _options_source = shared.app_ctx.options_source
-    if (ENABLE_LIVE_OPTIONS
-            and _options_source in ("sensibull", "both")
-            and not shared.app_ctx.sensibull_feed):
-        tm = shared.app_ctx.zd_ticker_manager
-        if tm and tm.live_options_engine:
-            _enrichment_only = (_options_source == "both")
-            logger.info(f"[intraday] fallback — starting Sensibull feed (enrichment_only={_enrichment_only})")
-            _start_sensibull_feed(tm.live_options_engine, enrichment_only=_enrichment_only)
-        else:
-            logger.warning("[intraday] Cannot start Sensibull feed — LiveOptionsEngine not initialised")
-
     logger.info("Market time open. Starting Intraday analysis")
 
     TELEGRAM_NOTIFICATIONS.send_notification("\U0001F4C8 <b>Intraday Analysis Started</b> \U0001F4C8", parse_mode="HTML")
 
     is_in_time_period = isNowInTimePeriod(time(9,15), time(15,30), datetime.now().time())
     cycle = 0
-    _live_options_subscribed = False  # guard: subscribe option tokens once after first tick
 
     while(is_in_time_period or not PRODUCTION):
         cycle += 1
@@ -1528,18 +1332,7 @@ def intraday_analysis(loop = True, loop_wait_time = 30, max_cycles = 0):
         except Exception:
             pass
 
-        # After the first cycle, spot prices are available — subscribe Zerodha option tokens.
-        # Runs once only; skipped if already subscribed or if Zerodha WS is not connected.
-        if (not _live_options_subscribed
-                and ENABLE_LIVE_OPTIONS
-                and _options_source in ("zerodha", "both")):
-            tm = shared.app_ctx.zd_ticker_manager
-            if tm and tm.connected:
-                logger.info("[intraday] subscribing Zerodha option tokens after first cycle")
-                tm.subscribe_live_options(wait_for_ticks=False)
-                _live_options_subscribed = True
-            else:
-                logger.debug("[intraday] Zerodha WS not connected — option subscription deferred")
+        # Option token subscription is handled by the market-data service.
 
         report_top_gainers_and_losers()
         report_index_data()
@@ -1828,45 +1621,14 @@ def init():
         orchestrator.register(OptionSellerCompositeAnalyser())  # MUST be last -- reads PANIC_EXHAUSTION
     if ENABLE_ZERODHA_API:
         logger.info("Zerodha API enabled")
-        userName = os.getenv(constant.ENV_ZERODHA_USERNAME)
-        password = os.getenv(constant.ENV_ZERODHA_PASSWORD)
         encToken_raw = os.getenv(constant.ENV_ZERODHA_ENC_TOKEN)
-
-        # URL-encode the encToken for ZerodhaTickerManager
-        encToken_for_manager = quote(encToken_raw or "", safe="")
-        shared.app_ctx.zd_ticker_manager = ZerodhaTickerManager(userName, password, encToken_for_manager)
         shared.app_ctx.zd_kc = KiteConnect(constant.DUMMY_API_KEY_ZERODHA, root="https://kite.zerodha.com/", enctoken=encToken_raw)
 
-        if ENABLE_LIVE_OPTIONS:
-            shared.app_ctx.zd_ticker_manager.live_options_engine = LiveOptionsEngine()
-            logger.info("LiveOptionsEngine attached to ZerodhaTickerManager")
-            options_source = os.getenv(constant.ENV_OPTIONS_SOURCE, "zerodha").lower()
-            shared.app_ctx.options_source = options_source
-            logger.info(f"OPTIONS_SOURCE={options_source}")
-
-        # Attach LiveStockEngine for per-tick equity analysis (VWAP cross, ORB, etc.)
-        if ENABLE_INTELLIGENCE and shared.app_ctx.signal_bus:
-            shared.app_ctx.zd_ticker_manager.live_stock_engine = LiveStockEngine(shared.app_ctx.signal_bus)
-            logger.info("LiveStockEngine attached to ZerodhaTickerManager")
-
-        if LIVE_OPTIONS_ONLY:
-            shared.app_ctx.zd_ticker_manager.index_only_mode = True
-            logger.info("index_only_mode enabled — equity stocks excluded from WebSocket")
-
-        # Auto-connect Zerodha WebSocket in dev mode.
-        # In production mode, WS connects at 09:00 in _run_daily_loop()
-        # after _refresh_zerodha_auth() so the enctoken is fresh.
-        if not PRODUCTION and ENABLE_LIVE_OPTIONS and shared.app_ctx.options_source in ("zerodha", "both"):
-            enc_raw = os.getenv(constant.ENV_ZERODHA_ENC_TOKEN, "")
-            if enc_raw:
-                logger.info("[init] Dev mode — auto-connecting Zerodha WebSocket")
-                shared.app_ctx.zd_ticker_manager.update_enctoken(quote(enc_raw, safe=""))
-                if shared.app_ctx.zd_ticker_manager.connect():
-                    logger.info("[init] Zerodha WebSocket connected (dev mode)")
-                else:
-                    logger.warning("[init] Zerodha WebSocket auto-connect failed — use /enctoken via Telegram bot to retry")
-            else:
-                logger.warning("[init] ZERODHA_ENC_TOKEN not set — Zerodha WebSocket not connected")
+        # Set options_source (used by market-data service via shared.app_ctx)
+        options_source = os.getenv(constant.ENV_OPTIONS_SOURCE, "zerodha").lower()
+        shared.app_ctx.options_source = options_source
+        logger.info(f"OPTIONS_SOURCE={options_source}")
+        # WS connections + live engines are managed by the market-data service
 
 
 def parse_arguments():
@@ -2078,9 +1840,9 @@ def start_stock_analysis():
             except Exception as e:
                 logger.error(f"Morning bias computation failed: {e}")
 
-        if LIVE_OPTIONS_ONLY:
-            live_options_analysis()
-        elif shared.app_ctx.mode and shared.app_ctx.mode.name == shared.Mode.INTRADAY.name:
+        # Live options analysis is handled by the market-data service.
+        # The monolith always runs the standard intraday analysis loop.
+        if shared.app_ctx.mode and shared.app_ctx.mode.name == shared.Mode.INTRADAY.name:
             intraday_analysis(
                 max_cycles=int(os.getenv(constant.ENV_DEV_MAX_CYCLES, "0")),
                 loop_wait_time=int(os.getenv(constant.ENV_DEV_LOOP_WAIT, "30")),
@@ -2139,8 +1901,7 @@ def _shutdown_background_services():
         except Exception as e:
             logger.warning(f"[shutdown] narrator shutdown error: {e}")
 
-    _stop_sensibull_feed()
-    _stop_zerodha_ws()
+    # WS connections are managed by market-data service — no shutdown needed here
 
 if __name__ =="__main__":
 

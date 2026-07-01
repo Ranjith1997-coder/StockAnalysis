@@ -63,6 +63,7 @@ def _read_market_data_registry() -> dict:
             "ws_tick_count": int(raw.get("tick_count", 0)),
             "ws1_subscribed": int(raw.get("ws1_subs", 0)),
             "ws2_subscribed": int(raw.get("ws2_subs", 0)),
+            "ws2_reconnects": int(raw.get("ws2_reconnects", 0)),
             "sensibull_feeds": int(raw.get("sensibull_feeds", 0)),
             "last_equity_tick": _fmt_age(float(raw.get("last_equity_tick", 0))),
         }
