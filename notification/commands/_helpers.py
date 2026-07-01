@@ -55,16 +55,22 @@ def refresh_stock_from_redis(symbol: str) -> bool:
 
         # Load priceData if not already loaded (needed for update_latest_data)
         if stock.is_price_data_empty():
-            load_price_data_from_redis(
-                redis, [stock] if not stock.is_index else [],
-                [stock] if stock.is_index else [],
-            )
+            if stock.is_index:
+                load_price_data_from_redis(redis, [], [stock])
+            else:
+                load_price_data_from_redis(redis, [stock], [])
 
-        load_tick_from_redis(redis, stock)
+        loaded = load_tick_from_redis(redis, stock)
+        if not loaded:
+            logger.warning(f"[helpers] load_tick_from_redis returned False for {symbol}")
         stock.update_latest_data()
+        if stock.ltp is None:
+            logger.warning(f"[helpers] stock.ltp is None after update_latest_data for {symbol} "
+                         f"(priceData empty={stock.is_price_data_empty()}, "
+                         f"tick_last_price={stock._tick_store._zerodha_data.get('last_price')})")
         return True
     except Exception as e:
-        logger.debug(f"[helpers] refresh_stock_from_redis({symbol}): {e}")
+        logger.warning(f"[helpers] refresh_stock_from_redis({symbol}): {e}")
         return False
 
 
