@@ -9,8 +9,14 @@ def _get_redis():
     """Get the monolith's Redis proxy (lazy import to avoid circular deps)."""
     try:
         from intraday.intraday_monitor import redis_proxy
+        if redis_proxy is None:
+            logger.warning("[helpers] redis_proxy is None")
         return redis_proxy
-    except Exception:
+    except ImportError as e:
+        logger.warning(f"[helpers] Cannot import redis_proxy: {e}")
+        return None
+    except Exception as e:
+        logger.warning(f"[helpers] _get_redis error: {e}")
         return None
 
 
