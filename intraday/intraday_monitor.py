@@ -1394,6 +1394,9 @@ def positional_analysis():
     orchestrator.reset_all_constants()
     stock_alerts = []
 
+    shared.ticker_52_week_high_list.clear()
+    shared.ticker_52_week_low_list.clear()
+
     # Wait for data-gateway to publish current cycle's data
     if not _wait_for_cycle_ready():
         logger.warning("[cycle] Cycle signal timeout — using last cycle's data")
@@ -1661,10 +1664,9 @@ def _wait_until(hour: int, minute: int):
 
 def _sleep_until_midnight():
     """Sleep until midnight. Re-checks every 5 min (allows holiday detection)."""
+    target = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
     while True:
-        now = datetime.now()
-        midnight = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
-        sleep_sec = (midnight - now).total_seconds()
+        sleep_sec = (target - datetime.now()).total_seconds()
         if sleep_sec <= 0:
             break
         sleep(min(sleep_sec, 300))
@@ -1744,91 +1746,106 @@ def _run_daily_loop():
     """Always-running main loop. Self-schedules pre-market, intraday, positional.
 
     Production mode only — dev mode uses start_stock_analysis() as before.
+
+    Time-aware: if the service restarts mid-day, phases whose time window has
+    already passed are skipped (e.g. restarting at 16:00 skips pre-market and
+    intraday, jumps straight to waiting for positional).
     """
     global _morning_bias_done
 
     while True:
-        # ── Holiday check ──
-        if PRODUCTION:
-            if not is_trading_day():
-                today_str = datetime.now().date().strftime("%A, %d %b %Y")
-                logger.info("Today (%s) is not an NSE trading day. Sleeping until midnight.", today_str)
+        try:
+            now = datetime.now()
+
+            # ── Holiday check ──
+            if PRODUCTION:
+                if not is_trading_day():
+                    today_str = now.date().strftime("%A, %d %b %Y")
+                    logger.info("Today (%s) is not an NSE trading day. Sleeping until midnight.", today_str)
+                    TELEGRAM_NOTIFICATIONS.is_intraday = False
+                    TELEGRAM_NOTIFICATIONS.send_notification(
+                        "\U0001F4C5 <b>Market Holiday</b>\n\n"
+                        f"Today is <b>{today_str}</b> and NSE is <b>closed</b>.\n"
+                        "No analysis will run. Sleeping until next trading day.\U0001F3D6\uFE0F",
+                        parse_mode="HTML",
+                    )
+                    _sleep_until_midnight()
+                    continue
+
+            # ── Determine current phase based on time-of-day ──
+            hour_min = now.hour * 60 + now.minute  # minutes since midnight
+
+            # Pre-market window: 9:00–9:15 (540–555)
+            # Intraday window:   9:15–15:30 (555–930)
+            # Positional window: 20:00–23:59 (1200–1439)
+
+            run_pre_market = hour_min < 555   # before 9:15
+            run_intraday = hour_min < 930     # before 15:30
+
+            # ── Pre-market phase (only if before 9:15) ──
+            if run_pre_market:
+                _wait_until(9, 0)
+                logger.info("=== Pre-market phase ===")
+
+                _refresh_zerodha_auth()
+
                 TELEGRAM_NOTIFICATIONS.is_intraday = False
                 TELEGRAM_NOTIFICATIONS.send_notification(
-                    "\U0001F4C5 <b>Market Holiday</b>\n\n"
-                    f"Today is <b>{today_str}</b> and NSE is <b>closed</b>.\n"
-                    "No analysis will run. Sleeping until next trading day.\U0001F3D6\uFE0F",
-                    parse_mode="HTML",
+                    "\U0001F4CB <b>Pre-Market Analysis Started</b> \U0001F4CB", parse_mode="HTML"
                 )
-                _sleep_until_midnight()
-                continue
 
-        # ── Wait for pre-market time ──
-        _wait_until(9, 0)
-        logger.info("=== Pre-market phase ===")
+                try:
+                    run_global_cues_report()
+                except Exception as e:
+                    logger.error(f"Global cues report failed: {e}")
 
-        # Refresh auth (was separate systemd oneshot)
-        _refresh_zerodha_auth()
+                _wait_until(9, 7)
+                try:
+                    run_preopen_report()
+                except Exception as e:
+                    logger.error(f"Pre-open report failed: {e}")
 
-        # ── 09:00 — WebSocket connections are managed by market-data service ──
-        # The market-data service owns WS1+WS2+Sensibull and publishes 1-second
-        # snapshots to Redis. The monolith just needs a valid enctoken in Redis
-        # (published by _refresh_zerodha_auth above) for the service to connect.
+                TELEGRAM_NOTIFICATIONS.is_intraday = True
 
-        TELEGRAM_NOTIFICATIONS.is_intraday = False
-        TELEGRAM_NOTIFICATIONS.send_notification(
-            "\U0001F4CB <b>Pre-Market Analysis Started</b> \U0001F4CB", parse_mode="HTML"
-        )
+                if ENABLE_INTELLIGENCE:
+                    try:
+                        update_morning_bias()
+                    except Exception as e:
+                        logger.error(f"Morning bias failed: {e}")
+            else:
+                logger.info("=== Skipping pre-market (past 9:15, service restarted mid-day) ===")
+                TELEGRAM_NOTIFICATIONS.is_intraday = run_intraday
 
-        try:
-            run_global_cues_report()
+            # ── Intraday phase (only if before 15:30) ──
+            if run_intraday:
+                _wait_until(9, 15)
+                logger.info("=== Intraday phase ===")
+                intraday_analysis(
+                    max_cycles=int(os.getenv(constant.ENV_DEV_MAX_CYCLES, "0")),
+                    loop_wait_time=int(os.getenv(constant.ENV_DEV_LOOP_WAIT, "30")),
+                )
+                logger.info("=== Intraday complete. Waiting for 8 PM positional analysis ===")
+            else:
+                logger.info("=== Skipping intraday (past 15:30, service restarted after market close) ===")
+
+            # ── Wait for positional (15:30 - 20:00) ──
+            _wait_until(18, 50)
+            _refresh_zerodha_auth()
+
+            _wait_until(20, 0)
+
+            # ── Positional analysis (20:00) ──
+            logger.info("=== Positional phase ===")
+            positional_analysis()
+
+            # ── Done for today ──
+            _morning_bias_done = False
+            logger.info("=== Daily cycle complete. Sleeping until midnight ===")
+            _sleep_until_midnight()
+
         except Exception as e:
-            logger.error(f"Global cues report failed: {e}")
-
-        # ── Pre-open report at 9:07 ──
-        _wait_until(9, 7)
-        try:
-            run_preopen_report()
-        except Exception as e:
-            logger.error(f"Pre-open report failed: {e}")
-
-        TELEGRAM_NOTIFICATIONS.is_intraday = True
-
-        # ── Morning bias (fast path from 8 PM analysis) ──
-        if ENABLE_INTELLIGENCE:
-            try:
-                update_morning_bias()
-            except Exception as e:
-                logger.error(f"Morning bias failed: {e}")
-
-        # ── Intraday analysis (9:15 - 15:30) ──
-        _wait_until(9, 15)
-        logger.info("=== Intraday phase ===")
-        intraday_analysis(
-            max_cycles=int(os.getenv(constant.ENV_DEV_MAX_CYCLES, "0")),
-            loop_wait_time=int(os.getenv(constant.ENV_DEV_LOOP_WAIT, "30")),
-        )
-
-        # ── Wait for positional (15:30 - 20:00) ──
-        logger.info("=== Intraday complete. Waiting for 8 PM positional analysis ===")
-
-        # Refresh enctoken before positional window — data-gateway's positional
-        # fetch runs at 19:00 and needs a valid token (the 09:00 token has expired).
-        _wait_until(18, 50)
-        _refresh_zerodha_auth()
-
-        _wait_until(20, 0)
-
-        # ── Positional analysis (20:00) ──
-        logger.info("=== Positional phase ===")
-        positional_analysis()
-
-        # ── WebSocket connections are managed by market-data service (stays connected) ──
-
-        # ── Done for today ──
-        _morning_bias_done = False
-        logger.info("=== Daily cycle complete. Sleeping until midnight ===")
-        _sleep_until_midnight()
+            logger.exception(f"[daily-loop] Unhandled exception — will retry in 60s: {e}")
+            sleep(60)
 
 
 def start_stock_analysis():

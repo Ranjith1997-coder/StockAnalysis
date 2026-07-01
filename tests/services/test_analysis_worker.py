@@ -216,7 +216,7 @@ class TestProcessJob:
         redis = MagicMock()
         orchestrator = MagicMock()
         def _mock_run_all_intraday(stock, index=False, use_scoring=True, min_priority=None):
-            stock.analysis["BULLISH"]["52-week-high"] = {"level": 12000}
+            stock.analysis["NEUTRAL"]["52-week-high"] = {"level": 12000}
             mock_score = MagicMock()
             mock_score.total_score = 100
             mock_score.priority.name = "NORMAL"
