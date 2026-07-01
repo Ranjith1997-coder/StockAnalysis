@@ -347,11 +347,13 @@ def _start_sensibull_feeds(tm: ZerodhaTickerManager, enrichment_only: bool):
 def _update_heartbeat(redis: RedisProxy, tm: ZerodhaTickerManager):
     ws1_subs = 0
     ws2_subs = 0
+    ws2_reconnects = 0
     try:
         if tm._kt_base:
             ws1_subs = len(tm._kt_base.subscribed_tokens)
         if tm._kt_options:
             ws2_subs = len(tm._kt_options.subscribed_tokens)
+            ws2_reconnects = getattr(tm._kt_options, "reconnect_attempts", 0)
     except Exception:
         pass
 
@@ -368,6 +370,7 @@ def _update_heartbeat(redis: RedisProxy, tm: ZerodhaTickerManager):
         "ws2_connected": str(tm.options_connected),
         "ws1_subs": str(ws1_subs),
         "ws2_subs": str(ws2_subs),
+        "ws2_reconnects": str(ws2_reconnects),
         "sensibull_feeds": str(sensibull_count),
         "last_equity_tick": str(shared.app_ctx.last_equity_tick_time),
         "tick_count": str(tm._tick_count),
