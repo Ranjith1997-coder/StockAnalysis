@@ -215,8 +215,8 @@ def process_job(
         default=str,
     )
 
-    is_52w_high = "52-week-high" in stock.analysis.get("BULLISH", {})
-    is_52w_low = "52-week-low" in stock.analysis.get("BEARISH", {})
+    is_52w_high = "52-week-high" in stock.analysis.get("NEUTRAL", {})
+    is_52w_low = "52-week-low" in stock.analysis.get("NEUTRAL", {})
 
     if is_index and symbol in constant.LIVE_OPTIONS_INDICES:
         _persist_gex_state(redis, stock)
