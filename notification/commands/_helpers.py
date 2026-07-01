@@ -9,15 +9,8 @@ def _get_redis():
     """Get the monolith's Redis proxy (lazy import to avoid circular deps)."""
     try:
         import intraday.intraday_monitor as _im
-        rp = getattr(_im, "redis_proxy", None)
-        if rp is None:
-            logger.warning("[helpers] redis_proxy is None")
-        return rp
-    except ImportError as e:
-        logger.warning(f"[helpers] Cannot import intraday_monitor: {e}")
-        return None
-    except Exception as e:
-        logger.warning(f"[helpers] _get_redis error: {e}")
+        return getattr(_im, "redis_proxy", None)
+    except Exception:
         return None
 
 
@@ -60,17 +53,11 @@ def refresh_stock_from_redis(symbol: str) -> bool:
             else:
                 load_price_data_from_redis(redis, [stock], [])
 
-        loaded = load_tick_from_redis(redis, stock)
-        if not loaded:
-            logger.warning(f"[helpers] load_tick_from_redis returned False for {symbol}")
+        load_tick_from_redis(redis, stock)
         stock.update_latest_data()
-        if stock.ltp is None:
-            logger.warning(f"[helpers] stock.ltp is None after update_latest_data for {symbol} "
-                         f"(priceData empty={stock.is_price_data_empty()}, "
-                         f"tick_last_price={stock._tick_store._zerodha_data.get('last_price')})")
         return True
     except Exception as e:
-        logger.warning(f"[helpers] refresh_stock_from_redis({symbol}): {e}")
+        logger.debug(f"[helpers] refresh_stock_from_redis({symbol}): {e}")
         return False
 
 
