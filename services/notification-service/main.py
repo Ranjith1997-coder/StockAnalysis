@@ -50,6 +50,7 @@ from common.constants import (
 )
 import requests
 import re
+from services.common.metrics import incr_stock, incr_system, incr_daily
 
 _running = True
 
