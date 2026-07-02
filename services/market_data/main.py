@@ -50,7 +50,7 @@ from common.token_registry import (
 from services.common.redis_proxy import RedisProxy
 from services.market_data.snapshot_publisher import SnapshotPublisher
 from services.market_data.signal_publisher import RedisSignalBus
-from services.common.metrics import incr_stock, set_stock, incr_system
+from services.common.metrics import incr_stock, set_stock, incr_system, set_system
 
 # ── Lazy imports (heavy deps) ──────────────────────────────────────────────
 from zerodha.zerodha_analysis import ZerodhaTickerManager
