@@ -3,11 +3,11 @@ from __future__ import annotations
 
 from telegram.ext import Application, CommandHandler
 
-from notification.commands import account, market, system, debug
+from notification.commands import account, market, system, debug, stats
 
 
 def register_all(application: Application) -> None:
     """Register every command handler from all command modules."""
-    for module in (account, market, system, debug):
+    for module in (account, market, system, debug, stats):
         for command_name, handler_fn in module.HANDLERS:
             application.add_handler(CommandHandler(command_name, handler_fn))

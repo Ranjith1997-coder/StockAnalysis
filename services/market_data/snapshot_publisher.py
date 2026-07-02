@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 
 import common.constants as constant
 from common.logging_util import logger
+from services.common.metrics import set_stock
 
 
 class SnapshotPublisher:
@@ -37,7 +38,8 @@ class SnapshotPublisher:
         self._index_objs = index_objs
         self._running = False
         self._thread: threading.Thread | None = None
-        self._publish_count = 0
+        self.publish_count = 0
+        self.last_publish_time = 0.0
 
     def start(self) -> None:
         if self._running:
@@ -56,7 +58,8 @@ class SnapshotPublisher:
         while self._running:
             try:
                 self._publish_all()
-                self._publish_count += 1
+                self.publish_count += 1
+                self.last_publish_time = time.time()
             except Exception as e:
                 logger.error(f"[snapshot] Publish error: {e}")
             time.sleep(self.INTERVAL)
@@ -72,6 +75,9 @@ class SnapshotPublisher:
             zd = ts._zerodha_data
             if zd.get("last_price", 0) <= 0:
                 continue
+            now = time.time()
+            last_ts = float(zd.get("timestamp", 0) or 0)
+            last_tick_age_s = int(now - last_ts) if last_ts > 0 else 0
             self._redis.hset(f"data:tick:{obj.stock_symbol}", mapping={
                 "last_price": str(zd["last_price"]),
                 "open": str(zd["open"]),
@@ -84,6 +90,7 @@ class SnapshotPublisher:
                 "average_traded_price": str(zd["average_traded_price"]),
                 "change": str(zd["change"]),
                 "timestamp": str(zd.get("timestamp", "")),
+                "tick_count": str(ts.tick_count),
             })
 
     def _publish_options(self) -> None:
@@ -112,6 +119,8 @@ class SnapshotPublisher:
                     if k == "gex_by_strike":
                         continue
                     agg_mapping[k] = str(v) if v is not None else ""
+                agg_mapping["option_tick_count"] = str(ts.option_tick_count)
+                agg_mapping["tick_count"] = str(ts.tick_count)
                 self._redis.hset(f"data:options_agg:{idx.stock_symbol}", mapping=agg_mapping)
 
     def _publish_futures(self) -> None:

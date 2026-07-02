@@ -264,13 +264,28 @@ def main():
                 if not success:
                     error = f"Failed to send after 3 retries"
                     _send_to_dead_letter(rc, job, error)
+                    sym = job.get("symbol", "")
+                    if sym:
+                        incr_stock(sym, "alerts_failed")
+                    incr_system("alerts_failed")
+                    incr_daily("alerts_failed")
                 else:
+                    sym = job.get("symbol", "")
+                    if sym:
+                        incr_stock(sym, "alerts_delivered")
+                    incr_system("alerts_delivered")
+                    incr_daily("alerts_delivered")
                     logger.info(
                         f"[notification] Sent: {job.get('message_type', 'unknown')} "
                         f"→ {job.get('chat_type', 'unknown')}"
                     )
             except Exception as e:
                 _send_to_dead_letter(rc, dict(fields), str(e))
+                sym = dict(fields).get("symbol", "")
+                if sym:
+                    incr_stock(sym, "alerts_failed")
+                incr_system("alerts_failed")
+                incr_daily("alerts_failed")
                 logger.error(f"[notification] Error processing job {msg_id}: {e}")
             finally:
                 try:
