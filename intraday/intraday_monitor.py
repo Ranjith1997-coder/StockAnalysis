@@ -48,7 +48,7 @@ from services.common.stock_loader import (
     load_tick_from_redis,
     load_options_live_from_redis,
 )
-from services.common.metrics import incr_stock, incr_system, set_system
+from services.common.metrics import incr_stock, incr_system, set_system, incr_daily
 from services.common.cycle_subscriber import CycleSubscriber
 
 
