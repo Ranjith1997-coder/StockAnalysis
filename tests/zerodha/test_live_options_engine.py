@@ -84,7 +84,7 @@ class TestFire:
         with patch(_TELEGRAM) as mock_tele:
             with patch(_APP_CTX, _fake_ctx()):
                 engine._fire("NIFTY", "PCR_CROSSOVER_BULLISH", "bullish pcr")
-        mock_tele.send_live_options_notification.assert_called_once_with("bullish pcr")
+        mock_tele.send_live_options_notification.assert_called_once_with("bullish pcr", symbol="NIFTY")
 
     def test_updates_last_alert_timestamp(self):
         engine = _engine()

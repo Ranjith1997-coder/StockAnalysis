@@ -23,6 +23,7 @@ from services.common.stock_loader import (
     load_options_live_from_redis,
 )
 from services.common.serialization import safe_json_dumps, safe_json_loads
+from services.common.metrics import incr_stock, set_stock, incr_system, incr_daily
 from common.logging_util import logger
 
 
@@ -101,6 +102,28 @@ def _persist_gex_state(redis: RedisProxy, stock) -> None:
     redis.hset(f"data:gex_state:{stock.stock_symbol}", mapping=mapping)
 
 
+def _record_metrics(sym: str, result: str, duration_ms: int, trend: bool = False, error: str = ""):
+    """Record per-stock + system analysis metrics for one job result."""
+    incr_stock(sym, "analysis_count")
+    incr_system("analysis_runs")
+    incr_daily("analysis_runs")
+    set_stock(sym,
+        last_analysis_result=result,
+        last_analysis_duration_ms=str(duration_ms),
+        last_analysis_time=str(time.time()),
+    )
+    if result == "ERROR":
+        incr_stock(sym, "analysis_errors")
+        incr_system("result_error_count")
+    elif result == "NO_DATA":
+        incr_system("result_no_data_count")
+    elif trend:
+        incr_stock(sym, "trends_found")
+        incr_system("result_success_count")
+    else:
+        incr_system("result_success_count")
+
+
 def process_job(
     redis: RedisProxy,
     orchestrator: AnalyserOrchestrator,
@@ -121,6 +144,53 @@ def process_job(
     stock = load_stock_from_redis(redis, symbol, is_index=is_index)
     if stock is None:
         logger.warning(f"[worker] {symbol}: no price data in Redis")
+        _record_metrics(symbol, "NO_DATA", int((time.time() - start) * 1000))
+        return _result_dict(
+            job_id, cycle_id, symbol, is_index,
+            "NO_DATA", False, "", "{}", "{}",
+            False, False, "",
+            int((time.time() - start) * 1000),
+        )
+
+    min_rows = 3 if mode == shared.Mode.INTRADAY else 2
+    if stock.priceData is None or len(stock.priceData) < min_rows:
+        logger.debug(f"[worker] {symbol}: insufficient price data ({len(stock.priceData) if stock.priceData is not None else 0} rows, need {min_rows})")
+        _record_metrics(symbol, "NO_DATA", int((time.time() - start) * 1000))
+        return _result_dict(
+            job_id, cycle_id, symbol, is_index,
+            "NO_DATA", False, "", "{}", "{}",
+            False, False, "",
+            int((time.time() - start) * 1000),
+        )
+
+    stock.reset_analysis()
+    stock.update_latest_data()
+
+    if mode == shared.Mode.POSITIONAL:
+        MIN_POSITIONAL_MOVE_PCT = 0.75
+        if stock.ltp_change_perc is not None and abs(stock.ltp_change_perc) < MIN_POSITIONAL_MOVE_PCT:
+            logger.debug(f"[worker] {symbol}: skipped — price move {stock.ltp_change_perc:+.2f}% < {MIN_POSITIONAL_MOVE_PCT}%")
+            _record_metrics(symbol, "SKIPPED", int((time.time() - start) * 1000))
+            return _result_dict(
+                job_id, cycle_id, symbol, is_index,
+                "SUCCESS", False, "", "{}", "{}",
+                False, False, "",
+                int((time.time() - start) * 1000),
+            )
+
+    if symbol in constant.INDEX_ANALYSIS_EXCLUDE:
+        _record_metrics(symbol, "SKIPPED", int((time.time() - start) * 1000))
+        return _result_dict(
+            job_id, cycle_id, symbol, is_index,
+            "SUCCESS", False, "", "{}", "{}",
+            False, False, "",
+            int((time.time() - start) * 1000),
+        )
+
+    sensibull_ok = load_sensibull_from_redis(redis, stock)
+    if not sensibull_ok:
+        logger.warning(f"[worker] {symbol}: no sensibull data in Redis")
+        _record_metrics(symbol, "NO_DATA", int((time.time() - start) * 1000))
         return _result_dict(
             job_id, cycle_id, symbol, is_index,
             "NO_DATA", False, "", "{}", "{}",
@@ -193,6 +263,7 @@ def process_job(
             )
     except Exception as e:
         logger.exception(f"[worker] {symbol}: analyser error: {e}")
+        _record_metrics(symbol, "ERROR", int((time.time() - start) * 1000), error=str(e))
         return _result_dict(
             job_id, cycle_id, symbol, is_index,
             "ERROR", False, "", "{}", "{}",
@@ -215,6 +286,9 @@ def process_job(
         default=str,
     )
 
+    duration_ms = int((time.time() - start) * 1000)
+    _record_metrics(symbol, "SUCCESS", duration_ms, trend=trend_found)
+
     is_52w_high = "52-week-high" in stock.analysis.get("NEUTRAL", {})
     is_52w_low = "52-week-low" in stock.analysis.get("NEUTRAL", {})
 
@@ -226,5 +300,5 @@ def process_job(
         "SUCCESS", trend_found, message,
         analysis_json, score_result_json,
         is_52w_high, is_52w_low, "",
-        int((time.time() - start) * 1000),
+        duration_ms,
     )

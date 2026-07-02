@@ -17,6 +17,7 @@ from analyser.LiveOIAnalyser import LiveOIAnalyser
 from analyser.LiveStraddleAnalyser import LiveStraddleAnalyser
 from analyser.LiveOptionsHistory import LiveOptionsHistory
 from notification.Notification import TELEGRAM_NOTIFICATIONS
+from services.common.metrics import incr_stock
 from common.constants import LIVE_OPTIONS_INDICES
 from intelligence.signal import Signal, Direction, Layer, SignalStrength
 
@@ -129,7 +130,8 @@ class LiveOptionsEngine:
 
     def _fire(self, symbol: str, alert_type: str, msg: str):
         self._last_alert[(symbol, alert_type)] = time.time()
-        TELEGRAM_NOTIFICATIONS.send_live_options_notification(msg)
+        TELEGRAM_NOTIFICATIONS.send_live_options_notification(msg, symbol=symbol)
+        incr_stock(symbol, "alerts_live_options")
         logger.info(f"[LiveOptions] {symbol} {alert_type}: {msg[:60]}…")
 
         # Emit to SignalBus for cross-layer correlation

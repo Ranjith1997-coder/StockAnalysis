@@ -16,6 +16,7 @@ from intelligence.correlator import Confluence
 from intelligence.context_builder import ContextBuilder, MarketContext
 from intelligence.llm_client import LLMClient
 from notification.Notification import TELEGRAM_NOTIFICATIONS
+from services.common.metrics import incr_stock
 from common.logging_util import logger
 import common.shared as shared
 
@@ -226,7 +227,8 @@ class MarketNarrator:
                 return
 
             msg = self._format_telegram(confluence, response)
-            TELEGRAM_NOTIFICATIONS.send_live_options_notification(msg, parse_mode="HTML")
+            TELEGRAM_NOTIFICATIONS.send_live_options_notification(msg, parse_mode="HTML", symbol=confluence.symbol)
+            incr_stock(confluence.symbol, "alerts_narrative")
             logger.info(f"[Narrator] Sent narrative for {confluence.symbol} "
                         f"{confluence.direction.value} {confluence.level}")
 

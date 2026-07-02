@@ -17,6 +17,7 @@ from common.constants import (
     DISCORD_LIVE_OPTIONS_WEBHOOK_URL,
 )
 from common.logging_util import logger
+from services.common.metrics import incr_stock, incr_system, incr_daily
 
 
 def _html_to_discord(text: str) -> str:
@@ -90,6 +91,11 @@ def _notify_via_redis(chat_type: str, message: str, parse_mode=None, message_typ
             "symbol": symbol or "",
             "timestamp": str(datetime.datetime.now()),
         }, maxlen=1000)
+        # Producer-side alert counters
+        if symbol:
+            incr_stock(symbol, "alerts_attempted")
+        incr_system("alerts_attempted")
+        incr_daily("alerts_attempted")
         return True
     except Exception as e:
         logger.error(f"[Notification] Redis dispatch failed: {e}")
@@ -102,13 +108,13 @@ class TELEGRAM_NOTIFICATIONS:
     dev_notify = False
 
     @classmethod
-    def send_notification(cls, message, parse_mode=None):
+    def send_notification(cls, message, parse_mode=None, symbol=None):
         if not cls.is_production and not cls.dev_notify:
             return
 
         # Primary: Redis stream → notification-service
         chat_type = "intraday" if cls.is_intraday else "positional"
-        if _notify_via_redis(chat_type, message, parse_mode, message_type="general"):
+        if _notify_via_redis(chat_type, message, parse_mode, message_type="general", symbol=symbol):
             return
 
         # Fallback: direct HTTP
@@ -154,12 +160,12 @@ class TELEGRAM_NOTIFICATIONS:
         return True
 
     @classmethod
-    def send_live_options_notification(cls, message, parse_mode="HTML"):
+    def send_live_options_notification(cls, message, parse_mode="HTML", symbol=None):
         if not cls.is_production and not cls.dev_notify:
             return
 
         # Primary: Redis stream
-        if _notify_via_redis("live_options", message, parse_mode, message_type="live_options"):
+        if _notify_via_redis("live_options", message, parse_mode, message_type="live_options", symbol=symbol):
             return
 
         # Fallback: direct HTTP
@@ -169,6 +175,7 @@ class TELEGRAM_NOTIFICATIONS:
         if channel in ("telegram", "both"):
             if not TELEGRAM_LIVE_OPTIONS_TOKEN or not TELEGRAM_LIVE_OPTIONS_CHAT_ID:
                 logger.debug("Live options Telegram not configured")
+                return False
             else:
                 try:
                     resp = requests.post(
@@ -178,6 +185,9 @@ class TELEGRAM_NOTIFICATIONS:
                     )
                     if resp.status_code != 200:
                         logger.error(f"Live options send failed: {resp.status_code}: {resp.text}")
+                        return False
+                    return True
                 except Exception as e:
                     logger.error(f"Live options send failed: {e}")
+                    return False
         return True

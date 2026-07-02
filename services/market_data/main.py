@@ -50,6 +50,7 @@ from common.token_registry import (
 from services.common.redis_proxy import RedisProxy
 from services.market_data.snapshot_publisher import SnapshotPublisher
 from services.market_data.signal_publisher import RedisSignalBus
+from services.common.metrics import incr_stock, set_stock, incr_system
 
 # ── Lazy imports (heavy deps) ──────────────────────────────────────────────
 from zerodha.zerodha_analysis import ZerodhaTickerManager
@@ -344,7 +345,11 @@ def _start_sensibull_feeds(tm: ZerodhaTickerManager, enrichment_only: bool):
 
 # ── Health heartbeat ───────────────────────────────────────────────────────
 
-def _update_heartbeat(redis: RedisProxy, tm: ZerodhaTickerManager):
+_prev_total_ticks = 0
+
+def _update_heartbeat(redis: RedisProxy, tm: ZerodhaTickerManager,
+                      publisher: SnapshotPublisher | None = None):
+    global _prev_total_ticks
     ws1_subs = 0
     ws2_subs = 0
     ws2_reconnects = 0
@@ -375,6 +380,38 @@ def _update_heartbeat(redis: RedisProxy, tm: ZerodhaTickerManager):
         "last_equity_tick": str(shared.app_ctx.last_equity_tick_time),
         "tick_count": str(tm._tick_count),
     })
+
+    # ── System stats (stats:system) ─────────────────────────────────────
+    total_ticks = tm._tick_count
+    tick_rate = (total_ticks - _prev_total_ticks) / 30.0
+    _prev_total_ticks = total_ticks
+
+    incr_system("total_ticks", total_ticks)  # absolute value each cycle
+    set_system(
+        total_ticks=str(total_ticks),
+        tick_rate=f"{tick_rate:.1f}",
+        ws2_reconnects=str(ws2_reconnects),
+        snapshot_age_s=str(
+            int(time.time() - publisher.last_publish_time)
+            if publisher and publisher.last_publish_time else 0
+        ),
+    )
+
+    # ── Per-stock tick counters (batch via set_stock) ───────────────────
+    for _, stock in shared.app_ctx.stock_token_obj_dict.items():
+        ts = stock._tick_store
+        if ts.tick_count > 0:
+            set_stock(stock.stock_symbol,
+                tick_count=str(ts.tick_count),
+            )
+
+    for _, index_obj in shared.app_ctx.index_token_obj_dict.items():
+        ts = index_obj._tick_store
+        if ts.tick_count > 0 or ts.option_tick_count > 0:
+            set_stock(index_obj.stock_symbol,
+                tick_count=str(ts.tick_count),
+                option_tick_count=str(ts.option_tick_count),
+            )
 
 
 # ── Main ───────────────────────────────────────────────────────────────────
@@ -481,7 +518,7 @@ def main():
 
     while _running:
         try:
-            _update_heartbeat(redis, tm)
+            _update_heartbeat(redis, tm, publisher=publisher)
         except Exception as e:
             logger.error(f"[market-data] Heartbeat error: {e}")
 

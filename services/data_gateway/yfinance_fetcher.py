@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import time
 import logging
+import datetime
 import yfinance as yf
 import pandas as pd
 from typing import TYPE_CHECKING
@@ -21,6 +22,26 @@ from services.common.logging import get_logger
 logger = get_logger("data-gateway")
 from common.helperFunctions import get_stock_objects_from_json
 from services.common.stock_proxy import StockProxy
+
+
+def _get_prev_day_row(df: pd.DataFrame):
+    """Get the previous completed trading day's OHLCV row.
+
+    If the last bar is today (partial / in-progress), use iloc[-2] (yesterday).
+    Otherwise (market closed, last bar is the most recent completed day), use
+    iloc[-1] — that *is* yesterday's complete bar.
+
+    This fixes the bug where iloc[-2] returned 2-days-ago when the refresh
+    ran before market open (today's partial bar doesn't exist yet).
+    """
+    if df.empty:
+        return None
+    today = datetime.date.today()
+    last_ts = df.index[-1]
+    last_date = last_ts.date() if hasattr(last_ts, "date") else None
+    if last_date == today and len(df) >= 2:
+        return df.iloc[-2]
+    return df.iloc[-1]
 
 
 def fetch_initial_daily_data(redis_proxy: "RedisProxy", is_intraday: bool):
@@ -93,7 +114,9 @@ def _refresh_group_prev_day(redis_proxy, obj_list, group_name):
             if sym_data.empty or len(sym_data) < 2:
                 continue
 
-            ohlcv_row = sym_data.iloc[-2]
+            ohlcv_row = _get_prev_day_row(sym_data)
+            if ohlcv_row is None:
+                continue
             prev_day = {
                 "OPEN": float(ohlcv_row["Open"]),
                 "HIGH": float(ohlcv_row["High"]),
@@ -133,7 +156,9 @@ def _fetch_index_initial(redis_proxy, index_list, is_intraday):
                     logger.warning(f"[yfinance] Insufficient data for {name} ({symbol}), skipping")
                     continue
 
-                ohlcv_row = idx_data.iloc[-2]
+                ohlcv_row = _get_prev_day_row(idx_data)
+                if ohlcv_row is None:
+                    continue
                 prev_day = {
                     "OPEN": float(ohlcv_row["Open"]),
                     "HIGH": float(ohlcv_row["High"]),
@@ -188,7 +213,9 @@ def _fetch_stock_initial(redis_proxy, stock_list, is_intraday):
                     logger.warning(f"[yfinance] Insufficient data for {name}, skipping")
                     continue
 
-                ohlcv_row = stk_data.iloc[-2]
+                ohlcv_row = _get_prev_day_row(stk_data)
+                if ohlcv_row is None:
+                    continue
                 prev_day = {
                     "OPEN": float(ohlcv_row["Open"]),
                     "HIGH": float(ohlcv_row["High"]),
@@ -238,7 +265,9 @@ def _fetch_commodity_initial(redis_proxy, commodity_list, is_intraday):
                 if sym_data.empty or len(sym_data) < 2:
                     logger.warning(f"[yfinance] Insufficient data for commodity {name}, skipping")
                     continue
-                ohlcv_row = sym_data.iloc[-2]
+                ohlcv_row = _get_prev_day_row(sym_data)
+                if ohlcv_row is None:
+                    continue
                 prev_day = {
                     "OPEN": float(ohlcv_row["Open"]),
                     "HIGH": float(ohlcv_row["High"]),
@@ -286,7 +315,9 @@ def _fetch_global_indices_initial(redis_proxy, global_indices_list, is_intraday)
                 if sym_data.empty or len(sym_data) < 2:
                     logger.warning(f"[yfinance] Insufficient data for global index {name}, skipping")
                     continue
-                ohlcv_row = sym_data.iloc[-2]
+                ohlcv_row = _get_prev_day_row(sym_data)
+                if ohlcv_row is None:
+                    continue
                 prev_day = {
                     "OPEN": float(ohlcv_row["Open"]),
                     "HIGH": float(ohlcv_row["High"]),

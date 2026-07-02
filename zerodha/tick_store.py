@@ -26,6 +26,10 @@ class TickStore:
     def __init__(self) -> None:
         self._lock = threading.Lock()
 
+        # Tick counters — incremented on each WS update, read by snapshot publisher
+        self.tick_count = 0
+        self.option_tick_count = 0
+
         # Raw equity / index tick snapshot
         self._zerodha_data: dict = {
             "volume_traded": 0,
@@ -98,6 +102,7 @@ class TickStore:
         and index ticks (28/32-byte quote/full mode with only OHLC).
         """
         with self._lock:
+            self.tick_count += 1
             d = self._zerodha_data
             d["last_price"] = ticker_data.get("last_price", d["last_price"])
             d["change"] = ticker_data.get("change", d["change"])
@@ -130,6 +135,7 @@ class TickStore:
                    Used by Sensibull in OPTIONS_SOURCE=both mode.
         """
         with self._lock:
+            self.option_tick_count += 1
             if merge:
                 # Enrichment-only: only update existing strikes (Zerodha-subscribed)
                 existing = self.options_live.get(strike, {}).get(option_type)

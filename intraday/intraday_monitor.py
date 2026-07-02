@@ -48,6 +48,7 @@ from services.common.stock_loader import (
     load_tick_from_redis,
     load_options_live_from_redis,
 )
+from services.common.metrics import incr_stock, incr_system, set_system
 from services.common.cycle_subscriber import CycleSubscriber
 
 
@@ -185,7 +186,9 @@ def check_data_freshness(stock, stale_threshold_sec=120):
             f"WebSocket may have dropped silently."
         )
         try:
-            TELEGRAM_NOTIFICATIONS.send_notification(msg, parse_mode="HTML")
+            TELEGRAM_NOTIFICATIONS.send_notification(msg, parse_mode="HTML", symbol=symbol)
+            incr_stock(symbol, "alerts_stale_data")
+            incr_system("stale_stocks_count")
         except Exception:
             pass
         logger.warning(f"Stale data detected for {symbol}: {int(age)}s old")
@@ -548,7 +551,10 @@ def _convert_stream_result(fields: dict, stock_obj) -> Tuple[MonitorResult, bool
         _re_emit_signals_from_analysis(stock_obj, layer)
 
     if trend_found and message:
-        TELEGRAM_NOTIFICATIONS.send_notification(message, parse_mode="HTML")
+        TELEGRAM_NOTIFICATIONS.send_notification(message, parse_mode="HTML", symbol=stock_obj.stock_symbol)
+        incr_stock(stock_obj.stock_symbol, "alerts_trend")
+        incr_system("trends_found")
+        incr_daily("trends_found")
 
     return (monitor_result, trend_found, message if trend_found else None)
 
@@ -652,6 +658,7 @@ def _dispatch_and_collect_stream(
         }, maxlen=500)
 
     logger.info(f"[stream] Dispatched {len(jobs)} analysis jobs (cycle={cycle_id})")
+    incr_system("total_jobs_dispatched", len(jobs))
 
     expected = len(jobs)
     job_ids = {jid for jid, _ in jobs}
@@ -710,7 +717,15 @@ def _dispatch_and_collect_stream(
     if missing > 0:
         logger.warning(f"[stream] {missing}/{expected} jobs timed out for cycle={cycle_id}")
 
-    logger.info(f"[stream] Collected {len(results_by_job)}/{expected} results for cycle={cycle_id}")
+    completed = len(results_by_job)
+    logger.info(f"[stream] Collected {completed}/{expected} results for cycle={cycle_id}")
+
+    incr_system("total_jobs_completed", completed)
+    set_system(
+        intraday_cycle_count=str(shared.app_ctx.intraday_cycle_count),
+        last_cycle_age_s="0",
+        last_cycle_time=str(_time.time()),
+    )
     return results
 
 
@@ -1066,7 +1081,10 @@ def _handle_confluence(confluence: Confluence):
         f"Signals:\n{sources}{caution}"
     )
 
-    TELEGRAM_NOTIFICATIONS.send_live_options_notification(msg, parse_mode="HTML")
+    TELEGRAM_NOTIFICATIONS.send_live_options_notification(msg, parse_mode="HTML", symbol=confluence.symbol)
+    incr_stock(confluence.symbol, "alerts_confluence")
+    incr_system("total_confluences")
+    incr_daily("confluences")
     logger.info(f"[Confluence] {confluence.symbol} {confluence.direction.value} "
                 f"{level} ({confluence.layer_count} layers, score={confluence.score:.0f})")
 

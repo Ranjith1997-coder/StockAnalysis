@@ -29,6 +29,18 @@ def reset_production():
     _restore_production()
 
 
+@pytest.fixture(autouse=True)
+def mock_redis_dispatch():
+    """Mock _notify_via_redis to return False so HTTP fallback path is tested.
+
+    Without this, tests fail when Redis is running locally because the Redis
+    dispatch succeeds and the HTTP fallback (which these tests exercise) is
+    never reached.
+    """
+    with patch("notification.Notification._notify_via_redis", return_value=False):
+        yield
+
+
 # ════════════════════════════════════════════════════════════════════════════
 # send_notification()
 # ════════════════════════════════════════════════════════════════════════════
