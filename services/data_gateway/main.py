@@ -62,6 +62,10 @@ MARKET_CLOSE = _time(15, 30)
 IDLE_SLEEP = 300          # seconds between idle heartbeats (5 min)
 POSITIONAL_FETCH_START = _time(19, 0)
 POSITIONAL_FETCH_END = _time(19, 30)
+PREVDAY_REFRESH_START = _time(8, 50)   # earliest time to refresh prevDayOHLCV
+# yfinance finalizes daily OHLC ~4 hours after market close (15:30 IST).
+# Refreshing at midnight produces NaN because the previous day's bar isn't finalized yet.
+# 08:50 IST is safe: data is finalized, and it's 25 min before pre-market (09:00).
 
 # Global state
 _running = True
@@ -293,9 +297,12 @@ def main():
     while _running:
         cycle_count += 1
 
-        # ── Daily prevDayOHLCV refresh (once per day, before any phase checks) ──
+        # ── Daily prevDayOHLCV refresh (once per day, after 08:50 IST) ──
+        # Not at midnight — yfinance hasn't finalized previous day's OHLC until
+        # ~4 hours after market close. 08:50 IST is safe and just before pre-market.
         today_str = str(datetime.date.today())
-        if _prevday_refresh_date != today_str:
+        now_time = datetime.datetime.now().time()
+        if _prevday_refresh_date != today_str and now_time >= PREVDAY_REFRESH_START:
             try:
                 logger.info(f"[data-gateway] Refreshing prevDayOHLCV for {today_str}...")
                 refresh_prev_day_ohlcv(redis)
