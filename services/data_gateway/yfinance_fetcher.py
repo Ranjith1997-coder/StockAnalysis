@@ -33,15 +33,32 @@ def _get_prev_day_row(df: pd.DataFrame):
 
     This fixes the bug where iloc[-2] returned 2-days-ago when the refresh
     ran before market open (today's partial bar doesn't exist yet).
+
+    NaN safety: yfinance sometimes returns a partially-updated bar where
+    OHLC are NaN but Volume is populated (happens when fetching shortly after
+    market close before daily bars are finalized). We walk backwards to find
+    the most recent row with valid (non-NaN) Close.
     """
     if df.empty:
         return None
     today = datetime.date.today()
     last_ts = df.index[-1]
     last_date = last_ts.date() if hasattr(last_ts, "date") else None
+
+    # Determine starting index
     if last_date == today and len(df) >= 2:
-        return df.iloc[-2]
-    return df.iloc[-1]
+        start_idx = -2
+    else:
+        start_idx = -1
+
+    # Walk backwards to find a row with valid (non-NaN) Close
+    for i in range(len(df) + start_idx, -1, -1):
+        row = df.iloc[i]
+        close_val = row["Close"]
+        if close_val == close_val:  # NaN != NaN, valid values == themselves
+            return row
+
+    return None
 
 
 def fetch_initial_daily_data(redis_proxy: "RedisProxy", is_intraday: bool):
@@ -117,6 +134,10 @@ def _refresh_group_prev_day(redis_proxy, obj_list, group_name):
             ohlcv_row = _get_prev_day_row(sym_data)
             if ohlcv_row is None:
                 continue
+            close_val = ohlcv_row["Close"]
+            if close_val != close_val:  # NaN check — never overwrite with NaN
+                logger.warning(f"[yfinance] prevDay refresh skip {name}: Close is NaN (yfinance data not finalized)")
+                continue
             prev_day = {
                 "OPEN": float(ohlcv_row["Open"]),
                 "HIGH": float(ohlcv_row["High"]),
@@ -158,6 +179,10 @@ def _fetch_index_initial(redis_proxy, index_list, is_intraday):
 
                 ohlcv_row = _get_prev_day_row(idx_data)
                 if ohlcv_row is None:
+                    continue
+                close_val = ohlcv_row["Close"]
+                if close_val != close_val:  # NaN check
+                    logger.warning(f"[yfinance] Initial fetch skip {name}: Close is NaN")
                     continue
                 prev_day = {
                     "OPEN": float(ohlcv_row["Open"]),
@@ -216,6 +241,10 @@ def _fetch_stock_initial(redis_proxy, stock_list, is_intraday):
                 ohlcv_row = _get_prev_day_row(stk_data)
                 if ohlcv_row is None:
                     continue
+                close_val = ohlcv_row["Close"]
+                if close_val != close_val:  # NaN check
+                    logger.warning(f"[yfinance] Initial fetch skip {name}: Close is NaN")
+                    continue
                 prev_day = {
                     "OPEN": float(ohlcv_row["Open"]),
                     "HIGH": float(ohlcv_row["High"]),
@@ -268,6 +297,10 @@ def _fetch_commodity_initial(redis_proxy, commodity_list, is_intraday):
                 ohlcv_row = _get_prev_day_row(sym_data)
                 if ohlcv_row is None:
                     continue
+                close_val = ohlcv_row["Close"]
+                if close_val != close_val:  # NaN check
+                    logger.warning(f"[yfinance] Initial fetch skip commodity {name}: Close is NaN")
+                    continue
                 prev_day = {
                     "OPEN": float(ohlcv_row["Open"]),
                     "HIGH": float(ohlcv_row["High"]),
@@ -317,6 +350,10 @@ def _fetch_global_indices_initial(redis_proxy, global_indices_list, is_intraday)
                     continue
                 ohlcv_row = _get_prev_day_row(sym_data)
                 if ohlcv_row is None:
+                    continue
+                close_val = ohlcv_row["Close"]
+                if close_val != close_val:  # NaN check
+                    logger.warning(f"[yfinance] Initial fetch skip global index {name}: Close is NaN")
                     continue
                 prev_day = {
                     "OPEN": float(ohlcv_row["Open"]),
