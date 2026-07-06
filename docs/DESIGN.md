@@ -1,6 +1,6 @@
 # StockAnalysis - Comprehensive Design Document
 
-> **Last Updated**: July 2026 (Phase 1–3 complete: data-gateway, notification-service, market-data, analysis-engine all extracted as always-running microservices; monolith is always-running with self-scheduling daily loop; cycle sync via Redis Pub/Sub + stream; parallel Sensibull fetch (10 workers); unified logging via `services/common/logging.py`; per-stock + system-wide metrics/counters in Redis; `/debugstats` bot command; prevDayOHLCV daily refresh with pre-open-safe `_get_prev_day_row()` helper; no systemd timers or auth service — monolith manages its own schedule)
+> **Last Updated**: July 2026 (Phase 1–3 complete: data-gateway, notification-service, market-data, analysis-engine, resource-monitor all extracted as always-running microservices; monolith is always-running with self-scheduling daily loop; cycle sync via Redis Pub/Sub + stream; parallel Sensibull fetch (10 workers); unified logging via `services/common/logging.py`; per-stock + system-wide metrics/counters in Redis; `/debugstats` bot command; resource monitor with system/per-service/Redis metrics every 30s, time-series storage, proactive alerts, `/sysstats` bot command; prevDayOHLCV daily refresh with pre-open-safe `_get_prev_day_row()` helper; no systemd timers or auth service — monolith manages its own schedule)
 > **Purpose**: Complete architectural reference for the Indian Stock Market Analysis System targeting NSE (National Stock Exchange) equities. This document captures the entire codebase: architecture, data flows, module interactions, signal processing, scoring, notifications, and deployment details.
 
 ---
@@ -134,6 +134,8 @@ StockAnalysis/
 |   |-- analysis_engine/             # EXTRACTED — always-running stream consumer
 |   |   |-- main.py                  # Consumes data:cycle_stream, dispatches worker pool
 |   |   |-- worker.py                # Per-stock worker: 12 analysers + scoring → metrics
+|   |-- resource_monitor/            # EXTRACTED — always-running system metrics collector
+|   |   |-- main.py                  # Polls psutil + Redis every 30s, stores sys:latest:* + sys:ts:* time-series, fires proactive alerts
 |   |-- coordinator/                 # Designed — orchestrator + intelligence + bot merged
 |   |-- orchestrator/                # Designed — standalone orchestrator
 |   |-- intelligence-service/        # Designed — SignalBus + Correlator + Narrator
@@ -210,12 +212,13 @@ StockAnalysis/
 |                                    #   stockanalysis-data-gateway.service   (24/7 self-scheduling fetcher)
 |                                    #   stockanalysis-market-data.service    (24/7 WebSocket ingestion)
 |                                    #   stockanalysis-analysis-engine.service(24/7 stream consumer + 12 analysers)
+|                                    #   stockanalysis-resource-monitor.service(24/7 metrics collector, 10% CPU quota)
 |                                    #   stockanalysis.service                 (24/7 monolith — Restart=always)
 |                                    # No timers, no auth service — monolith self-schedules via _run_daily_loop()
 |-- configs/                         # Configuration files
 |-- data/                            # Stock lists (final_derivatives_list.json, etc.)
 |-- docs/                            # Documentation
-|-- tests/                           # Test suite (1085 tests, 42 files across 6 subdirectories)
+|-- tests/                           # Test suite (1109 tests, 43 files across 6 subdirectories)
 |   |-- analyser/                    # 17 test files covering all 11 analyser classes
 |   |-- common/                      # 6 test files (Stock, scoring, token_registry, market_calendar, etc.)
 |   |-- zerodha/                     # 5 test files (ZerodhaTickerManager, LiveOptionsEngine, LiveStockEngine, etc.)
@@ -1761,6 +1764,7 @@ notification/
     market.py           # /ltp, /gainers, /losers, /watchlist, /holidays, /straddle, /walls
     system.py           # /help, /status, job_llm_budget_alert (background job)
     stats.py            # /debugstats — system + per-stock metrics dashboard
+    sysstats.py         # /sysstats — system resource dashboard, history, Redis deep dive
     debug.py            # Debug commands
     debug_inspect.py    # Debug inspection commands
 ```
@@ -1785,6 +1789,9 @@ notification/
 | `/holidays` | market | Today's trading status + upcoming NSE holidays (next 30 days) |
 | `/straddle <SYMBOL>` | market | Live ATM straddle: premium, ±1SD range, CE/PE LTPs, PCR (NIFTY/BANKNIFTY only) |
 | `/walls <SYMBOL>` | market | OI walls: CE/PE max-OI strikes, tick delta, session delta, gaps, Iron Condor zone |
+| `/sysstats` | sysstats | System resource dashboard — CPU (per-core), RAM, services, Redis health |
+| `/sysstats history` | sysstats | 24h sparklines (CPU, RAM, Redis mem) + 7-day trend table |
+| `/sysstats redis` | sysstats | Redis deep dive — memory, clients, ops/s, hit rate, slowlog |
 | `/enctoken <token>` | account | Update Zerodha enctoken in `.env` + reconnect WebSocket |
 | `/start` | account | Register for notifications |
 
@@ -2073,6 +2080,11 @@ A lightweight per-stock + system-wide counters system stored in Redis, providing
 | `stats:stock:{symbol}` | HASH | persistent | Per-stock counters |
 | `stats:system` | HASH | persistent | System-wide counters |
 | `stats:daily:{YYYY-MM-DD}` | HASH | 30-day TTL | Daily rollup |
+| `sys:latest:system` | HASH | 120s TTL | System snapshot: CPU per-core, RAM, swap, disk, load, net, uptime |
+| `sys:latest:{service}` | HASH | 120s TTL | Per-service snapshot: CPU%, RSS, threads, fds, uptime, affinity |
+| `sys:latest:redis` | HASH | 120s TTL | Redis snapshot: used/peak mem, clients, ops/s, hit rate, keys, slowlog |
+| `sys:ts:{metric}` | ZSET | 25h TTL | Time-series: score=timestamp, member=value (24h retention) |
+| `sys:daily:{YYYY-MM-DD}` | HASH | 30-day TTL | Daily max/avg rollups: cpu, ram, disk, redis_mem |
 
 #### Per-Stock Fields (`stats:stock:{symbol}`)
 
@@ -2403,12 +2415,15 @@ _route_tick(tick)
 
 ### Overview
 
-The project has a comprehensive test suite with **1085 tests across 42 files** organized in 6 subdirectories. All tests run in-process with zero network calls (all external dependencies are mocked).
+The project has a comprehensive test suite with **1109 tests across 43 files** organized in 6 subdirectories. All tests run in-process with zero network calls (all external dependencies are mocked).
 
 ```
 tests/
 |-- conftest.py                          # Root-level fixtures
 |-- test_observability.py                # 22 tests: crash handler, heartbeat, zombie watchdog
+|
+|-- services/                            # 1 test file — microservice tests
+|   |-- test_resource_monitor.py         # 24 tests: collector, storage, alerts, sparkline, sysstats views
 |
 |-- analyser/                            # 17 test files — all analyser classes
 |   |-- conftest.py                      # Shared fixtures (mock_stock, make_price_df, etc.)
