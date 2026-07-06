@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-StockAnalysis is an automated analysis system for Indian equity and derivatives markets (NSE). It targets NIFTY weekly options traders using live Zerodha WebSocket data for real-time tick-level analysis, Sensibull for OI chain and PCR data, and yfinance for historical price data.
+StockAnalysis is an automated analysis system for Indian equity and derivatives markets (NSE). It targets NIFTY weekly options traders using live Zerodha WebSocket data for real-time tick-level analysis, Sensibull for OI chain and PCR data, and yfinance for historical price data. The system runs as 6 always-on microservices (monolith, data-gateway, market-data, analysis-engine, notification-service, Redis) with Redis as the sole shared-state and message-broker dependency.
 
 ---
 
@@ -29,58 +29,74 @@ Mode selection in production (`PRODUCTION=1`) is time-based via `_run_daily_loop
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                    Always-Running Microservices (Phase 1A)                   │
+│                  Always-Running Microservices (Phase 1–3)                   │
 │                                                                              │
 │  ┌──────────┐    ┌──────────────────┐    ┌───────────────────────────┐      │
 │  │  Redis 7 │◄───│  Data Gateway    │    │  Monolith                 │      │
 │  │ (message │    │  (24/7)          │    │  (24/7 — self-scheduling) │      │
 │  │  broker) │    │                  │    │                           │      │
 │  │          │    │  09:15-15:30:    │    │  09:00: pre-market        │      │
-│  │          │    │    yfinance 5m   │    │  09:07: NSE pre-open      │      │
-│  │          │    │    + Sensibull   │    │  09:10: morning bias      │      │
+│  │ + shared │    │    yfinance 5m   │    │  09:07: NSE pre-open      │      │
+│  │   state  │    │    + Sensibull   │    │  09:10: morning bias      │      │
 │  │          │    │    (parallel)    │    │  09:15: intraday loop     │      │
 │  │          │    │    → data:price:* │    │  15:30: idle              │      │
 │  │          │    │    → data:sensibull:* │  20:00: positional analysis│     │
-│  │          │    │                  │    │                           │      │
-│  │          │    │  19:00-19:30:    │    │  Reads from Redis:        │      │
-│  │          │    │    positional    │    │    data:price:*            │      │
+│  │          │    │  + prevDayOHLCV  │    │                           │      │
+│  │          │    │    daily refresh │    │  Reads from Redis:        │      │
+│  │          │    │  19:00: positional│   │    data:price:*            │      │
 │  │          │    │    (2y daily)    │    │    data:sensibull:*        │      │
-│  │          │    │    ONE fetch     │    │    data:zerodha:*         │      │
-│  │          │    │                  │    │                           │      │
-│  │          │    │  Otherwise:      │    │  Writes notifications:    │      │
-│  │          │    │    idle          │    │    → notification:jobs    │      │
-│  │          │    │    (heartbeat)   │    │      (Redis stream)       │      │
+│  │          │    │  Otherwise: idle │    │    data:zerodha:*         │      │
 │  │          │    └────────┬─────────┘    └───────────┬───────────────┘      │
 │  │          │             │                          │                       │
 │  │          │  data:cycle_stream         notification:jobs                   │
 │  │          │  data:cycle_ready          (Redis stream)                      │
 │  │          │  (Pub/Sub)                                                    │
 │  │          │                          │                                    │
-│  │          │             ┌────────────▼──────────────────────────────┐     │
-│  │          │             │  Notification Service (24/7)              │     │
-│  │          │             │  services/notification-service/main.py    │     │
-│  │          │             │    └── Consumes notification:jobs stream  │     │
-│  │          │             │    └── Telegram + Discord dispatch        │     │
-│  │          │             │    └── 3x retry + dead letter             │     │
-│  │          │             └───────────────────────────────────────────┘     │
-│  └──────────┘                                                                │
-│                                                                              │
-│  Cycle sync: data-gateway publishes cycle_ready (Pub/Sub) after each fetch. │
-│  Monolith's CycleSubscriber blocks until signal arrives — zero data lag.    │
-│                                                                              │
-│  Services to extract (future phases):                                        │
-│    □ analysis-engine  — 12 analysers + scoring (Phase 1C)                   │
-│    □ coordinator      — cycle coordination (Phase 1D)                       │
-│    □ intelligence     — SignalBus + Correlator + LLM                         │
-│    □ bot-service      — Telegram bot commands                                │
+│  │          │  ┌───────────────────┐   │  ┌──────────────────────────┐      │
+│  │          │  │ Market Data (24/7)│   │  │ Notification Service(24/7)│     │
+│  │          │  │ services/market_  │   │  │ services/notification-    │     │
+│  │          │  │   data/main.py    │   │  │   service/main.py         │     │
+│  │          │  │  WS1: equity/idx  │   │  │  Consumes notification:   │     │
+│  │          │  │  WS2: option ticks│   │  │    jobs stream            │     │
+│  │          │  │  Sensibull WS     │   │  │  Telegram + Discord       │     │
+│  │          │  │  → data:tick:*    │   │  │  3x retry + dead letter   │     │
+│  │          │  │  → data:options_  │   │  │  → alerts_delivered/      │     │
+│  │          │  │    agg:*          │   │  │    alerts_failed counters │     │
+│  │          │  │  → signal:channel │   │  └──────────────────────────┘     │
+│  │          │  │    (Pub/Sub)      │   │                                    │
+│  │          │  │  + heartbeat →    │   │  ┌──────────────────────────┐      │
+│  │          │  │   stats:system    │   │  │ Analysis Engine (24/7)    │     │
+│  │          │  │   stats:stock:*   │   │  │ services/analysis_engine/ │     │
+│  │          │  └───────────────────┘   │  │  Consumes data:cycle_     │     │
+│  │          │                          │  │    stream                 │     │
+│  │          │  ┌───────────────────┐   │  │  12 analysers + scoring   │     │
+│  │          │  │ stats:stock:*     │   │  │  → analysis_count,        │     │
+│  │          │  │ stats:system      │   │  │    trends_found, errors   │     │
+│  │          │  │ stats:daily:*     │   │  │    per-stock + system     │     │
+│  │          │  │ (metrics/counters)│   │  └──────────────────────────┘     │
+│  │          │  └───────────────────┘   │                                    │
+│  └──────────┘                          │                                    │
+│                              ┌─────────▼──────────────┐                     │
+│                              │  Redis streams +       │                     │
+│                              │  Pub/Sub channels      │                     │
+│                              └────────────────────────┘                     │
 └─────────────────────────────────────────────────────────────────────────────┘
 
 Data flow:
-  data-gateway → Redis hashes (data:price:*, data:sensibull:*, data:zerodha:*)
-                 → Redis stream (data:cycle_stream) + Pub/Sub (data:cycle_ready)
-  monolith     → reads Redis hashes (sub-millisecond)
-                 → writes notification:jobs stream
-  notification → reads notification:jobs → sends Telegram/Discord
+  data-gateway  → Redis hashes (data:price:*, data:sensibull:*, data:zerodha:*)
+                  → Redis stream (data:cycle_stream) + Pub/Sub (data:cycle_ready)
+  market-data   → WS1 (equity/index) + WS2 (option ticks) + Sensibull WS
+                  → Redis hashes (data:tick:*, data:options_agg:*)
+                  → Pub/Sub (signal:channel for live alerts)
+                  → Heartbeat: stats:system + per-stock tick counters (every 30s)
+  analysis-engine → Consumes data:cycle_stream → runs 12 analysers + scoring
+                  → Writes analysis metrics (stats:stock:*, stats:system)
+  monolith      → reads Redis hashes (sub-millisecond)
+                  → writes notification:jobs stream
+                  → alert counters: alerts_trend, alerts_confluence, etc.
+  notification  → reads notification:jobs → sends Telegram/Discord
+                  → increments alerts_delivered / alerts_failed
+  metrics       → /debugstats bot command reads stats:system + stats:stock:*
 ```
 
 ---
@@ -233,6 +249,8 @@ Log files (10 MB rotating, 3 backups each):
 |------|---------|
 | `logs/monolith.log` | Monolith (intraday + positional) |
 | `logs/data-gateway.log` | Data gateway |
+| `logs/market-data.log` | Market-data (WebSocket ingestion) |
+| `logs/analysis-engine.log` | Analysis engine (12 analysers + scoring) |
 | `logs/notification-service.log` | Notification service |
 | `logs/cycle-subscriber.log` | Cycle subscriber (internal) |
 
@@ -272,6 +290,8 @@ All services run 24/7 with `Restart=always`. `scripts/system_config` contains th
 | `redis-server.service` | 24/7 (apt-managed) | Redis message broker (128MB, no persistence) |
 | `stockanalysis-notification.service` | 24/7 | Notification stream consumer → Telegram/Discord |
 | `stockanalysis-data-gateway.service` | 24/7 (self-scheduling) | yfinance + Sensibull → Redis hashes + cycle signals |
+| `stockanalysis-market-data.service` | 24/7 | WebSocket ingestion (WS1 equity/index, WS2 options, Sensibull WS) → Redis snapshots + Pub/Sub signals |
+| `stockanalysis-analysis-engine.service` | 24/7 | Consumes data:cycle_stream → runs 12 analysers + scoring → writes analysis metrics |
 | `stockanalysis.service` | 24/7 (self-scheduling) | Monolith — pre-market, intraday, positional analysis |
 
 No timers. No auth service. The monolith self-schedules the entire daily flow internally.
@@ -408,13 +428,13 @@ make update-enctoken TOKEN=<tok>   # Update ZERODHA_ENC_TOKEN on server .env
 
 ```
 StockAnalysis/
-├── analyser/          # All analyser classes (12 files incl. OptionSellerCompositeAnalyser)
+├── analyser/          # All analyser classes (12 files incl. GEXAnalyser, OptionSellerCompositeAnalyser)
 ├── auth/              # auth_login.py — automated TOTP-based Zerodha enctoken refresh
 ├── backtest/          # Backtesting framework + Optuna optimizer
 ├── common/            # Stock.py, shared.py, constants.py, scoring.py, token_registry.py
 ├── configs/           # custom_holidays.json, ml_config.yaml, redis.conf
 ├── data/              # final_derivatives_list.json, backtest results
-├── docs/              # DESIGN.md, DATA_SCHEMA.md
+├── docs/              # DESIGN.md, DATA_SCHEMA.md, ANALYSER_DATA_SOURCES.md
 ├── fno/               # SensibullFetcher, sensibull_feed.py (OPTIONS_SOURCE=sensibull path)
 ├── intelligence/      # SignalBus, SignalCorrelator, MarketNarrator, GeminiClient
 ├── intraday/          # intraday_monitor.py — main entry point
@@ -426,13 +446,14 @@ StockAnalysis/
 ├── premarket/         # Global cues, bonds, commodities, pre-open report
 ├── scripts/           # deploy.py, service_stop.py (holiday-aware), system_config (systemd units)
 ├── sentiment/         # FinBERT news sentiment
-├── services/          # Microservices (Phase 1A — extracted services)
-│   ├── common/        # Shared infra: logging.py, redis_proxy.py, stock_loader.py, cycle_subscriber.py, stock_proxy.py, health.py
+├── services/          # Microservices (Phase 1–3 — extracted services)
+│   ├── common/        # Shared infra: logging.py, redis_proxy.py, stock_loader.py, cycle_subscriber.py, stock_proxy.py, health.py, metrics.py, rate_limiter.py
 │   ├── notification-service/  # Notification stream consumer (EXTRACTED)
-│   ├── data_gateway/  # yfinance + Sensibull fetcher → Redis (EXTRACTED — Phase 1A)
-│   ├── coordinator/   # Orchestrator + intelligence + bot (compact mode, designed)
-│   └── *-service/     # Future: orchestrator, analysis-engine, intelligence, bot
-├── tests/             # 951 tests across 41 files
+│   ├── data_gateway/  # yfinance + Sensibull fetcher → Redis (EXTRACTED — Phase 1)
+│   ├── market_data/   # WebSocket ingestion → Redis snapshots + Pub/Sub (EXTRACTED — Phase 2)
+│   ├── analysis_engine/  # Stream consumer: 12 analysers + scoring (EXTRACTED — Phase 3)
+│   └── coordinator/   # Orchestrator + intelligence + bot (compact mode, designed)
+├── tests/             # 1085 tests across 42 files
 ├── zerodha/           # WebSocket lifecycle, TickStore, FuturesFetcher, LiveOptionsEngine
 ├── Makefile
 ├── .env.template
@@ -446,8 +467,14 @@ StockAnalysis/
 | `intraday/intraday_monitor.py` | Main entry point — always-running daily loop, orchestration, observability |
 | `services/data_gateway/main.py` | Data gateway — self-scheduling yfinance + Sensibull fetcher → Redis (24/7) |
 | `services/data_gateway/sensibull_fetcher.py` | Parallel Sensibull fetcher (10 workers) → Redis hashes |
-| `services/data_gateway/yfinance_fetcher.py` | yfinance fetcher → Redis hashes (initial load + intraday/positional cycles) |
+| `services/data_gateway/yfinance_fetcher.py` | yfinance fetcher → Redis hashes (initial + intraday + positional + prevDayOHLCV daily refresh) |
+| `services/market_data/main.py` | Market-data service — WS1 (equity/index) + WS2 (options) + Sensibull WS ingestion → Redis snapshots (24/7) |
+| `services/market_data/snapshot_publisher.py` | Publishes `data:tick:*` and `data:options_agg:*` Redis hashes at 1s interval |
+| `services/market_data/signal_publisher.py` | Pub/Sub signal bus for live options alerts (`signal:channel`) |
+| `services/analysis_engine/main.py` | Analysis-engine entry point — consumes data:cycle_stream, dispatches worker pool |
+| `services/analysis_engine/worker.py` | Per-stock worker: loads from Redis, runs 12 analysers + scoring, writes metrics |
 | `services/notification-service/main.py` | Notification stream consumer → Telegram/Discord (24/7) |
+| `services/common/metrics.py` | Per-stock + system-wide counters in Redis (`stats:stock:*`, `stats:system`, `stats:daily:*`) — fail-safe |
 | `services/common/cycle_subscriber.py` | Redis Pub/Sub + stream subscriber for cycle sync (monolith ↔ data-gateway) |
 | `services/common/stock_loader.py` | Sync Stock object reconstruction from Redis hashes |
 | `services/common/logging.py` | Unified per-service logger factory (`get_logger("service-name")`) |
@@ -459,12 +486,13 @@ StockAnalysis/
 | `common/scoring.py` | Score calculation, alignment bonus, should_notify() |
 | `analyser/OptionSellerCompositeAnalyser.py` | Option-seller composite setups: GAMMA_TRAP, RANGE_BOUND_SETUP, SKEW_FADE_SETUP |
 | `auth/auth_login.py` | Automated TOTP Zerodha login — called inline by monolith at 9 AM |
-| `scripts/system_config` | systemd unit files (notification + data-gateway + monolith — all always-on) |
+| `scripts/system_config` | systemd unit files (notification + data-gateway + market-data + analysis-engine + monolith — all always-on) |
 | `analyser/Analyser.py` | BaseAnalyzer (decorator framework) + AnalyserOrchestrator |
 | `zerodha/futures_fetcher.py` | FuturesFetcher — Kite historical futures data (still inline in monolith) |
 | `fno/sensibull_fetcher.py` | SensibullFetcher — legacy, used by dev mode only (production uses data-gateway) |
 | `notification/Notification.py` | Telegram message sender — routes through Redis stream |
 | `notification/bot_listener.py` | Telegram bot entry point (Command Router) |
+| `notification/commands/stats.py` | `/debugstats` command — system dashboard + per-stock + all-stocks sorted views |
 | `configs/redis.conf` | Redis configuration (128MB maxmemory, no persistence) |
 
 ---
@@ -475,6 +503,9 @@ StockAnalysis/
 |---------|-------------|
 | `/help` | All available commands |
 | `/status` | System Health Dashboard — feed lag, RAM, LLM budget |
+| `/debugstats` | System + per-stock metrics dashboard (tick rate, analysis runs, alert breakdowns) |
+| `/debugstats <SYMBOL>` | Per-stock deep dive: tick count, option ticks, analysis count, alert breakdown |
+| `/debugstats all [ticks\|errors\|stale\|nodata]` | All stocks sorted by selected metric |
 | `/ltp <SYMBOL>` | Last traded price + % change |
 | `/gainers` | Top 5 gainers by % change |
 | `/losers` | Top 5 losers by % change |
@@ -500,11 +531,46 @@ All are sent as HTML-formatted Telegram messages to the positional channel.
 
 ## Observability
 
+### Crash & Health Layers (fail-silent)
+
 Three fail-silent layers injected in `intraday_monitor.py`:
 
 1. **Crash handler** (`sys.excepthook`): sends fatal tracebacks to Telegram with `html.escape()`
 2. **Heartbeat** (`HEALTHCHECK_URL`): pings dead-man's switch at end of every analysis cycle
 3. **Zombie watchdog**: detects stale WebSocket options data (>120s), sends one-time alert per symbol
+
+### Metrics & Counters System
+
+A lightweight per-stock + system-wide counters system stored in Redis, providing real-time visibility into every stage of the pipeline. All functions are **fail-safe** — Redis unavailability only logs at DEBUG, never crashes business logic.
+
+**Module:** `services/common/metrics.py`
+
+**Redis key structure:**
+
+| Key | Type | TTL | Contents |
+|-----|------|-----|----------|
+| `stats:stock:{symbol}` | HASH | persistent | Per-stock counters: tick_count, option_tick_count, analysis_count, last_analysis_result/duration/time, trends_found, analysis_errors, alerts_trend/confluence/live_options/narrative/stale_data/attempted/delivered/failed |
+| `stats:system` | HASH | persistent | System-wide: total_ticks, tick_rate, total_jobs_dispatched/completed, analysis_runs, result_success/no_data/error_count, alerts_attempted/delivered/failed, trends_found, total_confluences, stale_stocks_count, ws2_reconnects, snapshot_age_s |
+| `stats:daily:{YYYY-MM-DD}` | HASH | 30-day TTL | Daily rollup: alerts_attempted/delivered/failed, analysis_runs, trends_found |
+
+**Instrumentation points:**
+
+| Service | What it records |
+|---------|----------------|
+| market-data | Per-stock tick_count + option_tick_count (batch-updated in 30s heartbeat), system tick_rate/total_ticks/ws2_reconnects/snapshot_age_s |
+| analysis-engine | Per-stock analysis_count, last_analysis_result/duration/time, trends_found, analysis_errors; system result_success/no_data/error_count, analysis_runs |
+| monolith (intraday) | Per-stock alerts_trend, alerts_confluence, alerts_stale_data; system total_jobs_dispatched/completed, trends_found, total_confluences, stale_stocks_count |
+| monolith (live options) | Per-stock alerts_live_options |
+| monolith (narrator) | Per-stock alerts_narrative |
+| notification-service | Per-stock + system + daily alerts_delivered / alerts_failed |
+| Notification.py | Per-stock + system + daily alerts_attempted (producer-side, when queuing to Redis stream) |
+
+**Dual counting strategy:** `alerts_attempted` (producer-side) counts queued alerts. `alerts_delivered` + `alerts_failed` (consumer-side) count actual outcomes. `alerts_attempted - alerts_delivered - alerts_failed` = alerts stuck in stream.
+
+**`/debugstats` bot command** (`notification/commands/stats.py`): Restricted to debug chat. Three views:
+- System dashboard: tick pipeline, analysis pipeline, alerts & signals, auth
+- Per-stock deep dive: data, analysis, alerts breakdown, derivatives
+- All stocks sorted: by tick_count, analysis_errors, last_analysis_time, or NO_DATA filter
 
 ---
 

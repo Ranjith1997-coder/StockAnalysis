@@ -41,8 +41,8 @@ The system has **five** external data sources (Zerodha has two separate subsyste
 |--------|------|------|-----------|-----------------|---------------------|
 | **yfinance** | Price/OHLCV | None | HTTP REST | Per cycle (5-min intraday / 2yr daily positional) | data-gateway |
 | **Sensibull Web (HTTP)** | OI chain, IV, PCR, max pain, per-cycle history | None | HTTP REST (poll) | Per cycle (~5 min) | data-gateway |
-| **Sensibull Live (WS)** | Per-strike greeks (gamma/delta/theta/vega/iv), live OI, LTP | None | WebSocket (push) | Real-time | monolith |
-| **Zerodha WS** | Live equity/index ticks, live option ticks (NO greeks, NO futures) | Enctoken (TOTP) | WebSocket (push) | Real-time | monolith |
+| **Sensibull Live (WS)** | Per-strike greeks (gamma/delta/theta/vega/iv), live OI, LTP | None | WebSocket (push) | Real-time | market-data |
+| **Zerodha WS** | Live equity/index ticks, live option ticks (NO greeks, NO futures) | Enctoken (TOTP) | WebSocket (push) | Real-time | market-data |
 | **Zerodha HTTP** | Futures OHLC+OI (historical) | Enctoken (TOTP) | HTTP REST (poll) | Per cycle (5-min intraday / 90d daily positional) | data-gateway |
 | **stock.analysis (composite)** | Signals emitted by upstream analysers | N/A | In-memory | Per cycle | analysis-engine |
 
@@ -114,13 +114,56 @@ The system has **five** external data sources (Zerodha has two separate subsyste
 | `futures_data_next_json` | JSON (split-orient DataFrame) | Next-expiry futures (same schema; empty in intraday mode) |
 | `futures_mdata_json` | JSON dict | `{"current": [{instrument_token, tradingsymbol, expiry}], "next": [...]}` |
 
-### NOT YET in Redis (live tick data — migration gap)
+### `data:tick:{symbol}` — published by market-data (Zerodha WS1 + Sensibull WS)
 
-| Planned hash | Source | Fields |
-|-------------|--------|--------|
-| `data:options_live:{symbol}` | monolith TickStore (Sensibull WS) | Per-strike `{CE/PE: {gamma, delta, theta, vega, iv, oi, prev_oi, ltp, volume}}` |
-| `data:options_agg:{symbol}` | monolith TickStore | `{gex_total, gex_ce, gex_pe, gex_regime, gex_flip_level, gex_by_strike, live_pcr, atm_strike, ...}` |
-| `data:tick:{symbol}` (optional) | monolith TickStore (Zerodha WS) | `{total_buy_quantity, total_sell_quantity, last_price, ohlc, volume_traded}` |
+Published at 1s interval by `snapshot_publisher.py`. Contains live equity/index tick data from WS1.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `last_price` | string (float) | Last traded price |
+| `change` | string (float) | % change from previous close |
+| `volume_traded` | string (int) | Volume traded |
+| `total_buy_quantity` | string (int) | Total buy quantity |
+| `total_sell_quantity` | string (int) | Total sell quantity |
+| `average_traded_price` | string (float) | VWAP |
+| `ohlc_json` | JSON dict | `{open, high, low, close}` |
+| `tick_count` | string (int) | Total ticks received (for metrics heartbeat) |
+
+### `data:options_agg:{symbol}` — published by market-data (TickStore recompute + GEX)
+
+Published at 1s interval by `snapshot_publisher.py`. Contains aggregated options metrics from WS2 + Sensibull WS.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `total_ce_oi` | string (int) | Total call OI |
+| `total_pe_oi` | string (int) | Total put OI |
+| `live_pcr` | string (float) | total_pe_oi / total_ce_oi |
+| `atm_strike` | string (float) | Strike nearest to spot |
+| `atm_straddle_premium` | string (float) | ATM CE + PE LTP |
+| `max_oi_ce_strike` | string (float) | Strike with max call OI |
+| `max_oi_pe_strike` | string (float) | Strike with max put OI |
+| `net_ce_oi_change` | string (int) | Net CE OI change |
+| `net_pe_oi_change` | string (int) | Net PE OI change |
+| `last_updated` | string (float) | Epoch timestamp of last update |
+| `atm_iv` | string (float) | ATM IV (Sensibull only) |
+| `atm_iv_percentile` | string (float) | ATM IVP (Sensibull only) |
+| `iv_skew` | string (float) | PE IV - CE IV (Sensibull only) |
+| `max_pain_strike` | string (float) | Max pain strike (Sensibull only) |
+| `gex_total` | string (float) | Net GEX in ₹ crores |
+| `gex_regime` | string | POSITIVE / NEGATIVE |
+| `gex_flip_level` | string (float) | Strike where GEX crosses zero |
+| `gex_by_strike_json` | JSON dict | `{strike: net_gex}` |
+| `option_tick_count` | string (int) | Total option ticks received (for metrics heartbeat) |
+
+### Metrics Keys — published by all services (fail-safe)
+
+| Key Pattern | Type | TTL | Publisher(s) | Description |
+|-------------|------|-----|--------------|-------------|
+| `stats:stock:{symbol}` | HASH | persistent | market-data, analysis-engine, monolith, notification-service | Per-stock counters: tick_count, option_tick_count, analysis_count, last_analysis_result/duration/time, trends_found, analysis_errors, alerts_* |
+| `stats:system` | HASH | persistent | market-data, analysis-engine, monolith, notification-service | System-wide: total_ticks, tick_rate, total_jobs_dispatched/completed, analysis_runs, result_*_count, alerts_*, trends_found, stale_stocks_count, ws2_reconnects, snapshot_age_s |
+| `stats:daily:{YYYY-MM-DD}` | HASH | 30-day TTL | monolith, notification-service, analysis-engine | Daily rollup: alerts_attempted/delivered/failed, analysis_runs, trends_found |
+
+See `services/common/metrics.py` for the fail-safe writer/reader API (`incr_stock`, `set_stock`, `incr_system`, `set_system`, `incr_daily`, `get_stock_stats`, `get_system_stats`, `get_all_stock_stats`).
 
 ---
 
@@ -128,7 +171,7 @@ The system has **five** external data sources (Zerodha has two separate subsyste
 
 The `Stock` object is reconstructed in the analysis-engine worker via `stock_loader.py`:
 
-### Populated from Redis (via loaders)
+### Populated from Redis (via loaders) — Updated
 
 | Attribute | Source | Loader | Redis Hash |
 |-----------|--------|--------|------------|
@@ -139,15 +182,15 @@ The `Stock` object is reconstructed in the analysis-engine worker via `stock_loa
 | `stock.daily_hv` | yfinance | `load_stock_from_redis` | `data:price:*` |
 | `stock.sensibull_ctx` | Sensibull HTTP | `load_sensibull_from_redis` | `data:sensibull:*` |
 | `stock.zerodha_ctx` | Zerodha HTTP | `load_zerodha_from_redis` | `data:zerodha:*` |
+| `stock.zerodha_data` | Zerodha WS (via market-data) | analysis-engine worker | `data:tick:*` (published by market-data snapshot_publisher) |
+| `stock.options_aggregate` | TickStore + GEX (via market-data) | analysis-engine worker | `data:options_agg:*` (published by market-data snapshot_publisher) |
 
-### NOT populated from Redis (remain empty in worker — migration gap)
+### Not populated from Redis (still in-memory only)
 
-| Attribute | Source | Current Owner |
-|-----------|--------|---------------|
-| `stock.options_live` | Sensibull WS / Zerodha WS | monolith TickStore (in-memory only) |
-| `stock.options_aggregate` | TickStore recompute + GEXAnalyser | monolith TickStore (in-memory only) |
-| `stock.zerodha_data` | Zerodha WS (equity tick) | monolith TickStore (in-memory only) |
-| `stock.futures_live` | Zerodha WS (futures tick) | monolith TickStore (in-memory only) |
+| Attribute | Source | Current Owner | Notes |
+|-----------|--------|---------------|-------|
+| `stock.options_live` | Sensibull WS / Zerodha WS | market-data TickStore (in-memory only) | Per-strike data not published to Redis; GEX computed in market-data and aggregate fields published to `data:options_agg:*` |
+| `stock.futures_live` | Zerodha WS (futures tick) | monolith TickStore (in-memory only) | Dead code — futures tokens never subscribed on WS |
 
 ### Derived attributes (computed from priceData)
 
@@ -169,7 +212,7 @@ The `Stock` object is reconstructed in the analysis-engine worker via `stock_loa
 
 ## 4. TickStore Live Data Structures
 
-`zerodha/tick_store.py` — thread-safe container for live WebSocket data. **Only populated by WS feeds in the monolith.**
+`zerodha/tick_store.py` — thread-safe container for live WebSocket data. **Populated by WS feeds in the market-data service.** Snapshots of aggregate fields published to Redis at 1s interval via `snapshot_publisher.py`.
 
 ### `options_live` — per-strike option ticks
 
@@ -505,7 +548,7 @@ Most analysers stack `@both` + `@index_both` (run in all 4 combinations). Some u
 | `analyse_stochastic` | `@both`, `@index_both` | `priceData['High']`, `priceData['Low']`, `priceData['Close']` (5-min) | `priceData['High']`, `priceData['Low']`, `priceData['Close']` (daily) | `len < K+D+1`; K/D crossover at extreme zones |
 | `analyse_pivot_points` | `@both`, `@index_both` | `prevDayOHLCV['HIGH/LOW/CLOSE']` (previous calendar day); `current_equity_data['Close']`, `previous_equity_data['Close']` | `previous_equity_data['High/Low/Close']` (previous daily bar); `current_equity_data['Close']`, `previous_equity_data['Close']` | Intraday: `prevDayOHLCV is None`; Positional: `len < 3`; min 0.3% breakout through R2/R1/PP or S2/S1/PP |
 
-**Redis coverage:** ✅ 10/11 methods covered by `data:price:*`. ⚠️ `analyze_buy_sell_quantity` reads `zerodha_data` (live Zerodha WS tick) — NOT in Redis. Silently returns False in analysis-engine worker.
+**Redis coverage:** ✅ All 11 methods covered. `data:price:*` covers 10/11. `analyze_buy_sell_quantity` reads `zerodha_data['total_buy_quantity']` / `['total_sell_quantity']` from `data:tick:*` (published by market-data snapshot_publisher).
 
 ---
 
@@ -644,11 +687,7 @@ Without Sensibull WS greeks, all gamma values are 0 → GEX silently skips.
 
 **⚠️ Stateful cross-cycle dependency:** `analyse_gex_wall_breach` uses `self._prev_gex_by_strike` (instance attribute) to compare current vs previous cycle's `gex_by_strike`. Stateless workers that rotate/restart will lose this state, breaking wall-breach detection. Must be persisted in Redis or pre-computed by monolith.
 
-**Redis coverage:** ❌ **NOT covered.** `options_live` and `options_aggregate` are not published to Redis. Requires:
-1. Monolith to snapshot `_tick_store.options_live` → `HSET data:options_live:{symbol}` at cycle boundary
-2. Monolith to snapshot `_tick_store.options_aggregate` → `HSET data:options_agg:{symbol}` at cycle boundary
-3. Analysis-engine worker to load these into a local TickStore before running GEX
-4. `gex_by_strike` previous-cycle state must be persisted for wall-breach detection
+**Redis coverage:** ✅ **Covered.** `data:options_agg:*` is published by market-data at 1s interval and includes gex_total, gex_ce, gex_pe, gex_regime, gex_flip_level, and gex_by_strike_json. The analysis-engine worker loads these fields from Redis. Per-strike `options_live` (gamma + OI) is computed in market-data's TickStore; GEX computation happens there and the aggregate result is published.
 
 ---
 
@@ -781,9 +820,9 @@ Methods where intraday and positional read **different** data sources or structu
 | `sensibull_ctx.oi_history` (Sensibull HTTP) | `data:sensibull:*` | PCRAnalyser (trend, positional_reversal, helpers), MaxPainAnalyser (trend positional), OIChainAnalyser (positional_trend, acceleration) |
 | `zerodha_ctx.futures_data` (Zerodha HTTP) | `data:zerodha:*` | FuturesAnalyser (all methods) |
 | `zerodha_ctx.futures_mdata` (Zerodha HTTP) | `data:zerodha:*` | FuturesAnalyser (positional_oi_trend, cost_of_carry — expiry/days_to_expiry) |
-| `options_live` (Sensibull WS) | ⚠️ NOT in Redis | GEXAnalyser (all methods via `_compute_gex`) |
-| `options_aggregate` (TickStore recompute) | ⚠️ NOT in Redis | GEXAnalyser (flip_proximity, wall, wall_breach, imbalance) |
-| `zerodha_data` (Zerodha WS) | ⚠️ NOT in Redis | TechnicalAnalyser (buy_sell_quantity only) |
+| `zerodha_data` (Zerodha WS) | ✅ `data:tick:*` | TechnicalAnalyser (buy_sell_quantity) |
+| `options_aggregate` (TickStore recompute + GEX) | ✅ `data:options_agg:*` | GEXAnalyser (flip_proximity, wall, wall_breach, imbalance), bot commands (/straddle, /walls) |
+| `options_live` (Sensibull WS) | ⚠️ per-strike not in Redis (aggregate only) | GEXAnalyser (compute_gex — done in market-data, published as gex_* in data:options_agg:*) |
 | `futures_live` (Zerodha WS) | ⚠️ Dead code (no WS subscription) | None — futures tokens never subscribed |
 | `india_vix_ltp` (app context) | N/A (in-memory) | PanicModeAnalyser (adaptive threshold, optional) |
 | `stock.analysis` (composite) | N/A (in-memory) | PanicModeAnalyser (all), OptionSellerCompositeAnalyser (all) |
@@ -794,27 +833,27 @@ Methods where intraday and positional read **different** data sources or structu
 
 ## 9. Migration Coverage Matrix
 
-| # | Analyser | data:price | data:sensibull | data:zerodha | options_live (WS) | options_agg (WS) | zerodha_data (WS) | Status |
-|---|----------|-----------|---------------|-------------|-------------------|------------------|-------------------|--------|
-| 1 | VolumeAnalyser | ✅ | — | — | — | — | — | ✅ Complete |
-| 2 | TechnicalAnalyser | ✅ | — | — | — | — | ⚠️ 1 method | ✅ 10/11 methods |
-| 3 | CandleStickAnalyser | ✅ | — | — | — | — | — | ✅ Complete |
-| 4 | IVAnalyser | ✅ | ✅ (current/historical) ⚠️ (iv_chart) | — | — | — | — | ⚠️ Intraday complete; positional trend broken (iv_chart_history empty) |
-| 5 | FuturesAnalyser | — | — | ✅ | — | — | — | ✅ Complete |
-| 6 | PCRAnalyser | — | ✅ (current/oi_chain_history) ⚠️ (oi_history) | — | — | — | — | ⚠️ Intraday complete; positional trend/reversal broken (oi_history empty) |
-| 7 | MaxPainAnalyser | ✅ | ✅ (current/historical) ⚠️ (oi_history) | — | — | — | — | ⚠️ Intraday complete; positional trend broken (oi_history empty) |
-| 8 | OIChainAnalyser | — | ✅ (oi_chain/oi_chain_history) ⚠️ (oi_history) | — | — | — | — | ⚠️ Intraday complete; positional trend/acceleration broken (oi_history empty) |
-| 9 | GEXAnalyser | ✅ (ltp) | — | — | ❌ | ❌ | — | ❌ **Gap** |
-| 10 | PanicModeAnalyser | ✅ | — | — | — | — | — | ✅ Indirect |
-| 11 | OptionSellerComposite | — | — | — | — | — | — | ✅ Indirect |
+| # | Analyser | data:price | data:sensibull | data:zerodha | data:tick:* | data:options_agg:* | Status |
+|---|----------|-----------|---------------|-------------|------------|-------------------|--------|
+| 1 | VolumeAnalyser | ✅ | — | — | — | — | ✅ Complete |
+| 2 | TechnicalAnalyser | ✅ | — | — | ✅ (buy_sell_quantity) | — | ✅ Complete (data:tick:* has total_buy/sell_quantity) |
+| 3 | CandleStickAnalyser | ✅ | — | — | — | — | ✅ Complete |
+| 4 | IVAnalyser | ✅ | ✅ (current/historical) ⚠️ (iv_chart) | — | — | — | ⚠️ Intraday complete; positional trend broken (iv_chart_history empty) |
+| 5 | FuturesAnalyser | — | — | ✅ | — | — | ✅ Complete |
+| 6 | PCRAnalyser | — | ✅ (current/oi_chain_history) ⚠️ (oi_history) | — | — | — | ⚠️ Intraday complete; positional trend/reversal broken (oi_history empty) |
+| 7 | MaxPainAnalyser | ✅ | ✅ (current/historical) ⚠️ (oi_history) | — | — | — | ⚠️ Intraday complete; positional trend broken (oi_history empty) |
+| 8 | OIChainAnalyser | — | ✅ (oi_chain/oi_chain_history) ⚠️ (oi_history) | — | — | — | ⚠️ Intraday complete; positional trend/acceleration broken (oi_history empty) |
+| 9 | GEXAnalyser | ✅ (ltp) | — | — | — | ✅ (gex_*) | ✅ Complete (data:options_agg:* published by market-data) |
+| 10 | PanicModeAnalyser | ✅ | — | — | — | — | ✅ Indirect |
+| 11 | OptionSellerComposite | — | — | — | — | — | ✅ Indirect |
 
-### Gaps to Close
+### Gaps Remaining
 
-1. **GEXAnalyser (#9):** Requires `options_live` (per-strike gamma + OI) and `options_aggregate` (gex_by_strike, gex_total, etc.) published to Redis from monolith's TickStore at cycle boundary. Source: Sensibull Live WS (only source of gamma).
+1. **TechnicalAnalyser `analyze_buy_sell_quantity` (#2):** ✅ Resolved — `data:tick:*` now includes `total_buy_quantity` and `total_sell_quantity` (published by market-data snapshot_publisher).
 
-2. **TechnicalAnalyser `analyze_buy_sell_quantity` (#2):** Requires `zerodha_data` (total_buy_quantity, total_sell_quantity) from Zerodha WS live tick. Optional — single method, silently returns False without it.
+2. **GEXAnalyser (#9):** ✅ Resolved — `data:options_agg:*` now published by market-data at 1s interval with gex_total, gex_ce, gex_pe, gex_regime, gex_flip_level, gex_by_strike.
 
-3. **GEX wall-breach cross-cycle state:** `analyse_gex_wall_breach` uses `self._prev_gex_by_strike` (instance state). Stateless workers need this persisted in Redis or pre-computed by monolith.
+3. **GEX wall-breach cross-cycle state:** `analyse_gex_wall_breach` uses `self._prev_gex_by_strike` (instance state). Analysis-engine workers that rotate/restart will lose this state. Consider persisting previous-cycle `gex_by_strike` in Redis.
 
 4. **India VIX LTP (optional):** `shared.app_ctx.india_vix_ltp` for PanicModeAnalyser adaptive threshold. Degrades gracefully if absent, but should be published to Redis for full functionality.
 
