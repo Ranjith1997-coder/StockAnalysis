@@ -210,6 +210,10 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/debugcounters — All runtime counters\n"
         "/debugmemory — AppContext + memory layout\n"
         "/debuganalyzers — Registered analyser list\n"
+        "/debugstats <code>[SYM|all]</code> — Per-stock/system alert counters\n"
+        "/sysstats — System resource dashboard (CPU/RAM/Redis)\n"
+        "/sysstats history — 24h trends + 7-day summary\n"
+        "/sysstats redis — Redis health deep dive\n"
     )
     await context.bot.send_message(
         chat_id=update.effective_chat.id, text=text, parse_mode="HTML"
