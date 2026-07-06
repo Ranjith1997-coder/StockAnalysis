@@ -551,12 +551,89 @@ def _convert_stream_result(fields: dict, stock_obj) -> Tuple[MonitorResult, bool
         _re_emit_signals_from_analysis(stock_obj, layer)
 
     if trend_found and message:
-        TELEGRAM_NOTIFICATIONS.send_notification(message, parse_mode="HTML", symbol=stock_obj.stock_symbol)
-        incr_stock(stock_obj.stock_symbol, "alerts_trend")
-        incr_system("trends_found")
-        incr_daily("trends_found")
+        _send_trend_notification(stock_obj, message)
 
     return (monitor_result, trend_found, message if trend_found else None)
+
+
+# ── Alert cooldown / dedup ─────────────────────────────────────────────────
+# Prevents the same stock from spamming notifications every 5-min cycle.
+# Three tiers:
+#   1. PANIC_MODE alerts  → 30-min cooldown per symbol
+#   2. RANGE_BOUND_SETUP (Iron Condor) → once per day per symbol
+#   3. All other trend alerts → 15-min cooldown per symbol
+
+TREND_COOLDOWN_SEC = 900       # 15 min — general trend alerts
+PANIC_COOLDOWN_SEC = 1800      # 30 min — PANIC_MODE alerts
+
+
+def _has_analysis(stock_obj, sentiment: str, key: str) -> bool:
+    """Check if a specific analysis key exists in the stock's analysis dict."""
+    return bool(stock_obj.analysis.get(sentiment, {}).get(key))
+
+
+def _is_panic_alert(stock_obj) -> bool:
+    """Check if this trend alert contains a PANIC_MODE signal."""
+    return (
+        _has_analysis(stock_obj, "BULLISH", "PANIC_MODE")
+        or _has_analysis(stock_obj, "BEARISH", "PANIC_MODE")
+    )
+
+
+def _is_range_bound_alert(stock_obj) -> bool:
+    """Check if this trend alert is a RANGE_BOUND_SETUP (Iron Condor/Strangle)."""
+    return _has_analysis(stock_obj, "NEUTRAL", "RANGE_BOUND_SETUP")
+
+
+def _send_trend_notification(stock_obj, message: str):
+    """Send a trend notification with per-symbol cooldown / dedup.
+
+    - PANIC_MODE: 30-min cooldown (Redis key with TTL)
+    - RANGE_BOUND_SETUP: once per day (Redis key with TTL until midnight)
+    - All others: 15-min cooldown (Redis key with TTL)
+
+    If the cooldown is active, the alert is silently suppressed and a counter
+    is incremented instead. The trend_found flag is NOT affected — the analysis
+    still feeds into reporting, SignalBus, and intelligence pipelines.
+    """
+    symbol = stock_obj.stock_symbol
+
+    try:
+        from datetime import datetime as _dt
+
+        if _is_panic_alert(stock_obj):
+            cooldown_key = f"alert_cooldown:panic:{symbol}"
+            ttl = PANIC_COOLDOWN_SEC
+        elif _is_range_bound_alert(stock_obj):
+            # Once per day: key expires at end of trading day
+            now = _dt.now()
+            end_of_day = now.replace(hour=16, minute=0, second=0, microsecond=0)
+            if end_of_day <= now:
+                end_of_day = end_of_day + timedelta(days=1)
+            ttl = int((end_of_day - now).total_seconds())
+            cooldown_key = f"alert_cooldown:range_bound:{symbol}"
+        else:
+            cooldown_key = f"alert_cooldown:trend:{symbol}"
+            ttl = TREND_COOLDOWN_SEC
+
+        if redis_proxy is not None:
+            acquired = redis_proxy.set_with_ttl(cooldown_key, "1", ex=ttl, nx=True)
+            if not acquired:
+                logger.debug(
+                    f"[cooldown] Suppressing alert for {symbol} "
+                    f"(key={cooldown_key}, ttl={ttl}s)"
+                )
+                incr_stock(symbol, "alerts_suppressed")
+                incr_system("alerts_suppressed")
+                incr_daily("alerts_suppressed")
+                return
+    except Exception as e:
+        logger.debug(f"[cooldown] Redis check failed for {symbol}: {e} — sending anyway")
+
+    TELEGRAM_NOTIFICATIONS.send_notification(message, parse_mode="HTML", symbol=symbol)
+    incr_stock(symbol, "alerts_trend")
+    incr_system("trends_found")
+    incr_daily("trends_found")
 
 
 def _time_to_next_5min_bar() -> int:

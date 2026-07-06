@@ -29,6 +29,27 @@ def _html_to_discord(text: str) -> str:
     return text
 
 
+_TELEGRAM_SAFE_TAGS = {"b", "strong", "i", "em", "u", "ins", "s", "strike",
+                        "del", "code", "pre", "a", "tg-spoiler", "blockquote"}
+
+
+def _sanitize_html(text: str) -> str:
+    """Sanitize HTML for Telegram's strict parser — removes empty/unsupported tags."""
+    text = re.sub(r"<(\w+)>\s*</\1>", "", text)
+    text = re.sub(r"&(?!(amp|lt|gt|quot|apos|#\d+);)", "&amp;", text)
+
+    def _replace_tag(m):
+        full = m.group(0)
+        tag_name = m.group(1).lower()
+        if tag_name in _TELEGRAM_SAFE_TAGS:
+            return full
+        return ""
+
+    text = re.sub(r"</?([a-zA-Z][a-zA-Z0-9-]*)(?:\s[^>]*)?>", _replace_tag, text)
+    text = re.sub(r"<(\w+)>\s*</\1>", "", text)
+    return text
+
+
 def _send_discord(webhook_url: str, message: str, parse_mode: str | None = None) -> bool:
     if not webhook_url:
         return False
@@ -131,6 +152,8 @@ class TELEGRAM_NOTIFICATIONS:
         if channel in ("telegram", "both"):
             chat_id = TELEGRAM_INTRADAY_CHAT_ID if cls.is_intraday else TELEGRAM_POSITIONAL_CHAT_ID
             token = TELEGRAM_INTRADAY_TOKEN if cls.is_intraday else TELEGRAM_POSITIONAL_TOKEN
+            if parse_mode and parse_mode.upper() == "HTML":
+                message = _sanitize_html(message)
             payload = {"chat_id": chat_id, "text": message}
             if parse_mode:
                 payload["parse_mode"] = parse_mode
@@ -178,6 +201,8 @@ class TELEGRAM_NOTIFICATIONS:
                 return False
             else:
                 try:
+                    if parse_mode and parse_mode.upper() == "HTML":
+                        message = _sanitize_html(message)
                     resp = requests.post(
                         TELEGRAM_URL + TELEGRAM_LIVE_OPTIONS_TOKEN + "/sendMessage",
                         json={"chat_id": TELEGRAM_LIVE_OPTIONS_CHAT_ID, "text": message, "parse_mode": parse_mode},
