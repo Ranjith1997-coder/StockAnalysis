@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-StockAnalysis is an automated analysis system for Indian equity and derivatives markets (NSE). It targets NIFTY weekly options traders using live Zerodha WebSocket data for real-time tick-level analysis, Sensibull for OI chain and PCR data, and yfinance for historical price data. The system runs as 6 always-on microservices (monolith, data-gateway, market-data, analysis-engine, notification-service, Redis) with Redis as the sole shared-state and message-broker dependency.
+StockAnalysis is an automated analysis system for Indian equity and derivatives markets (NSE). It targets NIFTY weekly options traders using live Zerodha WebSocket data for real-time tick-level analysis, Sensibull for OI chain and PCR data, and yfinance for historical price data. The system runs as 7 always-on microservices (monolith, data-gateway, market-data, analysis-engine, notification-service, resource-monitor, Redis) with Redis as the sole shared-state and message-broker dependency.
 
 ---
 
@@ -65,22 +65,31 @@ Mode selection in production (`PRODUCTION=1`) is time-based via `_run_daily_loop
 │  │          │  │  → signal:channel │   │  └──────────────────────────┘     │
 │  │          │  │    (Pub/Sub)      │   │                                    │
 │  │          │  │  + heartbeat →    │   │  ┌──────────────────────────┐      │
-│  │          │  │   stats:system    │   │  │ Analysis Engine (24/7)    │     │
-│  │          │  │   stats:stock:*   │   │  │ services/analysis_engine/ │     │
-│  │          │  └───────────────────┘   │  │  Consumes data:cycle_     │     │
-│  │          │                          │  │    stream                 │     │
-│  │          │  ┌───────────────────┐   │  │  12 analysers + scoring   │     │
-│  │          │  │ stats:stock:*     │   │  │  → analysis_count,        │     │
-│  │          │  │ stats:system      │   │  │    trends_found, errors   │     │
-│  │          │  │ stats:daily:*     │   │  │    per-stock + system     │     │
-│  │          │  │ (metrics/counters)│   │  └──────────────────────────┘     │
-│  │          │  └───────────────────┘   │                                    │
-│  └──────────┘                          │                                    │
-│                              ┌─────────▼──────────────┐                     │
-│                              │  Redis streams +       │                     │
-│                              │  Pub/Sub channels      │                     │
-│                              └────────────────────────┘                     │
-└─────────────────────────────────────────────────────────────────────────────┘
+│  │          │  │   stats:system    │   │  │ Resource Monitor (24/7)  │      │
+│  │          │  │   stats:stock:*   │   │  │ services/resource_       │      │
+│  │          │  └───────────────────┘   │  │   monitor/main.py        │      │
+│  │          │                          │  │  Polls system, per-      │      │
+│  │          │  ┌───────────────────┐   │  │  service & Redis metrics │      │
+│  │          │  │ stats:stock:*     │   │  │  every 30s → sys:latest:*│      │
+│  │          │  │ stats:system      │   │  │    sys:ts:* time-series  │      │
+│  │          │  │ stats:daily:*     │   │  │  Proactive alerts        │      │
+│  │          │  │ (metrics/counters)│   │  │  → notification:jobs     │      │
+│  │          │  └───────────────────┘   │  └──────────────────────────┘      │
+│  └──────────┘                      │                                    │
+│                                    │  ┌──────────────────────────┐      │
+│                                    │  │ Analysis Engine (24/7)    │     │
+│                                    │  │ services/analysis_engine/ │     │
+│                                    │  │  Consumes data:cycle_     │     │
+│                                    │  │    stream                 │     │
+│                                    │  │  12 analysers + scoring   │     │
+│                                    │  │  → analysis_count,        │     │
+│                                    │  │    trends_found, errors   │     │
+│                                    │  │    per-stock + system     │     │
+│                                    │  └──────────────────────────┘     │
+│                              ┌────────────────────────────────────┐    │
+│                              │  Redis streams + Pub/Sub + sys:*  │    │
+│                              └────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────────────────┘
 
 Data flow:
   data-gateway  → Redis hashes (data:price:*, data:sensibull:*, data:zerodha:*)
@@ -91,12 +100,16 @@ Data flow:
                   → Heartbeat: stats:system + per-stock tick counters (every 30s)
   analysis-engine → Consumes data:cycle_stream → runs 12 analysers + scoring
                   → Writes analysis metrics (stats:stock:*, stats:system)
+  resource-monitor → Polls psutil every 30s → sys:latest:* (system, per-service, Redis)
+                  → sys:ts:* time-series (24h ZSET), sys:daily:* rollups (30d)
+                  → Fires proactive alerts → notification:jobs
   monolith      → reads Redis hashes (sub-millisecond)
                   → writes notification:jobs stream
                   → alert counters: alerts_trend, alerts_confluence, etc.
   notification  → reads notification:jobs → sends Telegram/Discord
                   → increments alerts_delivered / alerts_failed
   metrics       → /debugstats bot command reads stats:system + stats:stock:*
+  sysstats      → /sysstats bot command reads sys:latest:* + sys:ts:*
 ```
 
 ---
@@ -252,6 +265,7 @@ Log files (10 MB rotating, 3 backups each):
 | `logs/market-data.log` | Market-data (WebSocket ingestion) |
 | `logs/analysis-engine.log` | Analysis engine (12 analysers + scoring) |
 | `logs/notification-service.log` | Notification service |
+| `logs/resource-monitor.log` | Resource monitor (system metrics + alerts) |
 | `logs/cycle-subscriber.log` | Cycle subscriber (internal) |
 
 Format: `28 13:26:31 | WARNING | SA.monolith | intraday_monitor.py:1234 | message`
@@ -292,6 +306,7 @@ All services run 24/7 with `Restart=always`. `scripts/system_config` contains th
 | `stockanalysis-data-gateway.service` | 24/7 (self-scheduling) | yfinance + Sensibull → Redis hashes + cycle signals |
 | `stockanalysis-market-data.service` | 24/7 | WebSocket ingestion (WS1 equity/index, WS2 options, Sensibull WS) → Redis snapshots + Pub/Sub signals |
 | `stockanalysis-analysis-engine.service` | 24/7 | Consumes data:cycle_stream → runs 12 analysers + scoring → writes analysis metrics |
+| `stockanalysis-resource-monitor.service` | 24/7 | Polls psutil + Redis metrics every 30s → sys:latest:* + sys:ts:* + proactive alerts → notification:jobs |
 | `stockanalysis.service` | 24/7 (self-scheduling) | Monolith — pre-market, intraday, positional analysis |
 
 No timers. No auth service. The monolith self-schedules the entire daily flow internally.
@@ -452,8 +467,9 @@ StockAnalysis/
 │   ├── data_gateway/  # yfinance + Sensibull fetcher → Redis (EXTRACTED — Phase 1)
 │   ├── market_data/   # WebSocket ingestion → Redis snapshots + Pub/Sub (EXTRACTED — Phase 2)
 │   ├── analysis_engine/  # Stream consumer: 12 analysers + scoring (EXTRACTED — Phase 3)
+│   ├── resource_monitor/ # System + per-service + Redis metrics collector (30s poll)
 │   └── coordinator/   # Orchestrator + intelligence + bot (compact mode, designed)
-├── tests/             # 1085 tests across 42 files
+├── tests/             # 1109 tests across 43 files
 ├── zerodha/           # WebSocket lifecycle, TickStore, FuturesFetcher, LiveOptionsEngine
 ├── Makefile
 ├── .env.template
@@ -474,6 +490,7 @@ StockAnalysis/
 | `services/analysis_engine/main.py` | Analysis-engine entry point — consumes data:cycle_stream, dispatches worker pool |
 | `services/analysis_engine/worker.py` | Per-stock worker: loads from Redis, runs 12 analysers + scoring, writes metrics |
 | `services/notification-service/main.py` | Notification stream consumer → Telegram/Discord (24/7) |
+| `services/resource_monitor/main.py` | Resource monitor — polls psutil + Redis every 30s, stores sys:latest:* + sys:ts:* time-series, fires proactive alerts |
 | `services/common/metrics.py` | Per-stock + system-wide counters in Redis (`stats:stock:*`, `stats:system`, `stats:daily:*`) — fail-safe |
 | `services/common/cycle_subscriber.py` | Redis Pub/Sub + stream subscriber for cycle sync (monolith ↔ data-gateway) |
 | `services/common/stock_loader.py` | Sync Stock object reconstruction from Redis hashes |
@@ -486,7 +503,8 @@ StockAnalysis/
 | `common/scoring.py` | Score calculation, alignment bonus, should_notify() |
 | `analyser/OptionSellerCompositeAnalyser.py` | Option-seller composite setups: GAMMA_TRAP, RANGE_BOUND_SETUP, SKEW_FADE_SETUP |
 | `auth/auth_login.py` | Automated TOTP Zerodha login — called inline by monolith at 9 AM |
-| `scripts/system_config` | systemd unit files (notification + data-gateway + market-data + analysis-engine + monolith — all always-on) |
+| `notification/commands/sysstats.py` | `/sysstats` bot command — live dashboard, 24h sparklines, Redis deep dive |
+| `scripts/system_config` | systemd unit files (notification + data-gateway + market-data + analysis-engine + resource-monitor + monolith — all always-on) |
 | `analyser/Analyser.py` | BaseAnalyzer (decorator framework) + AnalyserOrchestrator |
 | `zerodha/futures_fetcher.py` | FuturesFetcher — Kite historical futures data (still inline in monolith) |
 | `fno/sensibull_fetcher.py` | SensibullFetcher — legacy, used by dev mode only (production uses data-gateway) |
@@ -509,6 +527,9 @@ StockAnalysis/
 | `/ltp <SYMBOL>` | Last traded price + % change |
 | `/gainers` | Top 5 gainers by % change |
 | `/losers` | Top 5 losers by % change |
+| `/sysstats` | System resource dashboard — CPU (per-core), RAM, services, Redis health |
+| `/sysstats history` | 24h sparklines (CPU, RAM, Redis mem) + 7-day trend table |
+| `/sysstats redis` | Redis deep dive — memory, clients, ops/s, hit rate, slowlog |
 | `/watchlist` | WebSocket subscription overview, options zones, futures LTP/OI |
 | `/holidays` | Today's status + upcoming NSE holidays (next 30 days) |
 | `/straddle <SYMBOL>` | Live ATM straddle: premium, ±1SD range, CE/PE LTPs, PCR |
