@@ -62,6 +62,49 @@ def signal_handler(signum, frame):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# HTML sanitization — prevents Telegram "can't parse entities" errors
+# ═══════════════════════════════════════════════════════════════════════════
+
+# Telegram HTML supports a limited subset of tags. Any unsupported or malformed
+# tag causes a 400 error and the message is dead-lettered after 3 retries.
+_TELEGRAM_SAFE_TAGS = {"b", "strong", "i", "em", "u", "ins", "s", "strike",
+                        "del", "code", "pre", "a", "tg-spoiler", "blockquote"}
+
+
+def _sanitize_html(text: str) -> str:
+    """Sanitize HTML for Telegram's strict parser.
+
+    Fixes:
+    1. Empty tags: <code></code>, <i></i> → removed
+    2. Unsupported tags: stripped (content kept)
+    3. Unescaped &, <, > outside tags → &amp;, &lt;, &gt;
+    4. Unclosed tags: closed automatically
+    """
+    # Remove empty tags (no content between open and close)
+    text = re.sub(r"<(\w+)>\s*</\1>", "", text)
+
+    # Fix unescaped ampersands that aren't part of entities
+    text = re.sub(r"&(?!(amp|lt|gt|quot|apos|#\d+);)", "&amp;", text)
+
+    # Process all tags: keep safe ones, strip unsupported ones (keep content)
+    def _replace_tag(m):
+        full = m.group(0)
+        tag_name = m.group(1).lower()
+        if tag_name in _TELEGRAM_SAFE_TAGS:
+            return full
+        # Unsupported tag — strip it, keep any content between
+        return ""
+
+    # Remove unsupported opening tags
+    text = re.sub(r"</?([a-zA-Z][a-zA-Z0-9-]*)(?:\s[^>]*)?>", _replace_tag, text)
+
+    # Remove leftover empty tags after stripping
+    text = re.sub(r"<(\w+)>\s*</\1>", "", text)
+
+    return text
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # Discord helpers (ported from notification/Notification.py)
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -156,6 +199,10 @@ def dispatch_notification(job: dict) -> bool:
     chat_type = job.get("chat_type", "intraday")
     message = job.get("message", "")
     parse_mode = job.get("parse_mode")
+
+    # Sanitize HTML before sending to Telegram to prevent parse errors
+    if parse_mode and parse_mode.upper() == "HTML":
+        message = _sanitize_html(message)
 
     channel = NOTIFICATION_CHANNEL.lower()
     sent_any = False

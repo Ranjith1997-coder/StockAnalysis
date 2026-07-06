@@ -86,9 +86,14 @@ class OptionSellerCompositeAnalyser(BaseAnalyzer):
     """
 
     # ── Thresholds (mode-agnostic by design) ─────────────────────────────────
-    RANGE_BOUND_MIN_CONDITIONS  = 4   # of 5 must fire
+    RANGE_BOUND_MIN_CONDITIONS  = 5   # of 6 must fire (raised from 4 — 4/6 was too loose, causing noise)
     SKEW_FADE_MIN_CONDITIONS    = 3   # of 3 — strict, all must fire
     GAMMA_TRAP_MIN_CONDITIONS   = 3   # of 4 must fire
+
+    # Iron Condor is a NEUTRAL strategy — it should only fire on stocks that are
+    # genuinely range-bound, not trending. Stocks moving >2% intraday are NOT
+    # range-bound regardless of IV/OI structure.
+    RANGE_BOUND_MAX_MOVE_PCT = 2.0
 
     MAX_PAIN_PROXIMITY_PCT  = 1.5   # spot within 1.5% of max pain = magnet zone
     SR_PROXIMITY_PCT        = 0.5   # spot within 0.5% of S/R strike = "testing the wall"
@@ -386,7 +391,7 @@ class OptionSellerCompositeAnalyser(BaseAnalyzer):
         Setup 1: Iron Condor / Strangle candidate.
 
         Detects a market trapped in a box with overpriced options and no
-        institutional directional pressure. Triggers when 4/5 conditions align:
+        institutional directional pressure. Triggers when 5/6 conditions align:
 
             R1  Overpriced Vol     IV_RANK_EXTREME (VERY_HIGH or HIGH) or
                                    IV_PREMIUM (EXPENSIVE or EXTREME)
@@ -405,6 +410,17 @@ class OptionSellerCompositeAnalyser(BaseAnalyzer):
             if stock.analysis.get("NEUTRAL", {}).get("GAMMA_TRAP_ACTIVE"):
                 logger.debug(
                     f"[RANGE_BOUND] {stock.stock_symbol} — suppressed by GAMMA_TRAP_ACTIVE"
+                )
+                return False
+
+            # Price-movement gate: Iron Condor is a neutral strategy. If the stock
+            # is moving >2% intraday, it is trending — not range-bound — and an
+            # Iron Condor would be dangerous. Skip entirely.
+            move_pct = abs(stock.ltp_change_perc) if stock.ltp_change_perc is not None else 0.0
+            if move_pct > self.RANGE_BOUND_MAX_MOVE_PCT:
+                logger.debug(
+                    f"[RANGE_BOUND] {stock.stock_symbol} — suppressed: "
+                    f"price move {move_pct:.2f}% > {self.RANGE_BOUND_MAX_MOVE_PCT}% threshold"
                 )
                 return False
 
@@ -635,7 +651,7 @@ class OptionSellerCompositeAnalyser(BaseAnalyzer):
                 f"[RANGE_BOUND] {stock.stock_symbol} | R6 GEX_POSITIVE_REGIME={gex_supports}"
             )
 
-            # ── Gate: 4/6 required (threshold unchanged, R6 adds confidence) ──
+            # ── Gate: 5/6 required (R6 adds confidence) ──────────────────────
             count = len(conditions)
             logger.debug(
                 f"[RANGE_BOUND] {stock.stock_symbol} | "

@@ -29,6 +29,13 @@ class RedisProxy:
     def set(self, name: str, value: str) -> bool:
         return self._client.set(name, value)
 
+    def set_with_ttl(self, name: str, value: str, ex: int, nx: bool = False) -> bool:
+        """Set a key with TTL and optional NX (only if not exists). Returns True if set."""
+        if nx:
+            result = self._client.set(name, value, ex=ex, nx=True)
+            return result is not None
+        return self._client.set(name, value, ex=ex)
+
     def get(self, name: str) -> str | None:
         return self._client.get(name)
 
