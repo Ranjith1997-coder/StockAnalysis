@@ -1,141 +1,17 @@
 # ──────────────────────────────────────────────────────────────────────────────
-# /etc/systemd/system/stockanalysis-redis.service (install via apt)
+# NOTE: All systemd unit files now live in configs/ as individual .service files.
+# Deploy with:
+#   sudo cp configs/stockanalysis-*.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now stockanalysis-notification stockanalysis-data-gateway \
+#     stockanalysis-market-data stockanalysis-analysis-engine stockanalysis-resource-monitor
+#   sudo systemctl enable --now stockanalysis  # monolith last (depends on others)
 #
-# Redis server — message broker for all services.
-# Config: /home/hacker/StockAnalysis/configs/redis.conf (128MB, no persistence)
+# Files in configs/:
+#   stockanalysis-notification.service       (40% CPU, 300M RAM)
+#   stockanalysis-data-gateway.service       (40% CPU, 500M RAM)
+#   stockanalysis-market-data.service        (40% CPU, 400M RAM)
+#   stockanalysis-analysis-engine.service    (40% CPU, 800M RAM)
+#   stockanalysis-resource-monitor.service   (10% CPU, 100M RAM)
+#   stockanalysis.service                    (80% CPU, 1500M RAM — monolith)
 # ──────────────────────────────────────────────────────────────────────────────
-# Managed by apt — no custom unit needed.
-# sudo systemctl start redis-server
-# sudo systemctl enable redis-server
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# /etc/systemd/system/stockanalysis-notification.service
-#
-# Notification stream consumer — reads from Redis stream "notification:jobs"
-# and sends Telegram/Discord alerts. Runs 24/7.
-# ──────────────────────────────────────────────────────────────────────────────
-[Unit]
-Description=StockAnalysis Notification Service
-After=redis-server.service network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=hacker
-WorkingDirectory=/home/hacker/StockAnalysis
-Environment=PYTHONPATH=/home/hacker/StockAnalysis
-Environment=REDIS_URL=redis://localhost:6379
-ExecStart=/home/hacker/StockAnalysis/.venv/bin/python services/notification-service/main.py --consumer-name prod-1
-Restart=always
-RestartSec=10
-StandardOutput=journal
-StandardError=journal
-CPUQuota=40%
-MemoryMax=300M
-
-[Install]
-WantedBy=multi-user.target
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# /etc/systemd/system/stockanalysis-data-gateway.service
-#
-# Data gateway — fetches yfinance + Sensibull data and publishes to Redis.
-# Self-schedules based on market calendar:
-#   09:15-15:30 → intraday (5m bars every 5 min)
-#   19:00-19:30 → positional (2y daily, one fetch)
-#   Otherwise   → idle (heartbeat only)
-# Runs 24/7.
-# ──────────────────────────────────────────────────────────────────────────────
-[Unit]
-Description=StockAnalysis Data Gateway
-After=redis-server.service network-online.target
-Wants=network-online.target
-Requires=redis-server.service
-
-[Service]
-Type=simple
-User=hacker
-WorkingDirectory=/home/hacker/StockAnalysis
-Environment=PYTHONPATH=/home/hacker/StockAnalysis
-Environment=REDIS_URL=redis://localhost:6379
-ExecStart=/home/hacker/StockAnalysis/.venv/bin/python services/data_gateway/main.py
-Restart=always
-RestartSec=10
-StandardOutput=journal
-StandardError=journal
-CPUQuota=40%
-
-[Install]
-WantedBy=multi-user.target
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# /etc/systemd/system/stockanalysis-analysis-engine.service
-#
-# Analysis engine — consumes analysis jobs from orchestrator:analysis_jobs
-# Redis Stream and runs all 11 analysers against each stock.
-# Horizontal scaling: start N workers, all join the same analysis-workers
-# consumer group. Use stockanalysis-analysis@.service (template) for multi-worker.
-# ──────────────────────────────────────────────────────────────────────────────
-[Unit]
-Description=StockAnalysis Analysis Engine
-After=redis-server.service stockanalysis-data-gateway.service
-Wants=network-online.target
-Requires=redis-server.service
-
-[Service]
-Type=simple
-User=hacker
-WorkingDirectory=/home/hacker/StockAnalysis
-EnvironmentFile=/home/hacker/StockAnalysis/.env
-Environment=PYTHONPATH=/home/hacker/StockAnalysis
-Environment=REDIS_URL=redis://localhost:6379
-ExecStart=/home/hacker/StockAnalysis/.venv/bin/python services/analysis_engine/main.py --worker-name prod-1
-Restart=always
-RestartSec=10
-StandardOutput=journal
-StandardError=journal
-CPUQuota=40%
-MemoryMax=800M
-
-[Install]
-WantedBy=multi-user.target
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# /etc/systemd/system/stockanalysis.service
-#
-# Stock Analysis monolith — always running, self-scheduling.
-# Internal state machine manages the daily flow:
-#   09:00 → pre-market (global cues, FII/DII)
-#   09:07 → NSE pre-open report
-#   09:10 → morning bias (from 8 PM positional results)
-#   09:15 → intraday analysis (every 5 min until 15:30)
-#   20:00 → positional analysis (EOD)
-#   Overnight → idle (Redis keeps positional data for next morning)
-# Auth (Zerodha TOTP) is refreshed inline at 9:00 AM — no separate auth service.
-# Runs 24/7. Restart=always for crash recovery.
-# ──────────────────────────────────────────────────────────────────────────────
-[Unit]
-Description=Stock Analysis (always running — self-scheduling)
-After=redis-server.service stockanalysis-notification.service stockanalysis-data-gateway.service stockanalysis-analysis-engine.service
-Wants=network-online.target
-Requires=redis-server.service stockanalysis-notification.service stockanalysis-data-gateway.service stockanalysis-analysis-engine.service
-
-[Service]
-Type=simple
-User=hacker
-WorkingDirectory=/home/hacker/StockAnalysis
-EnvironmentFile=/home/hacker/StockAnalysis/.env
-Environment=PYTHONPATH=/home/hacker/StockAnalysis
-Environment=REDIS_URL=redis://localhost:6379
-ExecStart=/home/hacker/StockAnalysis/.venv/bin/python intraday/intraday_monitor.py
-Restart=always
-RestartSec=30
-StandardOutput=journal
-StandardError=journal
-
-[Install]
-WantedBy=multi-user.target

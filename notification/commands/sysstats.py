@@ -69,7 +69,7 @@ def _ts_to_zset_values(rc, key: str, count: int = 24) -> list[float]:
     """Read the last N values from a time-series ZSET (sorted by score=timestamp)."""
     try:
         raw = rc.zrange(key, -count, -1, withscores=False)
-        return [float(v) for v in raw]
+        return [float(v.split(":", 1)[-1]) for v in raw]
     except Exception:
         return []
 
@@ -84,7 +84,7 @@ def _ts_to_hourly_avg(rc, key: str, hours: int = 24) -> list[float]:
         # Group by hour
         hourly: dict[int, list[float]] = {}
         for val_str, ts in raw:
-            val = float(val_str)
+            val = float(val_str.split(":", 1)[-1])
             hour_bucket = int(ts) // 3600
             hourly.setdefault(hour_bucket, []).append(val)
         # Build ordered list of hourly averages
@@ -100,7 +100,7 @@ def _trend_arrow(rc, key: str, now_val: float) -> str:
         now = time.time()
         raw = rc.zrangebyscore(key, now - 300, now - 290, withscores=False)
         if raw:
-            old = float(raw[0])
+            old = float(raw[0].split(":", 1)[-1])
             if old > 0:
                 pct_change = ((now_val - old) / old) * 100
                 if pct_change > 5:

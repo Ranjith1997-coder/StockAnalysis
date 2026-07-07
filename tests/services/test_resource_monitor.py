@@ -190,7 +190,7 @@ class TestStorage:
 
         store_timeseries(rc, "sys:ts:cpu", 1000.0, 12.5)
 
-        pipe.zadd.assert_called_once_with("sys:ts:cpu", {"12.5": 1000.0})
+        pipe.zadd.assert_called_once_with("sys:ts:cpu", {"1000.000000:12.5": 1000.0})
         pipe.zremrangebyscore.assert_called_once()
         pipe.expire.assert_called_once()
         pipe.execute.assert_called_once()

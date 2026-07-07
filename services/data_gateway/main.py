@@ -71,6 +71,8 @@ PREVDAY_REFRESH_START = _time(8, 50)   # earliest time to refresh prevDayOHLCV
 _running = True
 _positional_done_date = None  # date string when positional fetch completed (prevents redundant cycles)
 _prevday_refresh_date = None  # date string when prevDayOHLCV was last refreshed
+_prevday_nan_pending: set[str] = set()  # symbols where yfinance returned NaN (need Zerodha fallback)
+_prevday_token_map: dict[str, int] = {}  # {tradingsymbol: instrument_token} for Zerodha fallback
 
 
 def signal_handler(signum, frame):
@@ -172,6 +174,7 @@ def _update_beat(redis, cycle_count: int, status: str, **extra):
     }
     mapping.update(extra)
     redis.hset("service:registry:data-gateway", mapping=mapping)
+    redis.expire("service:registry:data-gateway", 120)
 
 
 def _sleep_seconds(seconds: int):
@@ -213,6 +216,9 @@ def main():
         logger.error(f"[data-gateway] Cannot connect to Redis at {redis_url}: {e}")
         sys.exit(1)
 
+    from services.common.crash_handler import install_crash_handler
+    install_crash_handler("data-gateway")
+
     # Write initial heartbeat
     redis.hset("service:registry:data-gateway", mapping={
         "name": "data-gateway",
@@ -220,6 +226,7 @@ def main():
         "status": "starting",
         "started_at": str(time.time()),
     })
+    redis.expire("service:registry:data-gateway", 120)
 
     # Load symbol lists
     stock_symbols, index_symbols, commodity_symbols, global_indices_symbols = get_symbol_lists()
@@ -237,6 +244,16 @@ def main():
     zerodha_mgr = ZerodhaFuturesManager(redis, all_futures_mdata)
     has_enc = "available" if zerodha_mgr.has_enctoken() else "pending (monolith TOTP at 09:00)"
     logger.info(f"[data-gateway] ZerodhaFuturesManager ready — enctoken={has_enc}")
+
+    # Build instrument token map for prevDayOHLCV Zerodha fallback
+    # (used when yfinance returns NaN Close for the previous trading day)
+    for s in stock_list:
+        if "instrument_token" in s:
+            _prevday_token_map[s["tradingsymbol"]] = s["instrument_token"]
+    for idx in index_list:
+        if "instrument_token" in idx:
+            _prevday_token_map[idx["tradingsymbol"]] = idx["instrument_token"]
+    logger.info(f"[data-gateway] prevDay token map: {len(_prevday_token_map)} symbols")
 
     # Build yfinance symbol → tradingsymbol map for cycle data key resolution
     yf_to_key_map = {}
@@ -300,15 +317,63 @@ def main():
         # ── Daily prevDayOHLCV refresh (once per day, after 08:50 IST) ──
         # Not at midnight — yfinance hasn't finalized previous day's OHLC until
         # ~4 hours after market close. 08:50 IST is safe and just before pre-market.
+        #
+        # Two-phase: yfinance primary → Zerodha fallback for NaN symbols.
+        # Retry after 09:05 if enctoken wasn't available at 08:50.
         today_str = str(datetime.date.today())
         now_time = datetime.datetime.now().time()
+
+        # Phase 1: yfinance refresh + immediate Zerodha fallback
         if _prevday_refresh_date != today_str and now_time >= PREVDAY_REFRESH_START:
             try:
-                logger.info(f"[data-gateway] Refreshing prevDayOHLCV for {today_str}...")
-                refresh_prev_day_ohlcv(redis)
+                logger.info(f"[data-gateway] Refreshing prevDayOHLCV (yfinance) for {today_str}...")
+                nan_symbols = refresh_prev_day_ohlcv(redis)
                 _prevday_refresh_date = today_str
+
+                if nan_symbols:
+                    _prevday_nan_pending = set(nan_symbols)
+                    # Phase 2: immediate Zerodha fallback (enctoken from last evening)
+                    logger.info(f"[data-gateway] Zerodha fallback for {len(nan_symbols)} NaN symbols...")
+                    zerodha_mgr.fetch_prev_day_ohlcv(
+                        redis, list(_prevday_nan_pending), _prevday_token_map,
+                    )
+                    # Remove successfully resolved symbols from pending
+                    for sym in list(_prevday_nan_pending):
+                        raw = redis.hget(f"data:price:{sym}", "prevDayOHLCV_json")
+                        if raw and "nan" not in raw.lower():
+                            _prevday_nan_pending.discard(sym)
+                    if _prevday_nan_pending:
+                        logger.warning(
+                            f"[data-gateway] {len(_prevday_nan_pending)} symbols still NaN after fallback "
+                            f"— will retry after 09:05"
+                        )
+                    else:
+                        logger.info("[data-gateway] All prevDay NaN symbols resolved via Zerodha fallback")
             except Exception as e:
                 logger.error(f"[data-gateway] prevDayOHLCV refresh failed: {e}")
+
+        # Phase 3: retry after 09:05 (fresh enctoken guaranteed from 09:00 monolith login)
+        if _prevday_nan_pending and now_time >= _time(9, 5):
+            try:
+                logger.info(
+                    f"[data-gateway] Retrying prevDay Zerodha fallback for "
+                    f"{len(_prevday_nan_pending)} symbols..."
+                )
+                zerodha_mgr.fetch_prev_day_ohlcv(
+                    redis, list(_prevday_nan_pending), _prevday_token_map,
+                )
+                for sym in list(_prevday_nan_pending):
+                    raw = redis.hget(f"data:price:{sym}", "prevDayOHLCV_json")
+                    if raw and "nan" not in raw.lower():
+                        _prevday_nan_pending.discard(sym)
+                if not _prevday_nan_pending:
+                    logger.info("[data-gateway] All prevDay NaN symbols resolved via retry")
+                else:
+                    logger.warning(
+                        f"[data-gateway] {len(_prevday_nan_pending)} symbols still NaN after retry"
+                    )
+            except Exception as e:
+                logger.error(f"[data-gateway] prevDay Zerodha retry failed: {e}")
 
         # ── Determine whether to fetch data this cycle ──────────────────
         if is_prod:
@@ -440,6 +505,7 @@ def main():
         "pid": str(os.getpid()),
         "status": "shutdown",
     })
+    redis.expire("service:registry:data-gateway", 120)
     redis.close()
     logger.info("[data-gateway] Shutdown complete")
 

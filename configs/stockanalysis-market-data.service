@@ -1,0 +1,23 @@
+[Unit]
+Description=StockAnalysis Market Data (WebSocket ingestion)
+After=redis-server.service network-online.target
+Wants=network-online.target
+Requires=redis-server.service
+
+[Service]
+Type=simple
+User=hacker
+WorkingDirectory=/home/hacker/StockAnalysis
+EnvironmentFile=/home/hacker/StockAnalysis/.env
+Environment=PYTHONPATH=/home/hacker/StockAnalysis
+Environment=REDIS_URL=redis://localhost:6379
+ExecStart=/home/hacker/StockAnalysis/.venv/bin/python services/market_data/main.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+CPUQuota=40%
+MemoryMax=400M
+
+[Install]
+WantedBy=multi-user.target

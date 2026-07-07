@@ -380,6 +380,7 @@ def _update_heartbeat(redis: RedisProxy, tm: ZerodhaTickerManager,
         "last_equity_tick": str(shared.app_ctx.last_equity_tick_time),
         "tick_count": str(tm._tick_count),
     })
+    redis.expire("service:registry:market-data", 120)
 
     # ── System stats (stats:system) ─────────────────────────────────────
     total_ticks = tm._tick_count
@@ -430,6 +431,9 @@ def main():
     except Exception as e:
         logger.error(f"[market-data] Cannot connect to Redis: {e}")
         sys.exit(1)
+
+    from services.common.crash_handler import install_crash_handler
+    install_crash_handler("market-data")
 
     # 1. Build Stock objects
     _build_stock_objects()
@@ -546,6 +550,7 @@ def main():
         "status": "shutdown",
         "last_heartbeat": str(time.time()),
     })
+    redis.expire("service:registry:market-data", 120)
     redis.close()
     logger.info("[market-data] Shutdown complete")
 
