@@ -65,6 +65,12 @@ class RedisProxy:
     def delete(self, *names: str) -> int:
         return self._client.delete(*names)
 
+    def expire(self, name: str, seconds: int) -> bool:
+        return self._client.expire(name, seconds)
+
+    def scan(self, cursor: int = 0, match: str | None = None, count: int | None = None) -> tuple:
+        return self._client.scan(cursor, match=match, count=count)
+
     def pubsub(self):
         return self._client.pubsub()
 

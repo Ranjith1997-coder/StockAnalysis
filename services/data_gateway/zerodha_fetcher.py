@@ -365,3 +365,98 @@ class ZerodhaFuturesManager:
             f"{fail_count} failed (mode={mode})"
         )
         return ok_count, fail_count
+
+    def fetch_prev_day_ohlcv(
+        self,
+        redis,
+        nan_symbols: list[str],
+        token_map: dict[str, int],
+    ) -> tuple[int, int]:
+        """Fetch prevDay OHLCV from Zerodha for symbols where yfinance returned NaN.
+
+        Uses kc.historical_data with interval="day" to get the last completed
+        trading day's OHLCV bar. Writes prevDayOHLCV_json to Redis for each
+        successfully fetched symbol.
+
+        Args:
+            redis: RedisProxy instance
+            nan_symbols: list of tradingsymbols that need fallback
+            token_map: {tradingsymbol: instrument_token} from
+                       final_derivatives_list.json
+
+        Returns:
+            (ok_count, fail_count)
+        """
+        with self._lock:
+            if not self._has_enctoken or self._kc is None:
+                logger.warning("[zerodha-fetcher] No enctoken — prevDay fallback skipped")
+                return 0, len(nan_symbols)
+            kc = self._kc
+
+        today = datetime.date.today()
+        from_date = (today - datetime.timedelta(days=5)).strftime("%Y-%m-%d")
+        to_date = today.strftime("%Y-%m-%d")
+
+        limiter = get_zerodha_limiter()
+        ok, fail = 0, 0
+        for symbol in nan_symbols:
+            token = token_map.get(symbol)
+            if not token:
+                logger.debug(f"[zerodha-fetcher] No instrument token for {symbol} — skipping prevDay fallback")
+                fail += 1
+                continue
+
+            try:
+                limiter.acquire()
+                candles = kc.historical_data(
+                    instrument_token=token,
+                    from_date=from_date,
+                    to_date=to_date,
+                    interval="day",
+                    oi=False,
+                    continuous=False,
+                )
+                if not candles:
+                    logger.debug(f"[zerodha-fetcher] No historical data for {symbol}")
+                    fail += 1
+                    continue
+
+                # Use last completed bar (skip today's partial bar if present).
+                # At 08:50 pre-open, candles[-1] IS the last completed day.
+                # During market hours, candles[-1] may be today's partial → use [-2].
+                last = candles[-1]
+                if hasattr(last["date"], "date"):
+                    last_date = last["date"].date()
+                elif isinstance(last["date"], str):
+                    last_date = datetime.date.fromisoformat(last["date"][:10])
+                else:
+                    last_date = last["date"]
+
+                if last_date == today and len(candles) >= 2:
+                    last = candles[-2]
+
+                prev_day = {
+                    "OPEN": float(last["open"]),
+                    "HIGH": float(last["high"]),
+                    "LOW": float(last["low"]),
+                    "CLOSE": float(last["close"]),
+                    "VOLUME": float(last["volume"]),
+                }
+                redis.hset(
+                    f"data:price:{symbol}",
+                    mapping={"prevDayOHLCV_json": json.dumps(prev_day, default=str)},
+                )
+                ok += 1
+
+            except Exception as e:
+                err_str = str(e)
+                if "403" in err_str or "Token" in err_str:
+                    self.request_refresh("prevDay fallback 403")
+                    logger.warning(f"[zerodha-fetcher] Token expired during prevDay fallback for {symbol}")
+                    fail += 1
+                else:
+                    logger.debug(f"[zerodha-fetcher] prevDay fallback failed for {symbol}: {e}")
+                    fail += 1
+
+        logger.info(f"[zerodha-fetcher] prevDay fallback: {ok} ok, {fail} failed (of {len(nan_symbols)})")
+        return ok, fail

@@ -267,6 +267,9 @@ def main():
 
     logger.info(f"[notification-service] Starting (consumer={consumer_name}, redis={redis_url})")
 
+    from services.common.crash_handler import install_crash_handler
+    install_crash_handler("notification-service")
+
     # Ensure consumer group exists
     try:
         rc.xgroup_create("notification:jobs", "notifier", id="0", mkstream=True)
@@ -279,10 +282,13 @@ def main():
         "pid": str(os.getpid()),
         "status": "healthy",
         "consumer": consumer_name,
+        "last_heartbeat": str(time.time()),
     })
+    rc.expire("service:registry:notification-service", 120)
 
     _running = True
     retry_count = 0
+    _hb_counter = 0
 
     while _running:
         try:
@@ -341,9 +347,30 @@ def main():
                 except Exception:
                     pass
 
+        # Refresh heartbeat every ~30s (15 iterations × 2s block)
+        _hb_counter += 1
+        if _hb_counter >= 15:
+            try:
+                rc.hset("service:registry:notification-service", mapping={
+                    "last_heartbeat": str(time.time()),
+                    "status": "healthy",
+                })
+                rc.expire("service:registry:notification-service", 120)
+            except Exception:
+                pass
+            _hb_counter = 0
+
     # Shutdown
     logger.info("[notification-service] Shutting down...")
+    try:
+        rc.hset("service:registry:notification-service", mapping={
+            "status": "shutdown",
+            "last_heartbeat": str(time.time()),
+        })
+    except Exception:
+        pass
     rc.close()
+    logger.info("[notification-service] Shutdown complete")
 
 
 if __name__ == "__main__":

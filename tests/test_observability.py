@@ -25,6 +25,9 @@ class TestCrashHandler(unittest.TestCase):
         # Import here so the module-level sys.excepthook assignment runs
         import intraday.intraday_monitor as im
         self.im = im
+        # Re-install in case other test suites (e.g. crash_handler) stole sys.excepthook.
+        # Module-level assignment only runs on first import; Python caches imports.
+        sys.excepthook = im._crash_handler
 
     @patch("intraday.intraday_monitor.TELEGRAM_NOTIFICATIONS")
     def test_sends_telegram_on_uncaught_exception(self, mock_tg):

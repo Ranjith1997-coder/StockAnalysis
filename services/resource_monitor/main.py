@@ -238,7 +238,7 @@ def collect_redis(rc: sync_redis.Redis) -> dict:
         pass
 
     try:
-        result["slowlog_count"] = str(len(rc.slowlog_get(0)))
+        result["slowlog_count"] = str(len(rc.slowlog_get(10)))
     except Exception:
         result["slowlog_count"] = "0"
 
@@ -341,7 +341,7 @@ def store_timeseries(rc: sync_redis.Redis, key: str, ts: float, value: float):
     """Append a value to a time-series ZSET and prune old entries."""
     try:
         pipe = rc.pipeline()
-        pipe.zadd(key, {f"{value}": ts})
+        pipe.zadd(key, {f"{ts:.6f}:{value}": ts})
         pipe.zremrangebyscore(key, 0, ts - TS_RETENTION_SECS)
         pipe.expire(key, TS_TTL)
         pipe.execute()
@@ -533,9 +533,10 @@ def check_alerts(rc: sync_redis.Redis, sys_metrics: dict, services: dict, redis_
             samples = rc.zrangebyscore(rss_key, ts_now - 3600, ts_now, withscores=True)
             if len(samples) >= ALERT_RSS_LEAK_SAMPLES:
                 # Calculate slope (MB/hour)
-                first_val = float(samples[0][0])
+                # Member format: "{ts}:{value}" — parse value after colon
+                first_val = float(samples[0][0].split(":", 1)[-1])
                 first_ts = samples[0][1]
-                last_val = float(samples[-1][0])
+                last_val = float(samples[-1][0].split(":", 1)[-1])
                 last_ts = samples[-1][1]
                 if last_ts > first_ts:
                     time_diff_hr = (last_ts - first_ts) / 3600

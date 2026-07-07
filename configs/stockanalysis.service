@@ -1,0 +1,23 @@
+[Unit]
+Description=Stock Analysis (always running — self-scheduling)
+After=redis-server.service stockanalysis-notification.service stockanalysis-data-gateway.service stockanalysis-market-data.service stockanalysis-analysis-engine.service
+Wants=network-online.target
+Requires=redis-server.service stockanalysis-notification.service stockanalysis-data-gateway.service stockanalysis-market-data.service stockanalysis-analysis-engine.service
+
+[Service]
+Type=simple
+User=hacker
+WorkingDirectory=/home/hacker/StockAnalysis
+EnvironmentFile=/home/hacker/StockAnalysis/.env
+Environment=PYTHONPATH=/home/hacker/StockAnalysis
+Environment=REDIS_URL=redis://localhost:6379
+ExecStart=/home/hacker/StockAnalysis/.venv/bin/python intraday/intraday_monitor.py
+Restart=always
+RestartSec=30
+StandardOutput=journal
+StandardError=journal
+CPUQuota=80%
+MemoryMax=1500M
+
+[Install]
+WantedBy=multi-user.target

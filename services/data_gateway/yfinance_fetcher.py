@@ -77,26 +77,37 @@ def fetch_initial_daily_data(redis_proxy: "RedisProxy", is_intraday: bool):
     _fetch_global_indices_initial(redis_proxy, global_indices_list, is_intraday)
 
 
-def refresh_prev_day_ohlcv(redis_proxy: "RedisProxy"):
+def refresh_prev_day_ohlcv(redis_proxy) -> list[str]:
     """Refresh prevDayOHLCV for all symbols using latest 1d data.
 
     Called once per trading day (after market open) to ensure prevDayOHLCV
     reflects the most recent completed trading day, not the day the data-gateway
     was started.  Uses a 5-day 1d download and takes iloc[-2] as previous day
     (iloc[-1] may be today's partial bar).
+
+    Returns:
+        List of symbol names where yfinance returned NaN Close (candidates for
+        Zerodha fallback).
     """
     stock_list, index_list, commodity_list, global_indices_list = get_stock_objects_from_json()
-    _refresh_group_prev_day(redis_proxy, index_list, "index")
-    _refresh_group_prev_day(redis_proxy, stock_list, "stock")
-    _refresh_group_prev_day(redis_proxy, commodity_list, "commodity")
-    _refresh_group_prev_day(redis_proxy, global_indices_list, "global_index")
-    logger.info("[yfinance] prevDayOHLCV refresh complete for all symbols")
+    nan_all: list[str] = []
+    nan_all += _refresh_group_prev_day(redis_proxy, index_list, "index")
+    nan_all += _refresh_group_prev_day(redis_proxy, stock_list, "stock")
+    nan_all += _refresh_group_prev_day(redis_proxy, commodity_list, "commodity")
+    nan_all += _refresh_group_prev_day(redis_proxy, global_indices_list, "global_index")
+    if nan_all:
+        logger.info(f"[yfinance] {len(nan_all)} symbols have NaN prevDayOHLCV — need Zerodha fallback")
+    return nan_all
 
 
-def _refresh_group_prev_day(redis_proxy, obj_list, group_name):
-    """Fetch 5d 1d data for a group and update prevDayOHLCV_json in Redis."""
+def _refresh_group_prev_day(redis_proxy, obj_list, group_name) -> list[str]:
+    """Fetch 5d 1d data for a group and update prevDayOHLCV_json in Redis.
+
+    Returns:
+        List of symbol names where yfinance returned NaN Close (need Zerodha fallback).
+    """
     if not obj_list:
-        return
+        return []
 
     if group_name == "stock":
         symbols = [o["tradingsymbol"] + ".NS" for o in obj_list]
@@ -116,9 +127,10 @@ def _refresh_group_prev_day(redis_proxy, obj_list, group_name):
                            auto_adjust=True, progress=False)
     except Exception as e:
         logger.error(f"[yfinance] prevDay refresh download failed ({group_name}): {e}")
-        return
+        return []
 
     updated = 0
+    nan_symbols: list[str] = []
     for obj in obj_list:
         symbol = yf_fn(obj)
         name = key_fn(obj)
@@ -131,12 +143,27 @@ def _refresh_group_prev_day(redis_proxy, obj_list, group_name):
             if sym_data.empty or len(sym_data) < 2:
                 continue
 
+            # Check if the expected prev-day position has NaN Close.
+            # _get_prev_day_row walks backwards past NaN, returning a valid
+            # but potentially WRONG day (2 days ago). We detect the NaN at
+            # the expected position to flag it for Zerodha fallback.
+            today = datetime.date.today()
+            last_ts = sym_data.index[-1]
+            last_date = last_ts.date() if hasattr(last_ts, "date") else None
+            expected_idx = -2 if (last_date == today and len(sym_data) >= 2) else -1
+            expected_close = sym_data.iloc[expected_idx]["Close"]
+            if expected_close != expected_close:  # NaN at expected prev-day position
+                logger.warning(f"[yfinance] prevDay NaN for {name} — will try Zerodha fallback")
+                nan_symbols.append(name)
+                continue
+
             ohlcv_row = _get_prev_day_row(sym_data)
             if ohlcv_row is None:
                 continue
             close_val = ohlcv_row["Close"]
-            if close_val != close_val:  # NaN check — never overwrite with NaN
-                logger.warning(f"[yfinance] prevDay refresh skip {name}: Close is NaN (yfinance data not finalized)")
+            if close_val != close_val:  # NaN safety — never overwrite with NaN
+                logger.warning(f"[yfinance] prevDay NaN for {name} — will try Zerodha fallback")
+                nan_symbols.append(name)
                 continue
             prev_day = {
                 "OPEN": float(ohlcv_row["Open"]),
@@ -151,7 +178,8 @@ def _refresh_group_prev_day(redis_proxy, obj_list, group_name):
         except (KeyError, IndexError, Exception) as e:
             logger.debug(f"[yfinance] prevDay refresh skip {name}: {e}")
 
-    logger.info(f"[yfinance] prevDayOHLCV refreshed for {updated}/{len(obj_list)} {group_name}s")
+    logger.info(f"[yfinance] prevDayOHLCV refreshed: {updated}/{len(obj_list)} {group_name}s ok, {len(nan_symbols)} NaN")
+    return nan_symbols
 
 
 def _fetch_index_initial(redis_proxy, index_list, is_intraday):

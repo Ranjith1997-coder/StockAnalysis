@@ -50,6 +50,7 @@ def _update_heartbeat(redis: RedisProxy, worker_name: str):
         "status": "healthy",
         "last_heartbeat": str(time.time()),
     })
+    redis.expire(f"service:registry:analysis-engine:{worker_name}", 120)
 
 
 def main():
@@ -72,6 +73,9 @@ def main():
     except Exception as e:
         logger.error(f"[analysis-engine] Cannot connect to Redis at {redis_url}: {e}")
         sys.exit(1)
+
+    from services.common.crash_handler import install_crash_handler
+    install_crash_handler("analysis-engine")
 
     try:
         redis.xgroup_create(constant.ANALYSIS_JOBS_GROUP, constant.ANALYSIS_JOBS_STREAM, mkstream=True)
