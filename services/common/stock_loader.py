@@ -219,7 +219,10 @@ def load_options_live_from_redis(redis: RedisProxy, stock: Stock) -> bool:
         parts = key.rsplit("_", 1)
         if len(parts) != 2:
             continue
-        strike = float(parts[0])
+        try:
+            strike = float(parts[0])
+        except (ValueError, TypeError):
+            continue
         opt_type = parts[1]
         if strike not in options_live:
             options_live[strike] = {}
