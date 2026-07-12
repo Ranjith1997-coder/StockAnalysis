@@ -1,0 +1,22 @@
+[Unit]
+Description=StockAnalysis Auth Service
+After=redis-server.service network-online.target
+Wants=network-online.target
+Requires=redis-server.service
+
+[Service]
+Type=simple
+User=hacker
+WorkingDirectory=/home/hacker/StockAnalysis
+Environment=PYTHONPATH=/home/hacker/StockAnalysis
+Environment=REDIS_URL=redis://localhost:6379
+ExecStart=/home/hacker/StockAnalysis/.venv/bin/python services/auth_service/main.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+CPUQuota=10%
+MemoryMax=100M
+
+[Install]
+WantedBy=multi-user.target

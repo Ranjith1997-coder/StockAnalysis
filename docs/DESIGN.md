@@ -1,6 +1,6 @@
 # StockAnalysis - Comprehensive Design Document
 
-> **Last Updated**: July 2026 (Phase 1–3 complete: data-gateway, notification-service, market-data, analysis-engine, resource-monitor all extracted as always-running microservices; monolith is always-running with self-scheduling daily loop; cycle sync via Redis Pub/Sub + stream; parallel Sensibull fetch (10 workers); unified logging via `services/common/logging.py`; per-stock + system-wide metrics/counters in Redis; `/debugstats` bot command; resource monitor with system/per-service/Redis metrics every 30s, time-series storage, proactive alerts, `/sysstats` bot command; prevDayOHLCV daily refresh with pre-open-safe `_get_prev_day_row()` helper + Zerodha fallback for NaN closes; service versioning via git SHA in Redis registry + `/version` bot command; no systemd timers or auth service — monolith manages its own schedule)
+> **Last Updated**: July 2026 (Phase 1–4 complete: data-gateway, notification-service, market-data, analysis-engine, resource-monitor, auth-service all extracted as always-running microservices; monolith is always-running with self-scheduling daily loop; cycle sync via Redis Pub/Sub + stream; parallel Sensibull fetch (10 workers); unified logging via `services/common/logging.py`; per-stock + system-wide metrics/counters in Redis; `/debugstats` bot command; resource monitor with system/per-service/Redis metrics every 30s, time-series storage, proactive alerts, `/sysstats` bot command; prevDayOHLCV daily refresh with pre-open-safe `_get_prev_day_row()` helper + Zerodha fallback for NaN closes; service versioning via git SHA in Redis registry + `/version` bot command; auth-service handles scheduled TOTP login (09:00 + 18:50) + reactive refresh via auth:commands stream; monolith reads enctoken from Redis via Pub/Sub subscriber; no systemd timers — all services self-schedule)
 > **Purpose**: Complete architectural reference for the Indian Stock Market Analysis System targeting NSE (National Stock Exchange) equities. This document captures the entire codebase: architecture, data flows, module interactions, signal processing, scoring, notifications, and deployment details.
 
 ---
@@ -135,11 +135,12 @@ StockAnalysis/
 |   |   |-- worker.py                # Per-stock worker: 12 analysers + scoring → metrics
 |   |-- resource_monitor/            # EXTRACTED — always-running system metrics collector
 |   |   |-- main.py                  # Polls psutil + Redis every 30s, stores sys:latest:* + sys:ts:* time-series, fires proactive alerts
+|   |-- auth_service/                # EXTRACTED — always-running Zerodha enctoken lifecycle manager
+|   |   |-- main.py                  # Self-scheduling TOTP login (09:00 + 18:50) + reactive auth:commands consumer → Redis publish
 |   |-- coordinator/                 # Designed — orchestrator + intelligence + bot merged
 |   |-- orchestrator/                # Designed — standalone orchestrator
 |   |-- intelligence-service/        # Designed — SignalBus + Correlator + Narrator
 |   |-- bot-service/                 # Designed — Telegram bot commands
-|   |-- auth-service/                # Designed — TOTP login command listener
 
 |-- notification/
 |   |-- Notification.py              # Telegram message sender (routes through Redis stream)
@@ -212,12 +213,13 @@ StockAnalysis/
 |                                    #   stockanalysis-market-data.service    (24/7 WebSocket ingestion)
 |                                    #   stockanalysis-analysis-engine.service(24/7 stream consumer + 12 analysers)
 |                                    #   stockanalysis-resource-monitor.service(24/7 metrics collector, 10% CPU quota)
+|                                    #   stockanalysis-auth.service           (24/7 enctoken lifecycle, 10% CPU quota)
 |                                    #   stockanalysis.service                 (24/7 monolith — Restart=always)
-|                                    # No timers, no auth service — monolith self-schedules via _run_daily_loop()
+|                                    # No timers — all services self-schedule
 |-- configs/                         # Configuration files
 |-- data/                            # Stock lists (final_derivatives_list.json, etc.)
 |-- docs/                            # Documentation
-|-- tests/                           # Test suite (1109 tests, 43 files across 6 subdirectories)
+|-- tests/                           # Test suite (1251 tests, 46 files across 7 subdirectories)
 |   |-- analyser/                    # 17 test files covering all 11 analyser classes
 |   |-- common/                      # 6 test files (Stock, scoring, token_registry, market_calendar, etc.)
 |   |-- zerodha/                     # 5 test files (ZerodhaTickerManager, LiveOptionsEngine, LiveStockEngine, etc.)
