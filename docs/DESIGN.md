@@ -111,13 +111,10 @@ StockAnalysis/
 |-- services/                        # Microservices (Phase 1–3 extraction)
 |   |-- common/
 |   |   |-- logging.py               # Per-service logger: get_logger("service-name")
-|   |   |-- redis_client.py          # Async Redis connection manager
 |   |   |-- redis_proxy.py           # Sync Redis wrapper (hset, hgetall, xadd, xreadgroup, publish, pubsub)
 |   |   |-- serialization.py         # DataFrame/dict JSON serialization
 |   |   |-- crash_handler.py         # Shared crash handler — install_crash_handler(service_name)
 |   |   |-- version.py               # Git SHA + dirty flag captured at import time (SERVICE_VERSION, GIT_COMMIT, GIT_DIRTY)
-|   |   |-- health.py                # Service heartbeat loop
-|   |   |-- stream_consumer.py       # Base class for Redis Stream consumers
 |   |   |-- stock_proxy.py           # Stock object ↔ Redis serialization (async)
 |   |   |-- stock_loader.py          # Sync Stock reconstruction from Redis hashes (monolith)
 |   |   |-- cycle_subscriber.py      # Pub/Sub + stream subscriber for cycle sync (monolith ↔ data-gateway)

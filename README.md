@@ -462,7 +462,7 @@ StockAnalysis/
 ├── scripts/           # deploy.py, service_stop.py (holiday-aware), system_config (systemd units)
 ├── sentiment/         # FinBERT news sentiment
 ├── services/          # Microservices (Phase 1–3 — extracted services)
-│   ├── common/        # Shared infra: logging.py, redis_proxy.py, stock_loader.py, cycle_subscriber.py, stock_proxy.py, health.py, metrics.py, rate_limiter.py
+│   ├── common/        # Shared infra: logging.py, redis_proxy.py, stock_loader.py, cycle_subscriber.py, stock_proxy.py, metrics.py, rate_limiter.py
 │   ├── notification-service/  # Notification stream consumer (EXTRACTED)
 │   ├── data_gateway/  # yfinance + Sensibull fetcher → Redis (EXTRACTED — Phase 1)
 │   ├── market_data/   # WebSocket ingestion → Redis snapshots + Pub/Sub (EXTRACTED — Phase 2)
