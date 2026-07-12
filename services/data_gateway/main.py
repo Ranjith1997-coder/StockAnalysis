@@ -191,7 +191,7 @@ def _sleep_seconds(seconds: int):
 
 
 def main():
-    global _running, _positional_done_date, _prevday_refresh_date
+    global _running, _positional_done_date, _prevday_refresh_date, _prevday_nan_pending
 
     parser = argparse.ArgumentParser(description="StockAnalysis Data Gateway")
     parser.add_argument("--dev-intraday", action="store_true", help="Dev intraday mode")
