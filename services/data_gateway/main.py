@@ -163,7 +163,7 @@ def _determine_fetch_action(is_prod: bool) -> FetchDecision:
     return "idle", ""
 
 
-def _update_beat(redis, cycle_count: int, status: str, **extra):
+def _update_beat(redis, cycle_count: int, status: str, ttl: int = 120, **extra):
     """Update the data-gateway heartbeat in Redis."""
     from services.common.version import BUILD_LABEL, GIT_COMMIT, GIT_DIRTY
 
@@ -179,7 +179,7 @@ def _update_beat(redis, cycle_count: int, status: str, **extra):
     }
     mapping.update(extra)
     redis.hset("service:registry:data-gateway", mapping=mapping)
-    redis.expire("service:registry:data-gateway", 120)
+    redis.expire("service:registry:data-gateway", ttl)
 
 
 def _sleep_seconds(seconds: int):
@@ -390,7 +390,7 @@ def main():
             mode = "intraday" if is_intraday else "positional"
 
         if action == "idle":
-            _update_beat(redis, cycle_count, "idle", status_detail="idle")
+            _update_beat(redis, cycle_count, "idle", ttl=IDLE_SLEEP + 30, status_detail="idle")
             logger.debug(f"[data-gateway] Cycle {cycle_count}: idle")
             _sleep_seconds(IDLE_SLEEP)
             continue
@@ -406,7 +406,7 @@ def main():
 
         if mode == "positional" and _positional_done_date == str(datetime.date.today()):
             logger.debug(f"[data-gateway] Cycle {cycle_count}: positional already done today — idle")
-            _update_beat(redis, cycle_count, "idle", status_detail="positional_done")
+            _update_beat(redis, cycle_count, "idle", ttl=IDLE_SLEEP + 30, status_detail="positional_done")
             _sleep_seconds(IDLE_SLEEP)
             continue
 

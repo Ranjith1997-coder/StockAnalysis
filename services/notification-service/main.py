@@ -314,6 +314,23 @@ def main():
 
         retry_count = 0  # reset on successful read
 
+        # Refresh heartbeat every ~30s (15 iterations × 2s block)
+        _hb_counter += 1
+        if _hb_counter >= 15:
+            try:
+                from services.common.version import BUILD_LABEL, GIT_COMMIT, GIT_DIRTY
+                rc.hset("service:registry:notification-service", mapping={
+                    "last_heartbeat": str(time.time()),
+                    "status": "healthy",
+                    "version": BUILD_LABEL,
+                    "commit": GIT_COMMIT,
+                    "dirty": str(GIT_DIRTY),
+                })
+                rc.expire("service:registry:notification-service", 120)
+            except Exception:
+                pass
+            _hb_counter = 0
+
         if not messages:
             continue
 
@@ -354,18 +371,7 @@ def main():
                 except Exception:
                     pass
 
-        # Refresh heartbeat every ~30s (15 iterations × 2s block)
-        _hb_counter += 1
-        if _hb_counter >= 15:
-            try:
-                rc.hset("service:registry:notification-service", mapping={
-                    "last_heartbeat": str(time.time()),
-                    "status": "healthy",
-                })
-                rc.expire("service:registry:notification-service", 120)
-            except Exception:
-                pass
-            _hb_counter = 0
+        # Heartbeat refreshed above (before message processing)
 
     # Shutdown
     logger.info("[notification-service] Shutting down...")
