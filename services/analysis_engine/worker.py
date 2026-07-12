@@ -198,48 +198,6 @@ def process_job(
             int((time.time() - start) * 1000),
         )
 
-    min_rows = 3 if mode == shared.Mode.INTRADAY else 2
-    if stock.priceData is None or len(stock.priceData) < min_rows:
-        logger.debug(f"[worker] {symbol}: insufficient price data ({len(stock.priceData) if stock.priceData is not None else 0} rows, need {min_rows})")
-        return _result_dict(
-            job_id, cycle_id, symbol, is_index,
-            "NO_DATA", False, "", "{}", "{}",
-            False, False, "",
-            int((time.time() - start) * 1000),
-        )
-
-    stock.reset_analysis()
-    stock.update_latest_data()
-
-    if mode == shared.Mode.POSITIONAL:
-        MIN_POSITIONAL_MOVE_PCT = 0.75
-        if stock.ltp_change_perc is not None and abs(stock.ltp_change_perc) < MIN_POSITIONAL_MOVE_PCT:
-            logger.debug(f"[worker] {symbol}: skipped — price move {stock.ltp_change_perc:+.2f}% < {MIN_POSITIONAL_MOVE_PCT}%")
-            return _result_dict(
-                job_id, cycle_id, symbol, is_index,
-                "SUCCESS", False, "", "{}", "{}",
-                False, False, "",
-                int((time.time() - start) * 1000),
-            )
-
-    if symbol in constant.INDEX_ANALYSIS_EXCLUDE:
-        return _result_dict(
-            job_id, cycle_id, symbol, is_index,
-            "SUCCESS", False, "", "{}", "{}",
-            False, False, "",
-            int((time.time() - start) * 1000),
-        )
-
-    sensibull_ok = load_sensibull_from_redis(redis, stock)
-    if not sensibull_ok:
-        logger.warning(f"[worker] {symbol}: no sensibull data in Redis")
-        return _result_dict(
-            job_id, cycle_id, symbol, is_index,
-            "NO_DATA", False, "", "{}", "{}",
-            False, False, "",
-            int((time.time() - start) * 1000),
-        )
-
     load_zerodha_from_redis(redis, stock)
 
     if is_index and symbol in constant.LIVE_OPTIONS_INDICES:
