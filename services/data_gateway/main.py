@@ -165,12 +165,17 @@ def _determine_fetch_action(is_prod: bool) -> FetchDecision:
 
 def _update_beat(redis, cycle_count: int, status: str, **extra):
     """Update the data-gateway heartbeat in Redis."""
+    from services.common.version import BUILD_LABEL, GIT_COMMIT, GIT_DIRTY
+
     mapping = {
         "name": "data-gateway",
         "pid": str(os.getpid()),
         "status": status,
         "last_heartbeat": str(time.time()),
         "cycle_count": str(cycle_count),
+        "version": BUILD_LABEL,
+        "commit": GIT_COMMIT,
+        "dirty": str(GIT_DIRTY),
     }
     mapping.update(extra)
     redis.hset("service:registry:data-gateway", mapping=mapping)
@@ -205,6 +210,8 @@ def main():
 
     logger.info(f"[data-gateway] Starting in {'intraday' if is_intraday else 'positional'} mode")
     logger.info(f"[data-gateway] PRODUCTION={is_prod}, DEV_INTRADAY={is_dev_intraday}, DEV_POSITIONAL={is_dev_positional}")
+    from services.common.version import BUILD_LABEL
+    logger.info(f"[data-gateway] v{BUILD_LABEL} starting")
 
     # Connect to Redis
     redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")

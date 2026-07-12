@@ -73,6 +73,17 @@ def main():
     public_ip = get_instance_public_ip(EC2_INSTANCE_ID)
     print(f"Connecting to EC2 instance at {public_ip}")
 
+    # Record local commit being deployed
+    import subprocess as _sp
+    try:
+        local_sha = _sp.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, timeout=5,
+        ).stdout.strip()
+        print(f"Deploying commit: {local_sha}")
+    except Exception:
+        local_sha = "unknown"
+
     # Connect to the instance
     ssh = ssh_connect(public_ip)
 
@@ -93,6 +104,9 @@ def main():
 
             print("Pulling latest changes from Git...")
             run_command(channel, "git pull", timeout=5)
+
+            print("Recording deployed commit...")
+            run_command(channel, "git rev-parse --short HEAD", timeout=2)
 
             # Start the service
             print("Starting stock_analysis.service...")

@@ -30,6 +30,7 @@ from analyser.PanicModeAnalyser import PanicModeAnalyser
 from analyser.OptionSellerCompositeAnalyser import OptionSellerCompositeAnalyser
 from services.analysis_engine.worker import process_job
 from services.common.redis_proxy import RedisProxy
+from services.common.version import BUILD_LABEL, GIT_COMMIT, GIT_DIRTY
 from common.logging_util import logger
 
 
@@ -49,6 +50,9 @@ def _update_heartbeat(redis: RedisProxy, worker_name: str):
         "pid": str(os.getpid()),
         "status": "healthy",
         "last_heartbeat": str(time.time()),
+        "version": BUILD_LABEL,
+        "commit": GIT_COMMIT,
+        "dirty": str(GIT_DIRTY),
     })
     redis.expire(f"service:registry:analysis-engine:{worker_name}", 120)
 
@@ -70,6 +74,7 @@ def main():
     try:
         redis.get("ping")
         logger.info(f"[analysis-engine] Connected to Redis at {redis_url}")
+        logger.info(f"[analysis-engine] v{BUILD_LABEL} starting")
     except Exception as e:
         logger.error(f"[analysis-engine] Cannot connect to Redis at {redis_url}: {e}")
         sys.exit(1)

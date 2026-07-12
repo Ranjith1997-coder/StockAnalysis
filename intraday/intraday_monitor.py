@@ -1445,6 +1445,23 @@ def intraday_analysis(loop = True, loop_wait_time = 30, max_cycles = 0):
         # Layer 2: Heartbeat — signal liveness to healthchecks.io
         _ping_healthcheck()
 
+        # Write monolith version + heartbeat to service registry
+        if redis_proxy is not None:
+            try:
+                from services.common.version import BUILD_LABEL, GIT_COMMIT, GIT_DIRTY
+                redis_proxy.hset("service:registry:monolith", mapping={
+                    "name": "monolith",
+                    "pid": str(os.getpid()),
+                    "status": "healthy",
+                    "last_heartbeat": str(time.time()),
+                    "version": BUILD_LABEL,
+                    "commit": GIT_COMMIT,
+                    "dirty": str(GIT_DIRTY),
+                })
+                redis_proxy.expire("service:registry:monolith", 600)
+            except Exception:
+                pass
+
         if PRODUCTION:
             sleeptime = (constant.INTRADAY_SLEEP_TIME) - (datetime.now().second + ((datetime.now().minute % 5) * 60))
             logger.info("sleeping for {} sec".format(sleeptime))
@@ -1579,6 +1596,9 @@ def init():
             DEV_NOTIFY = True
             TELEGRAM_NOTIFICATIONS.dev_notify = True
             logger.info("DEV_NOTIFY=1 — Telegram alerts enabled in dev mode")
+
+    from services.common.version import BUILD_LABEL
+    logger.info(f"[monolith] v{BUILD_LABEL} starting")
 
     redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
     redis_proxy = RedisProxy(redis_url)

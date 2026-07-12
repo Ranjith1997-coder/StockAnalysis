@@ -660,11 +660,16 @@ def _get_service_memmax(name: str) -> float:
 def write_heartbeat(rc: sync_redis.Redis):
     """Write own service registry heartbeat."""
     try:
+        from services.common.version import BUILD_LABEL, GIT_COMMIT, GIT_DIRTY
+
         rc.hset("service:registry:resource-monitor", mapping={
             "name": "resource-monitor",
             "pid": str(os.getpid()),
             "status": "healthy",
             "last_heartbeat": str(time.time()),
+            "version": BUILD_LABEL,
+            "commit": GIT_COMMIT,
+            "dirty": str(GIT_DIRTY),
         })
         rc.expire("service:registry:resource-monitor", HEARTBEAT_TTL)
     except Exception:
@@ -690,6 +695,8 @@ def main():
     try:
         rc.ping()
         logger.info(f"[resource-monitor] Started (pid={os.getpid()}, redis={redis_url})")
+        from services.common.version import BUILD_LABEL
+        logger.info(f"[resource-monitor] v{BUILD_LABEL} starting")
     except Exception as e:
         logger.error(f"[resource-monitor] Cannot connect to Redis: {e}")
         sys.exit(1)

@@ -1,6 +1,6 @@
 # StockAnalysis - Comprehensive Design Document
 
-> **Last Updated**: July 2026 (Phase 1–3 complete: data-gateway, notification-service, market-data, analysis-engine, resource-monitor all extracted as always-running microservices; monolith is always-running with self-scheduling daily loop; cycle sync via Redis Pub/Sub + stream; parallel Sensibull fetch (10 workers); unified logging via `services/common/logging.py`; per-stock + system-wide metrics/counters in Redis; `/debugstats` bot command; resource monitor with system/per-service/Redis metrics every 30s, time-series storage, proactive alerts, `/sysstats` bot command; prevDayOHLCV daily refresh with pre-open-safe `_get_prev_day_row()` helper; no systemd timers or auth service — monolith manages its own schedule)
+> **Last Updated**: July 2026 (Phase 1–3 complete: data-gateway, notification-service, market-data, analysis-engine, resource-monitor all extracted as always-running microservices; monolith is always-running with self-scheduling daily loop; cycle sync via Redis Pub/Sub + stream; parallel Sensibull fetch (10 workers); unified logging via `services/common/logging.py`; per-stock + system-wide metrics/counters in Redis; `/debugstats` bot command; resource monitor with system/per-service/Redis metrics every 30s, time-series storage, proactive alerts, `/sysstats` bot command; prevDayOHLCV daily refresh with pre-open-safe `_get_prev_day_row()` helper + Zerodha fallback for NaN closes; service versioning via git SHA in Redis registry + `/version` bot command; no systemd timers or auth service — monolith manages its own schedule)
 > **Purpose**: Complete architectural reference for the Indian Stock Market Analysis System targeting NSE (National Stock Exchange) equities. This document captures the entire codebase: architecture, data flows, module interactions, signal processing, scoring, notifications, and deployment details.
 
 ---
@@ -114,6 +114,8 @@ StockAnalysis/
 |   |   |-- redis_client.py          # Async Redis connection manager
 |   |   |-- redis_proxy.py           # Sync Redis wrapper (hset, hgetall, xadd, xreadgroup, publish, pubsub)
 |   |   |-- serialization.py         # DataFrame/dict JSON serialization
+|   |   |-- crash_handler.py         # Shared crash handler — install_crash_handler(service_name)
+|   |   |-- version.py               # Git SHA + dirty flag captured at import time (SERVICE_VERSION, GIT_COMMIT, GIT_DIRTY)
 |   |   |-- health.py                # Service heartbeat loop
 |   |   |-- stream_consumer.py       # Base class for Redis Stream consumers
 |   |   |-- stock_proxy.py           # Stock object ↔ Redis serialization (async)
@@ -1779,6 +1781,7 @@ notification/
 |---------|--------|-------------|
 | `/help` | system | All available commands |
 | `/status` | system | **System Health Dashboard** — feed lag, RAM, LLM budget |
+| `/version` | system | Service versions + git commit SHA + dirty flag (debug chat only) |
 | `/debugstats` | stats | System + per-stock metrics dashboard (tick rate, analysis runs, alert breakdowns) |
 | `/debugstats <SYMBOL>` | stats | Per-stock deep dive: tick count, option ticks, analysis count, alert breakdown |
 | `/debugstats all [ticks\|errors\|stale\|nodata]` | stats | All stocks sorted by selected metric |
@@ -1792,6 +1795,7 @@ notification/
 | `/sysstats` | sysstats | System resource dashboard — CPU (per-core), RAM, services, Redis health |
 | `/sysstats history` | sysstats | 24h sparklines (CPU, RAM, Redis mem) + 7-day trend table |
 | `/sysstats redis` | sysstats | Redis deep dive — memory, clients, ops/s, hit rate, slowlog |
+| `/version` | system | Service versions + git commit SHA + dirty flag per service (debug chat only) |
 | `/enctoken <token>` | account | Update Zerodha enctoken in `.env` + reconnect WebSocket |
 | `/start` | account | Register for notifications |
 
@@ -2064,6 +2068,82 @@ def check_data_freshness(stock, stale_threshold_sec=120):
 | `TestCrashHandler` | 7 | Telegram alert sent, `parse_mode="HTML"`, `KeyboardInterrupt` bypass, long traceback truncation, Telegram failure survival, `sys.excepthook` installed, angle-bracket HTML escaping (`&lt;urllib3`) |
 | `TestHeartbeat` | 5 | Pings when URL set, no-op when unset, suppresses `Timeout` / `ConnectionError` / generic exceptions |
 | `TestZombieDataWatchdog` | 10 | Fresh data, stale alert+dedup, different symbols both alert, outside market hours, holiday skip, no `options_aggregate`, no `last_updated`, custom threshold, `datetime`-typed `last_updated` |
+
+---
+
+### Service Versioning & Deployment Verification
+
+**Problem:** With 6 always-running services across 2+ deployment points, there was no way to verify which git commit was running on the server. The deploy script did a blind `git pull` + `systemctl restart` without recording the resulting HEAD. The bot could not report versions. If a deploy failed silently (partial pull, wrong branch), the running code could be stale with no visible signal.
+
+**Solution:** A central version module captures the git commit SHA at import time. Every service writes `version` + `commit` fields to its Redis registry hash on every heartbeat. A `/version` bot command reads all registry hashes and reports the running version of each service.
+
+#### `services/common/version.py` — Central Version Source
+
+```python
+SERVICE_VERSION = "1.0.0"           # Semantic version (manual bump per release)
+GIT_COMMIT      = "1c4b128"         # Short SHA from `git rev-parse --short HEAD`
+GIT_DIRTY       = True/False        # True if working tree has uncommitted changes
+BUILD_LABEL     = "1.0.0+1c4b128"   # Composite: version + commit (+dirty flag)
+```
+
+Captured once at import time via `subprocess.run(["git", "rev-parse", "--short", "HEAD"])`. If git is unavailable (e.g. production without git installed), fields default to `"unknown"`. The `GIT_DIRTY` flag is set by checking `git status --porcelain` — if any untracked/modified files exist, the commit is marked dirty, indicating the running code may differ from the committed SHA.
+
+**Fail-silent:** If `subprocess.run` fails (git not installed, not a git repo, HEAD detached), all fields are set to `"unknown"` and `GIT_DIRTY = False`. The module never raises.
+
+#### Integration Points
+
+| Service | Where version is written | Frequency |
+|---------|--------------------------|-----------|
+| data-gateway | `service:registry:data-gateway` hash → `version`, `commit` fields | Every heartbeat (~60s) |
+| market-data | `service:registry:market-data` hash → `version`, `commit` fields | Every heartbeat (30s) |
+| notification-service | `service:registry:notification-service` hash → `version`, `commit` fields | Every heartbeat (~30s) |
+| analysis-engine | `service:registry:analysis-engine:{worker}` hash → `version`, `commit` fields | Every heartbeat |
+| resource-monitor | `service:registry:resource-monitor` hash → `version`, `commit` fields | Every heartbeat (30s) |
+| monolith | `service:registry:monolith` hash → `version`, `commit` fields | Every cycle (~310s) |
+
+Every service also logs its version at startup:
+```
+[data-gateway] v1.0.0+1c4b128 starting
+```
+
+#### `/version` Bot Command
+
+`notification/commands/system.py` — reads all `service:registry:*` hashes from Redis and displays:
+
+```
+🏷️ Service Versions
+
+  📦 monolith              v1.0.0+1c4b128   ✅ clean   up 3h 42m
+  📦 data-gateway          v1.0.0+1c4b128   ✅ clean   up 3h 41m
+  📦 market-data           v1.0.0+1c4b128   ⚠️ dirty   up 3h 41m
+  📦 analysis-engine       v1.0.0+1c4b128   ✅ clean   up 3h 41m
+  📦 notification-service  v1.0.0+1c4b128   ✅ clean   up 3h 41m
+  📦 resource-monitor      v1.0.0+1c4b128   ✅ clean   up 3h 41m
+
+Git HEAD: 1c4b128
+```
+
+- **✅ clean**: `GIT_DIRTY = False` — running code matches the committed SHA
+- **⚠️ dirty**: `GIT_DIRTY = True` — working tree has uncommitted changes; running code may differ from SHA
+- **🔴 stale**: `last_heartbeat` older than 2× TTL (240s) — service may be down
+- **⚪ no data**: registry hash missing or empty — service never started or Redis was flushed
+
+#### Deploy Script Enhancement
+
+`scripts/deploy.py` captures `git rev-parse --short HEAD` after `git pull` and logs it:
+```
+Deployed commit: 1c4b128
+```
+
+This provides a local record of what was deployed, even if the SSH session output is lost.
+
+#### Design Decisions
+
+- **Git SHA, not semantic version alone**: The commit SHA is the source of truth. `SERVICE_VERSION` is a convenience label that must be manually bumped. The SHA is captured automatically and is always accurate.
+- **Dirty flag**: Catches the common failure mode of editing files directly on the server (hotfix) without committing. The `/version` output immediately shows `⚠️ dirty` so the operator knows the running code doesn't match any commit.
+- **Per-heartbeat, not per-startup**: Writing version on every heartbeat ensures the registry hash always has the version, even if the service was restarted and the initial write was missed. The TTL (120s) would expire a startup-only write.
+- **No build step**: Version is captured at import time, not injected by CI. This works with the existing `git pull + systemctl restart` deploy flow without requiring Docker, CI, or build scripts.
+- **`/version` restricted to debug chat**: Same `debug_chat_only()` guard as `/sysstats` and `/debugstats` — version info reveals deployment infrastructure.
 
 ---
 
@@ -2415,7 +2495,7 @@ _route_tick(tick)
 
 ### Overview
 
-The project has a comprehensive test suite with **1109 tests across 43 files** organized in 6 subdirectories. All tests run in-process with zero network calls (all external dependencies are mocked).
+The project has a comprehensive test suite with **1127+ tests across 45 files** organized in 6 subdirectories. All tests run in-process with zero network calls (all external dependencies are mocked).
 
 ```
 tests/
@@ -2424,6 +2504,9 @@ tests/
 |
 |-- services/                            # 1 test file — microservice tests
 |   |-- test_resource_monitor.py         # 24 tests: collector, storage, alerts, sparkline, sysstats views
+|   |-- test_crash_handler.py            # 6 tests: shared crash handler module
+|   |-- test_prevday_fallback.py         # 12 tests: yfinance NaN detection + Zerodha fallback
+|   |-- test_version.py                  # Tests: version module git SHA capture, dirty flag, unknown fallback
 |
 |-- analyser/                            # 17 test files — all analyser classes
 |   |-- conftest.py                      # Shared fixtures (mock_stock, make_price_df, etc.)

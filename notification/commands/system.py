@@ -13,7 +13,7 @@ from telegram.ext import ContextTypes
 
 import common.shared as shared
 from common.logging_util import logger
-from notification.commands._guard import guard
+from notification.commands._guard import guard, debug_chat_only
 
 # ─── Thresholds ──────────────────────────────────────────────────────────────
 
@@ -214,6 +214,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/sysstats — System resource dashboard (CPU/RAM/Redis)\n"
         "/sysstats history — 24h trends + 7-day summary\n"
         "/sysstats redis — Redis health deep dive\n"
+        "/version — Service versions + git commit (debug chat only)\n"
     )
     await context.bot.send_message(
         chat_id=update.effective_chat.id, text=text, parse_mode="HTML"
@@ -321,7 +322,93 @@ async def job_llm_budget_alert(context: ContextTypes.DEFAULT_TYPE) -> None:
         logger.error(f"[BudgetAlert] Failed to send Telegram notification: {exc}")
 
 
+# ─── /version: service version dashboard ──────────────────────────────────────
+
+_VERSION_SERVICES = [
+    "monolith",
+    "data-gateway",
+    "market-data",
+    "analysis-engine",
+    "notification-service",
+    "resource-monitor",
+]
+
+
+@guard
+async def cmd_version(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show running version + git commit of each service."""
+    if not debug_chat_only(update):
+        logger.debug(f"[version] Ignored from non-debug chat {update.effective_chat.id}")
+        return
+
+    from notification.commands._helpers import _get_redis
+    rc = _get_redis()
+    if rc is None:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="⚠️ Redis unavailable — cannot read service versions.",
+        )
+        return
+
+    lines = ["🏷️ <b>Service Versions</b>", ""]
+
+    for name in _VERSION_SERVICES:
+        raw = rc.hgetall(f"service:registry:{name}") or {}
+        version = raw.get("version", "?")
+        commit = raw.get("commit", "?")
+        dirty_str = raw.get("dirty", "")
+        hb = raw.get("last_heartbeat", "0")
+
+        if not raw:
+            icon = "⚪"
+            status_str = "no data"
+        else:
+            try:
+                age = time.time() - float(hb)
+                if age > 240:
+                    icon = "🔴"
+                    status_str = f"stale ({_fmt_age_safe(hb)})"
+                else:
+                    icon = "🟢"
+                    if dirty_str.lower() == "true":
+                        dirty_icon = " ⚠️ dirty"
+                    else:
+                        dirty_icon = " ✅ clean"
+                    status_str = f"up {_fmt_age_safe(hb)}"
+            except (ValueError, TypeError):
+                icon = "⚪"
+                status_str = "?"
+
+        lines.append(
+            f"  {icon} {name:<22} <code>{version:<20}</code> {status_str}"
+        )
+
+    from services.common.version import BUILD_LABEL, GIT_COMMIT
+    lines.append("")
+    lines.append(f"Git HEAD: <code>{GIT_COMMIT}</code>")
+    lines.append(f"This process: <code>{BUILD_LABEL}</code>")
+
+    text = "\n".join(lines)
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id, text=text, parse_mode="HTML"
+    )
+
+
+def _fmt_age_safe(ts_str: str) -> str:
+    try:
+        ts = float(ts_str)
+    except (ValueError, TypeError):
+        return "?"
+    secs = time.time() - ts
+    if secs < 3600:
+        return f"{secs / 60:.0f}m"
+    if secs < 86400:
+        return f"{secs / 3600:.1f}h"
+    return f"{secs / 86400:.1f}d"
+
+
 HANDLERS = [
     ("help", cmd_help),
     ("status", cmd_status),
+    ("version", cmd_version),
 ]
