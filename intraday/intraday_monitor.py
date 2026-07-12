@@ -1612,7 +1612,7 @@ def init():
     cycle_subscriber = CycleSubscriber(redis_proxy)
     cycle_subscriber.start()
 
-    _start_auth_commands_consumer()
+    _start_enctoken_subscriber()
 
     try:
         redis_proxy.xgroup_create(
@@ -1739,7 +1739,14 @@ def init():
         orchestrator.register(OptionSellerCompositeAnalyser())  # MUST be last -- reads PANIC_EXHAUSTION
     if ENABLE_ZERODHA_API:
         logger.info("Zerodha API enabled")
-        encToken_raw = os.getenv(constant.ENV_ZERODHA_ENC_TOKEN)
+        # Read enctoken from Redis (published by auth-service) first, fall back to .env
+        encToken_raw = redis_proxy.hget("auth:zerodha", "enctoken")
+        if not encToken_raw:
+            encToken_raw = os.getenv(constant.ENV_ZERODHA_ENC_TOKEN)
+            if encToken_raw:
+                logger.info("[monolith] Enctoken loaded from .env (auth-service may not have published yet)")
+        else:
+            logger.info("[monolith] Enctoken loaded from Redis (auth-service)")
         shared.app_ctx.zd_kc = KiteConnect(constant.DUMMY_API_KEY_ZERODHA, root="https://kite.zerodha.com/", enctoken=encToken_raw)
 
         # Set options_source (used by market-data service via shared.app_ctx)
@@ -1787,74 +1794,31 @@ def _sleep_until_midnight():
         sleep(min(sleep_sec, 300))
  
 
-def _start_auth_commands_consumer():
-    """Background thread consuming auth:commands stream for reactive enctoken refresh.
+def _start_enctoken_subscriber():
+    """Listen for auth:enctoken_refreshed and update zd_kc.
 
-    The data-gateway publishes 'refresh_enctoken' commands when it gets 403/Bad Request
-    from Zerodha. This consumer calls _refresh_zerodha_auth() and publishes the new
-    token to Redis, which the data-gateway picks up via Pub/Sub.
+    The auth-service publishes new enctokens to Redis after TOTP login.
+    This subscriber keeps the monolith's KiteConnect instance (zd_kc) updated
+    for the /enctoken bot command and deprecated Stock shims.
     """
     import threading as _th
-    from time import sleep as _sleep
 
-    def _consume():
-        stream = "auth:commands"
-        group = "monolith"
-        consumer = "auth-consumer-1"
-        try:
-            redis_proxy.xgroup_create(group, stream, mkstream=True)
-        except Exception:
-            pass
-        logger.info("[auth] Started auth:commands consumer thread")
-        while True:
-            try:
-                messages = redis_proxy.xreadgroup(group, consumer, {stream: ">"}, count=1, block=10000)
-                if not messages:
-                    continue
-                entries = messages[0][1] if isinstance(messages, list) and messages else []
-                for msg_id, fields in entries:
-                    command = fields.get("command", "")
-                    if command == "refresh_enctoken":
-                        reason = fields.get("reason", "unknown")
-                        logger.info(f"[auth] Received refresh_enctoken command (reason={reason})")
-                        _refresh_zerodha_auth()
+    def _listen():
+        ps = redis_proxy.pubsub()
+        ps.subscribe("auth:enctoken_refreshed")
+        logger.info("[monolith] Subscribed to auth:enctoken_refreshed")
+        for message in ps.listen():
+            if message["type"] == "message":
+                enctoken = redis_proxy.hget("auth:zerodha", "enctoken")
+                if enctoken and shared.app_ctx.zd_kc:
                     try:
-                        redis_proxy.xack(stream, group, msg_id)
-                    except Exception:
-                        pass
-            except Exception as e:
-                logger.error(f"[auth] Consumer error: {e}")
-                _sleep(5)
+                        shared.app_ctx.zd_kc.update_enctoken(enctoken)
+                        logger.info("[monolith] zd_kc enctoken updated via Pub/Sub")
+                    except Exception as e:
+                        logger.error(f"[monolith] zd_kc enctoken update failed: {e}")
 
-    t = _th.Thread(target=_consume, daemon=True, name="auth-commands-consumer")
+    t = _th.Thread(target=_listen, daemon=True, name="enctoken-subscriber")
     t.start()
-
-
-def _refresh_zerodha_auth():
-    """Refresh Zerodha enctoken via TOTP and publish to Redis for data-gateway."""
-    if not ENABLE_ZERODHA_API:
-        return
-    try:
-        from auth.auth_login import generate_enctoken
-        success = generate_enctoken()
-        if success:
-            load_dotenv(override=True)
-            encToken_raw = os.getenv(constant.ENV_ZERODHA_ENC_TOKEN)
-            shared.app_ctx.zd_kc.update_enctoken(encToken_raw)
-
-            # Publish enctoken to Redis for data-gateway
-            now_ts = datetime.now().timestamp()
-            redis_proxy.hset("auth:zerodha", mapping={
-                "enctoken": encToken_raw,
-                "issued_at": str(now_ts),
-                "user_id": os.getenv("ZERODHA_USER", ""),
-            })
-            redis_proxy.publish("auth:enctoken_refreshed", f"issued_at={int(now_ts)}")
-            logger.info("Zerodha auth refreshed — enctoken published to Redis")
-        else:
-            logger.error("Zerodha auth refresh failed")
-    except Exception as e:
-        logger.error(f"Zerodha auth refresh error: {e}")
 
 
 def _run_daily_loop():
@@ -1902,8 +1866,6 @@ def _run_daily_loop():
                 _wait_until(9, 0)
                 logger.info("=== Pre-market phase ===")
 
-                _refresh_zerodha_auth()
-
                 TELEGRAM_NOTIFICATIONS.is_intraday = False
                 TELEGRAM_NOTIFICATIONS.send_notification(
                     "\U0001F4CB <b>Pre-Market Analysis Started</b> \U0001F4CB", parse_mode="HTML"
@@ -1945,7 +1907,6 @@ def _run_daily_loop():
 
             # ── Wait for positional (15:30 - 20:00) ──
             _wait_until(18, 50)
-            _refresh_zerodha_auth()
 
             _wait_until(20, 0)
 

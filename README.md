@@ -468,8 +468,9 @@ StockAnalysis/
 │   ├── market_data/   # WebSocket ingestion → Redis snapshots + Pub/Sub (EXTRACTED — Phase 2)
 │   ├── analysis_engine/  # Stream consumer: 12 analysers + scoring (EXTRACTED — Phase 3)
 │   ├── resource_monitor/ # System + per-service + Redis metrics collector (30s poll)
+│   ├── auth_service/   # Zerodha enctoken lifecycle: scheduled TOTP login + reactive refresh (EXTRACTED)
 │   └── coordinator/   # Orchestrator + intelligence + bot (compact mode, designed)
-├── tests/             # 1109 tests across 43 files
+├── tests/             # 1251 tests across 46 files
 ├── zerodha/           # WebSocket lifecycle, TickStore, FuturesFetcher, LiveOptionsEngine
 ├── Makefile
 ├── .env.template
