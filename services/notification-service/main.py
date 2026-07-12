@@ -266,6 +266,8 @@ def main():
     consumer_name = args.consumer_name
 
     logger.info(f"[notification-service] Starting (consumer={consumer_name}, redis={redis_url})")
+    from services.common.version import BUILD_LABEL
+    logger.info(f"[notification-service] v{BUILD_LABEL} starting")
 
     from services.common.crash_handler import install_crash_handler
     install_crash_handler("notification-service")
@@ -277,12 +279,17 @@ def main():
         pass  # already exists
 
     # Heartbeat
+    from services.common.version import BUILD_LABEL, GIT_COMMIT, GIT_DIRTY
+
     rc.hset("service:registry:notification-service", mapping={
         "name": "notification-service",
         "pid": str(os.getpid()),
         "status": "healthy",
         "consumer": consumer_name,
         "last_heartbeat": str(time.time()),
+        "version": BUILD_LABEL,
+        "commit": GIT_COMMIT,
+        "dirty": str(GIT_DIRTY),
     })
     rc.expire("service:registry:notification-service", 120)
 

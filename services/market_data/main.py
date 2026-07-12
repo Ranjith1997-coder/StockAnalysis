@@ -47,6 +47,7 @@ from common.token_registry import (
     TokenType,
     TokenRegistry,
 )
+from services.common.version import BUILD_LABEL as _BUILD_LABEL, GIT_COMMIT as _GIT_COMMIT, GIT_DIRTY as _GIT_DIRTY
 from services.common.redis_proxy import RedisProxy
 from services.market_data.snapshot_publisher import SnapshotPublisher
 from services.market_data.signal_publisher import RedisSignalBus
@@ -379,6 +380,9 @@ def _update_heartbeat(redis: RedisProxy, tm: ZerodhaTickerManager,
         "sensibull_feeds": str(sensibull_count),
         "last_equity_tick": str(shared.app_ctx.last_equity_tick_time),
         "tick_count": str(tm._tick_count),
+        "version": _BUILD_LABEL,
+        "commit": _GIT_COMMIT,
+        "dirty": str(_GIT_DIRTY),
     })
     redis.expire("service:registry:market-data", 120)
 
@@ -517,6 +521,7 @@ def main():
     _start_auth_commands_consumer(redis, tm)
 
     # 12. Health heartbeat loop
+    logger.info(f"[market-data] v{_BUILD_LABEL} starting")
     logger.info("[market-data] Service started — entering heartbeat loop")
     heartbeat_counter = 0
 
