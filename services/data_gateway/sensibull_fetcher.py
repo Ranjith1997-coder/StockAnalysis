@@ -109,8 +109,9 @@ def fetch_sensibull_data(symbol: str, mode: str = "intraday") -> dict | None:
     """
     Fetch Sensibull insights for a single symbol.
 
-    Tries the original insights API first. If it fails (404 — endpoint removed),
-    falls back to reconstructing the data from OI chain + IV chart APIs.
+    Tries the new stock_info API first (Sensibull renamed the endpoint,
+    removing the 'insights/' subpath). If it fails, falls back to
+    reconstructing the data from OI chain + IV chart APIs.
 
     Returns:
         dict with keys: underlying_info, stats, per_expiry_map, nse_stats
@@ -119,13 +120,13 @@ def fetch_sensibull_data(symbol: str, mode: str = "intraday") -> dict | None:
     headers = _get_sensibull_headers()
     limiter = get_sensibull_limiter()
 
-    # ── Attempt 1: Original insights API (may come back online) ──────────
+    # ── Attempt 1: stock_info API (renamed endpoint) ─────────────────────
     try:
         @retry_on_429(max_retries=3, base_delay=1.0, max_delay=8.0)
         def _do_fetch():
             limiter.acquire()
             encoded = quote(symbol, safe="")
-            url = f"{SENSIBULL_BASE}/cache/insights/stock_info?tradingsymbol={encoded}"
+            url = f"{SENSIBULL_BASE}/cache/stock_info?tradingsymbol={encoded}"
             response = requests.get(url, timeout=(5, 10), cookies=cookies, headers=headers)
             response.raise_for_status()
             return response.json()
@@ -142,14 +143,14 @@ def fetch_sensibull_data(symbol: str, mode: str = "intraday") -> dict | None:
                 "nse_stats": payload.get("nse_stats"),
             }
     except requests.exceptions.HTTPError as e:
-        if hasattr(e, 'response') and e.response is not None and e.response.status_code == 404:
-            logger.debug(f"[Sensibull] Insights API 404 for {symbol} — using fallback")
+        if hasattr(e, 'response') and e.response is not None and e.response.status_code in (404, 403):
+            logger.debug(f"[Sensibull] stock_info API {e.response.status_code} for {symbol} — using fallback")
         else:
-            logger.warning(f"[Sensibull] Insights API error for {symbol}: {e}")
+            logger.warning(f"[Sensibull] stock_info API error for {symbol}: {e}")
     except requests.exceptions.Timeout:
-        logger.warning(f"[Sensibull] Insights API timeout for {symbol} — trying fallback")
+        logger.warning(f"[Sensibull] stock_info API timeout for {symbol} — trying fallback")
     except Exception as e:
-        logger.warning(f"[Sensibull] Insights API error for {symbol}: {e} — trying fallback")
+        logger.warning(f"[Sensibull] stock_info API error for {symbol}: {e} — trying fallback")
 
     # ── Attempt 2: Fallback — reconstruct from OI chain + IV chart ────────
     try:
