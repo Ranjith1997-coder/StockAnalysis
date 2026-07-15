@@ -40,6 +40,11 @@ AUTH_HASH = "auth:zerodha"
 AUTH_CHANNEL = "auth:enctoken_refreshed"
 AUTH_COMMANDS_STREAM = "auth:commands"
 AUTH_COMMANDS_GROUP = "auth-service"
+SENSIBULL_HASH = "auth:sensibull"
+SENSIBULL_CHANNEL = "auth:sensibull_refreshed"
+
+SENSIBULL_LOGIN_URL = "https://oxide.sensibull.com/v1/pluto/auth/web/session/b/u/kite/platform/login"
+SENSIBULL_GENERATE_URL = "https://oxide.sensibull.com/v1/pluto/auth/web/session/b/u/kite/platform/generate"
 
 _running = True
 
@@ -88,7 +93,132 @@ def _do_refresh(redis: RedisProxy, reason: str = "scheduled") -> bool:
     redis.publish(AUTH_CHANNEL, f"issued_at={int(now_ts)}")
     logger.info(f"[auth-service] Enctoken refreshed and published (reason={reason})")
     incr_system("auth_refreshes")
+
+    # Also refresh Sensibull session (uses Zerodha session to get Sensibull access_token)
+    _do_sensibull_refresh(redis, reason=reason)
+
     return True
+
+
+def _do_sensibull_refresh(redis: RedisProxy, reason: str = "scheduled") -> bool:
+    """Refresh Sensibull access_token using the Zerodha session.
+
+    Flow:
+      1. Use Zerodha enctoken session to hit Sensibull login endpoint
+      2. Follow OAuth redirect chain → get request_token
+      3. POST request_token to Sensibull generate endpoint → get access_token + client_info
+
+    Publishes access_token + client_info to Redis hash 'auth:sensibull'.
+    """
+    import requests
+    import pyotp
+    from urllib.parse import urlparse, parse_qs
+
+    try:
+        load_dotenv(override=True)
+        user_id = os.getenv("ZERODHA_USER")
+        password = os.getenv("ZERODHA_PASS")
+        totp_secret = os.getenv("ZERODHA_TOTP_SECRET")
+        enctoken = os.getenv(constant.ENV_ZERODHA_ENC_TOKEN)
+
+        if not all([user_id, password, totp_secret]):
+            logger.error("[auth-service] Sensibull refresh: missing Zerodha credentials")
+            return False
+
+        # Step 1: Fresh Zerodha login (needed for OAuth redirect)
+        session = requests.Session()
+        zk_headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "X-Kite-Version": "3",
+        }
+        login_resp = session.post(
+            "https://kite.zerodha.com/api/login",
+            data={"user_id": user_id, "password": password},
+            headers=zk_headers, timeout=10,
+        ).json()
+
+        if login_resp.get("status") != "success":
+            logger.error(f"[auth-service] Sensibull refresh: Zerodha login failed: {login_resp.get('message')}")
+            return False
+
+        request_id = login_resp["data"]["request_id"]
+        totp_pin = pyotp.TOTP(totp_secret).now()
+        twofa_resp = session.post(
+            "https://kite.zerodha.com/api/twofa",
+            data={"user_id": user_id, "request_id": request_id, "twofa_value": totp_pin},
+            headers=zk_headers, timeout=10,
+        ).json()
+
+        if twofa_resp.get("status") != "success":
+            logger.error(f"[auth-service] Sensibull refresh: Zerodha 2FA failed: {twofa_resp.get('message')}")
+            return False
+
+        # Step 2: Follow Sensibull OAuth redirect chain (auto-approves since we're logged in)
+        r = session.get(
+            SENSIBULL_LOGIN_URL,
+            headers={"Origin": "https://web.sensibull.com"},
+            allow_redirects=True, timeout=15,
+        )
+
+        final_url = r.url
+        parsed = urlparse(final_url)
+        params = parse_qs(parsed.query)
+        request_token = params.get("request_token", [None])[0]
+
+        if not request_token:
+            logger.error(f"[auth-service] Sensibull refresh: no request_token in redirect URL: {final_url}")
+            _send_alert(redis, "Sensibull auth: no request_token in OAuth redirect")
+            return False
+
+        logger.debug(f"[auth-service] Sensibull OAuth: got request_token from redirect")
+
+        # Step 3: Exchange request_token for Sensibull access_token
+        gen_r = requests.post(
+            SENSIBULL_GENERATE_URL,
+            json={"request_token": request_token},
+            headers={
+                "Origin": "https://web.sensibull.com",
+                "Referer": "https://web.sensibull.com/",
+                "Content-Type": "application/json",
+            },
+            timeout=10,
+        )
+
+        if gen_r.status_code != 200 or not gen_r.json().get("success"):
+            logger.error(f"[auth-service] Sensibull refresh: generate failed: {gen_r.status_code} {gen_r.text[:200]}")
+            _send_alert(redis, f"Sensibull auth: generate endpoint failed ({gen_r.status_code})")
+            return False
+
+        access_token = gen_r.cookies.get("access_token")
+        client_info = gen_r.cookies.get("client_info")
+
+        if not access_token:
+            logger.error("[auth-service] Sensibull refresh: no access_token in generate response cookies")
+            return False
+
+        # Step 4: Publish to Redis
+        redis.hset(SENSIBULL_HASH, mapping={
+            "access_token": access_token,
+            "client_info": client_info or "",
+            "issued_at": str(time.time()),
+            "last_reason": reason,
+        })
+        redis.publish(SENSIBULL_CHANNEL, f"issued_at={int(time.time())}")
+
+        # Also update .env so the data-gateway picks it up on restart
+        from dotenv import set_key
+        env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
+        set_key(env_path, "SENSIBULL_ACCESS_TOKEN", access_token)
+        if client_info:
+            set_key(env_path, "SENSIBULL_CLIENT_INFO", client_info)
+
+        logger.info(f"[auth-service] Sensibull access_token refreshed (reason={reason})")
+        return True
+
+    except Exception as e:
+        logger.exception(f"[auth-service] Sensibull refresh error: {e}")
+        _send_alert(redis, f"Sensibull auth refresh error: {e}")
+        return False
 
 
 def _send_alert(redis: RedisProxy, message: str):
@@ -156,6 +286,10 @@ def _start_auth_commands_consumer(redis: RedisProxy):
                             reason = fields.get("reason", "unknown")
                             logger.info(f"[auth-service] Reactive refresh (reason={reason})")
                             _do_refresh(redis, reason=f"reactive:{reason}")
+                    elif command == "refresh_sensibull":
+                        reason = fields.get("reason", "unknown")
+                        logger.info(f"[auth-service] Reactive Sensibull refresh (reason={reason})")
+                        _do_sensibull_refresh(redis, reason=f"reactive:{reason}")
                     try:
                         redis.xack(AUTH_COMMANDS_STREAM, AUTH_COMMANDS_GROUP, msg_id)
                     except Exception:

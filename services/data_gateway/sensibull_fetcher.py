@@ -29,9 +29,30 @@ INDEX_ANALYSIS_EXCLUDE = {"INDIA_VIX", "FINNIFTY"}
 
 
 def _get_sensibull_cookies() -> dict | None:
-    """Read Sensibull access_token + client_info from env for authenticated API calls."""
-    access_token = os.environ.get("SENSIBULL_ACCESS_TOKEN", "")
-    client_info = os.environ.get("SENSIBULL_CLIENT_INFO", "")
+    """Read Sensibull access_token + client_info from env for authenticated API calls.
+
+    Tries Redis hash 'auth:sensibull' first (refreshed by auth-service),
+    falls back to environment variables.
+    """
+    access_token = None
+    client_info = None
+
+    # Try Redis first (auto-refreshed by auth-service)
+    try:
+        from services.common.redis_proxy import RedisProxy
+        import os
+        r = RedisProxy(os.environ.get("REDIS_URL", "redis://localhost:6379"))
+        access_token = r.hget("auth:sensibull", "access_token") or ""
+        client_info = r.hget("auth:sensibull", "client_info") or ""
+    except Exception:
+        pass
+
+    # Fall back to env vars
+    if not access_token:
+        access_token = os.environ.get("SENSIBULL_ACCESS_TOKEN", "")
+    if not client_info:
+        client_info = os.environ.get("SENSIBULL_CLIENT_INFO", "")
+
     if not access_token:
         return None
     cookies = {"access_token": access_token}
