@@ -1,6 +1,6 @@
 # StockAnalysis - Comprehensive Design Document
 
-> **Last Updated**: July 2026 (Phase 1–4 complete: data-gateway, notification-service, market-data, analysis-engine, resource-monitor, auth-service all extracted as always-running microservices; monolith is always-running with self-scheduling daily loop; cycle sync via Redis Pub/Sub + stream; parallel Sensibull fetch (10 workers); unified logging via `services/common/logging.py`; per-stock + system-wide metrics/counters in Redis; `/debugstats` bot command; resource monitor with system/per-service/Redis metrics every 30s, time-series storage, proactive alerts, `/sysstats` bot command; prevDayOHLCV daily refresh with pre-open-safe `_get_prev_day_row()` helper + Zerodha fallback for NaN closes; service versioning via git SHA in Redis registry + `/version` bot command; auth-service handles scheduled TOTP login (09:00 + 18:50) + reactive refresh via auth:commands stream; monolith reads enctoken from Redis via Pub/Sub subscriber; no systemd timers — all services self-schedule)
+> **Last Updated**: July 2026 (Phase 1–4 complete: data-gateway, notification-service, market-data, analysis-engine, resource-monitor, auth-service all extracted as always-running microservices; monolith is always-running with self-scheduling daily loop; cycle sync via Redis Pub/Sub + stream; parallel Sensibull fetch (10 workers); unified logging via `services/common/logging.py`; per-stock + system-wide metrics/counters in Redis; `/debugstats` bot command; resource monitor with system/per-service/Redis metrics every 30s, time-series storage, proactive alerts, `/sysstats` bot command; prevDayOHLCV daily refresh with pre-open-safe `_get_prev_day_row()` helper + Zerodha fallback for NaN closes; service versioning via git SHA in Redis registry + `/version` bot command; auth-service handles scheduled TOTP login (09:00 + 18:50) + reactive refresh via auth:commands stream + automated Sensibull OAuth login; monolith reads enctoken from Redis via Pub/Sub subscriber; Zerodha REST endpoint changed from api.kite.trade to kite.zerodha.com/oms; Sensibull REST APIs now require cookie auth (access_token + client_info) — auto-refreshed by auth-service; Sensibull stock_info endpoint renamed from /cache/insights/stock_info to /cache/stock_info with fallback to OI chain + IV chart reconstruction; intraday futures fetch enabled for all symbols (was gated behind positional mode only); no systemd timers — all services self-schedule)
 > **Purpose**: Complete architectural reference for the Indian Stock Market Analysis System targeting NSE (National Stock Exchange) equities. This document captures the entire codebase: architecture, data flows, module interactions, signal processing, scoring, notifications, and deployment details.
 
 ---
@@ -135,8 +135,8 @@ StockAnalysis/
 |   |   |-- worker.py                # Per-stock worker: 12 analysers + scoring → metrics
 |   |-- resource_monitor/            # EXTRACTED — always-running system metrics collector
 |   |   |-- main.py                  # Polls psutil + Redis every 30s, stores sys:latest:* + sys:ts:* time-series, fires proactive alerts
-|   |-- auth_service/                # EXTRACTED — always-running Zerodha enctoken lifecycle manager
-|   |   |-- main.py                  # Self-scheduling TOTP login (09:00 + 18:50) + reactive auth:commands consumer → Redis publish
+|   |-- auth_service/                # EXTRACTED — always-running Zerodha enctoken + Sensibull OAuth lifecycle manager
+|   |   |-- main.py                  # Self-scheduling TOTP login (09:00 + 18:50) + Sensibull OAuth auto-login + reactive auth:commands consumer → Redis publish
 |   |-- coordinator/                 # Designed — orchestrator + intelligence + bot merged
 |   |-- orchestrator/                # Designed — standalone orchestrator
 |   |-- intelligence-service/        # Designed — SignalBus + Correlator + Narrator
@@ -199,7 +199,7 @@ StockAnalysis/
 |-- auth/
 |   |-- auth_login.py               # Automated TOTP Zerodha login — writes fresh enctoken to .env
 |                                    # Requires ZERODHA_USER, ZERODHA_PASS, ZERODHA_TOTP_SECRET
-|                                    # Called inline by monolith at 9:00 AM via _refresh_zerodha_auth()
+|                                    # Called by auth-service at 09:00 + 18:50 IST via _do_refresh()
 |
 |-- ml_pipeline/                     # ML prediction pipeline (XGBoost, LightGBM, RF, Ensemble)
 |-- scripts/
@@ -213,15 +213,16 @@ StockAnalysis/
 |                                    #   stockanalysis-market-data.service    (24/7 WebSocket ingestion)
 |                                    #   stockanalysis-analysis-engine.service(24/7 stream consumer + 12 analysers)
 |                                    #   stockanalysis-resource-monitor.service(24/7 metrics collector, 10% CPU quota)
-|                                    #   stockanalysis-auth.service           (24/7 enctoken lifecycle, 10% CPU quota)
+|                                    #   stockanalysis-auth.service           (24/7 enctoken + Sensibull OAuth lifecycle, 10% CPU quota)
 |                                    #   stockanalysis.service                 (24/7 monolith — Restart=always)
 |                                    # No timers — all services self-schedule
 |-- configs/                         # Configuration files
 |-- data/                            # Stock lists (final_derivatives_list.json, etc.)
 |-- docs/                            # Documentation
-|-- tests/                           # Test suite (1251 tests, 46 files across 7 subdirectories)
+|-- tests/                           # Test suite (1251 tests, 69 files across 8 subdirectories)
 |   |-- analyser/                    # 17 test files covering all 11 analyser classes
 |   |-- common/                      # 6 test files (Stock, scoring, token_registry, market_calendar, etc.)
+|   |-- services/                    # 8 test files (auth_service, rate_limiter, stock_loader, cycle_subscriber, version, prevday_fallback, analysis_worker, crash_handler/observability)
 |   |-- zerodha/                     # 5 test files (ZerodhaTickerManager, LiveOptionsEngine, LiveStockEngine, etc.)
 |   |-- notification/                # 2 test files (Notification, bot_listener)
 |   |-- post_market_analysis/        # 9 test files (all sources, runner, summary, analysis)
@@ -823,7 +824,9 @@ The monolith runs 24/7 as an always-on systemd service (`Restart=always`). It se
             data-gateway idle. notification-service draining stream.
 
 09:00 AM  - Pre-market phase:
-              _refresh_zerodha_auth() — TOTP login, writes enctoken to .env
+              auth-service: scheduled TOTP login → publishes enctoken to Redis auth:zerodha
+              auth-service: also runs Sensibull OAuth login → publishes access_token to Redis auth:sensibull
+              monolith: reads enctoken from Redis (auth:zerodha hash) on startup
               data-gateway: prevDayOHLCV daily refresh (all stocks/indices/commodities/global)
                 → uses _get_prev_day_row() helper: checks if last bar date == today
                   (before open: iloc[-1] = yesterday's bar; during market: iloc[-2] = yesterday)
@@ -890,9 +893,11 @@ All price and Sensibull data is fetched by the **data-gateway** service and publ
 load_price_data_from_redis(redis_proxy, stock_objs, index_objs, ...)
 load_sensibull_from_redis(redis_proxy, stock)
 
-# Futures data — still inline in monolith (until Phase 1E auth-service migration):
-FuturesFetcher(shared.app_ctx.zd_kc).fetch(stock, mode=analysis_type)
-_publish_zerodha_to_redis(stock)  # writes back to Redis for other services
+# Futures data — fetched by data-gateway's ZerodhaFuturesManager → Redis
+# Monolith reads from Redis:
+load_price_data_from_redis(redis_proxy, stock_objs, index_objs, ...)
+load_sensibull_from_redis(redis_proxy, stock)
+load_zerodha_from_redis(redis_proxy, stock)  # futures data from data:data_gateway → data:zerodha:*
 ```
 
 #### LiveStockEngine Integration
@@ -1067,9 +1072,23 @@ class LiveStockEngine:
         # Signal types: VWAP_CROSS, BID_ASK_IMBALANCE, ORB_BREAKOUT, DAY_HIGH_LOW_BREAK
 ```
 
-### `fno/sensibull_fetcher.py` - SensibullFetcher
+### `fno/sensibull_fetcher.py` - SensibullFetcher (legacy / dev mode)
 
-Extracted from `Stock.fetch_sensibull_data()` and `fetch_sensibull_oi_chain()`.
+Extracted from `Stock.fetch_sensibull_data()` and `fetch_sensibull_oi_chain()`. Used in dev mode only — production uses `services/data_gateway/sensibull_fetcher.py`.
+
+### `services/data_gateway/sensibull_fetcher.py` - Parallel Sensibull Fetcher (production)
+
+Fetches Sensibull data for all symbols in parallel (10 workers) and publishes to Redis hashes (`data:sensibull:{symbol}`). **Requires authenticated cookies** (access_token + client_info) since Sensibull locked down their REST APIs in July 2026.
+
+**Cookie auth**: Reads `access_token` + `client_info` from Redis hash `auth:sensibull` (auto-refreshed by auth-service) first, falls back to env vars `SENSIBULL_ACCESS_TOKEN` / `SENSIBULL_CLIENT_INFO`. All API calls include `Origin: https://web.sensibull.com` + `Referer` headers.
+
+**4 API endpoints**:
+- `stock_info`: `GET /v1/compute/cache/stock_info?tradingsymbol={symbol}` — per-expiry ATM IV, IV percentile, max pain, PCR, volume spike, future price (renamed from `/cache/insights/stock_info`)
+- `oi_chart`: `POST /v1/compute/1/oi_graphs/oi_chart` — per-strike OI (call_oi, put_oi, prev_call_oi, prev_put_oi) + PCR + ATM strike
+- `iv_chart`: `GET /v1/compute/iv_chart/{symbol}` — 2-year daily ATM IV history
+- `compute_intraday`: `POST /v1/compute/compute_intraday` — ~181 daily OI/PCR/max_pain history rows
+
+**Fallback**: If `stock_info` returns 404 (endpoint unavailable), reconstructs insights from OI chain (auto-discovers expiries with empty map) + IV chart. Computes max_pain from per-strike OI, IV percentile from 2-year IV history.
 
 ```python
 class SensibullFetcher:
@@ -1104,6 +1123,12 @@ Supports **enctoken authentication** (in addition to standard api_key + access_t
 ```python
 # Authorization header: "enctoken {token}" instead of "token api_key:access_token"
 self.enc_token used in headers
+```
+
+**Dual root URI** (as of July 2026 — Zerodha deprecated enctoken on api.kite.trade):
+```python
+_default_root_uri = "https://kite.zerodha.com/oms"     # authenticated REST calls (historical_data, profile, quote)
+_public_root_uri = "https://api.kite.trade"            # public instruments() endpoint (no auth, not on /oms)
 ```
 
 Full REST API coverage: orders, positions, holdings, historical data, quotes, GTT, mutual funds.

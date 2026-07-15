@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-StockAnalysis is an automated analysis system for Indian equity and derivatives markets (NSE). It targets NIFTY weekly options traders using live Zerodha WebSocket data for real-time tick-level analysis, Sensibull for OI chain and PCR data, and yfinance for historical price data. The system runs as 7 always-on microservices (monolith, data-gateway, market-data, analysis-engine, notification-service, resource-monitor, Redis) with Redis as the sole shared-state and message-broker dependency.
+StockAnalysis is an automated analysis system for Indian equity and derivatives markets (NSE). It targets NIFTY weekly options traders using live Zerodha WebSocket data for real-time tick-level analysis, Sensibull for OI chain and PCR data, and yfinance for historical price data. The system runs as 8 always-on microservices (monolith, data-gateway, market-data, analysis-engine, notification-service, resource-monitor, auth-service, Redis) with Redis as the sole shared-state and message-broker dependency.
 
 ---
 
@@ -29,7 +29,7 @@ Mode selection in production (`PRODUCTION=1`) is time-based via `_run_daily_loop
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                  Always-Running Microservices (Phase 1–3)                   │
+│                  Always-Running Microservices (Phase 1–4)                   │
 │                                                                              │
 │  ┌──────────┐    ┌──────────────────┐    ┌───────────────────────────┐      │
 │  │  Redis 7 │◄───│  Data Gateway    │    │  Monolith                 │      │
@@ -118,9 +118,10 @@ Data flow:
 
 | Source | What is fetched | Module | Who fetches |
 |--------|-----------------|--------|-------------|
-| **Zerodha Kite API** (historical) | Futures OHLCV + OI (daily 90-day, 5-min intraday) | `zerodha/futures_fetcher.py` | Monolith (inline, until Phase 1E) |
+| **Zerodha Kite API** (historical) | Futures OHLCV + OI (daily 90-day, 5-min intraday) | `services/data_gateway/zerodha_fetcher.py` | **Data-gateway** (via `ZerodhaFuturesManager`) |
 | **Zerodha WebSocket** | Live equity/index ticks, option chain ticks, futures ticks | `zerodha/zerodha_analysis.py` | Monolith (inline) |
-| **Sensibull** | OI chain per-strike, PCR, ATM IV, max pain, IV chart history, daily OI/PCR history | `services/data_gateway/sensibull_fetcher.py` | **Data-gateway** (parallel, 10 workers) |
+| **Sensibull** (authenticated) | OI chain per-strike, PCR, ATM IV, max pain, IV chart history, daily OI/PCR history | `services/data_gateway/sensibull_fetcher.py` | **Data-gateway** (parallel, 10 workers; cookies from `auth:sensibull` Redis hash) |
+| **Sensibull** (WebSocket) | Live option Greeks/IV for NIFTY/BANKNIFTY/SENSEX | `fno/sensibull_feed.py` | **Market-data** (wsrelay, free public feed) |
 | **yfinance** | Equity/index/commodity/global OHLCV — 1y daily at startup, 5-min intraday, 2y daily for positional | `services/data_gateway/yfinance_fetcher.py` | **Data-gateway** |
 | **NSE** | Holiday calendar, pre-open data, FII/DII flows, sector performance | `premarket/premarket_report.py`, `post_market_analysis/` | Monolith (self-contained HTTP) |
 
@@ -227,7 +228,14 @@ When `ENABLE_NARRATOR=1` (requires `GEMINI_API_KEY`):
 | `ZERODHA_USER` | Zerodha user ID |
 | `ZERODHA_PASS` | Zerodha password |
 | `ZERODHA_TOTP_SECRET` | Base-32 TOTP secret for automated 2FA login (`auth/auth_login.py`) |
-| `ZERODHA_ENC_TOKEN` | Enctoken for API auth (auto-refreshed by `auth/auth_login.py`; also updatable via `/enctoken` bot command) |
+| `ZERODHA_ENC_TOKEN` | Enctoken for API auth (auto-refreshed by auth-service; also updatable via `/enctoken` bot command) |
+
+### Sensibull
+
+| Variable | Purpose |
+|----------|---------|
+| `SENSIBULL_ACCESS_TOKEN` | Platform access token cookie (auto-refreshed by auth-service via Zerodha OAuth; fallback if Redis unavailable) |
+| `SENSIBULL_CLIENT_INFO` | JWT client info cookie (auto-refreshed by auth-service; fallback if Redis unavailable) |
 
 ### Feature Flags
 
@@ -293,7 +301,39 @@ Requires `ZERODHA_USER`, `ZERODHA_PASS`, and `ZERODHA_TOTP_SECRET` in `.env`.
 python auth/auth_login.py   # generates enctoken and writes it to .env
 ```
 
-In production, the monolith refreshes auth **inline** at 9:00 AM each trading day via `_refresh_zerodha_auth()` inside `_run_daily_loop()`. No separate auth service or systemd unit is needed.
+In production, the **auth-service** (`services/auth_service/main.py`) handles authentication automatically:
+- **Scheduled refresh**: TOTP login at 09:00 and 18:50 IST every trading day
+- **Reactive refresh**: listens to `auth:commands` Redis stream — other services can publish `refresh_enctoken` when they get 403/Bad Request from Zerodha
+- **Redis-first enctoken**: all services read enctoken from `auth:zerodha` Redis hash (published by auth-service), with `.env` fallback for cold starts
+- **Pub/Sub notification**: `auth:enctoken_refreshed` channel — services like data-gateway and market-data subscribe to update their KiteConnect instances in real-time
+
+### Zerodha API Endpoint (important)
+
+Zerodha deprecated enctoken-based access on `api.kite.trade` (returns "Bad Request"). The enctoken now only works on `kite.zerodha.com/oms/`. The `KiteConnect` class (`zerodha/zerodha_connect.py`) uses:
+- `_default_root_uri = "https://kite.zerodha.com/oms"` — for all authenticated REST calls (historical_data, profile, quote)
+- `_public_root_uri = "https://api.kite.trade"` — for the public `instruments()` endpoint (no auth required, not available on /oms)
+
+### Automated Sensibull Authentication
+
+Sensibull locked down their REST APIs — they now require `access_token` + `client_info` cookies for all endpoints. The **auth-service** automates the Sensibull login alongside the Zerodha refresh:
+
+**Flow** (runs automatically after Zerodha TOTP login):
+1. Uses the Zerodha session to hit Sensibull's OAuth login endpoint: `GET /pluto/auth/web/session/b/u/kite/platform/login`
+2. Follows the OAuth redirect chain (auto-approves since Zerodha session is active) → gets `request_token`
+3. POSTs `request_token` to Sensibull's generate endpoint: `POST /pluto/auth/web/session/b/u/kite/platform/generate`
+4. Returns `access_token` + `client_info` cookies (expires ~15 hours)
+5. Publishes to Redis hash `auth:sensibull` + Pub/Sub channel `auth:sensibull_refreshed`
+6. Also writes to `.env` for restart persistence
+
+The data-gateway reads Sensibull cookies from Redis first (auto-refreshed), falling back to env vars. Supports reactive refresh via `auth:commands` stream command `refresh_sensibull`.
+
+**Sensibull API endpoints** (all require cookies + `Origin: https://web.sensibull.com` header):
+- Stock info: `GET /v1/compute/cache/stock_info?tradingsymbol={symbol}` (renamed from `/cache/insights/stock_info`)
+- OI chain: `POST /v1/compute/1/oi_graphs/oi_chart`
+- IV chart: `GET /v1/compute/iv_chart/{symbol}`
+- OI history: `POST /v1/compute/compute_intraday`
+
+If the stock_info endpoint is unavailable, the fetcher falls back to reconstructing insights data from OI chain + IV chart (computes max pain from per-strike OI, IV percentile from 2-year IV history).
 
 ### systemd Services (always-running)
 
@@ -307,9 +347,10 @@ All services run 24/7 with `Restart=always`. `scripts/system_config` contains th
 | `stockanalysis-market-data.service` | 24/7 | WebSocket ingestion (WS1 equity/index, WS2 options, Sensibull WS) → Redis snapshots + Pub/Sub signals |
 | `stockanalysis-analysis-engine.service` | 24/7 | Consumes data:cycle_stream → runs 12 analysers + scoring → writes analysis metrics |
 | `stockanalysis-resource-monitor.service` | 24/7 | Polls psutil + Redis metrics every 30s → sys:latest:* + sys:ts:* + proactive alerts → notification:jobs |
+| `stockanalysis-auth.service` | 24/7 (self-scheduling) | Zerodha TOTP login (09:00 + 18:50) + Sensibull OAuth auto-login + reactive refresh via auth:commands stream |
 | `stockanalysis.service` | 24/7 (self-scheduling) | Monolith — pre-market, intraday, positional analysis |
 
-No timers. No auth service. The monolith self-schedules the entire daily flow internally.
+No timers. All services self-schedule. The auth-service handles both Zerodha enctoken and Sensibull access_token lifecycle.
 
 ---
 
@@ -468,9 +509,9 @@ StockAnalysis/
 │   ├── market_data/   # WebSocket ingestion → Redis snapshots + Pub/Sub (EXTRACTED — Phase 2)
 │   ├── analysis_engine/  # Stream consumer: 12 analysers + scoring (EXTRACTED — Phase 3)
 │   ├── resource_monitor/ # System + per-service + Redis metrics collector (30s poll)
-│   ├── auth_service/   # Zerodha enctoken lifecycle: scheduled TOTP login + reactive refresh (EXTRACTED)
+│   ├── auth_service/   # Zerodha enctoken + Sensibull OAuth lifecycle: scheduled TOTP login + reactive refresh (EXTRACTED)
 │   └── coordinator/   # Orchestrator + intelligence + bot (compact mode, designed)
-├── tests/             # 1251 tests across 46 files
+├── tests/             # 1251 tests across 69 files
 ├── zerodha/           # WebSocket lifecycle, TickStore, FuturesFetcher, LiveOptionsEngine
 ├── Makefile
 ├── .env.template
@@ -503,12 +544,15 @@ StockAnalysis/
 | `common/shared.py` | AppContext singleton, Mode enum, global state |
 | `common/scoring.py` | Score calculation, alignment bonus, should_notify() |
 | `analyser/OptionSellerCompositeAnalyser.py` | Option-seller composite setups: GAMMA_TRAP, RANGE_BOUND_SETUP, SKEW_FADE_SETUP |
-| `auth/auth_login.py` | Automated TOTP Zerodha login — called inline by monolith at 9 AM |
+| `auth/auth_login.py` | Automated TOTP Zerodha login — called by auth-service at 09:00 + 18:50 |
+| `services/auth_service/main.py` | Auth-service — Zerodha TOTP login + Sensibull OAuth auto-login + reactive refresh via auth:commands stream |
 | `notification/commands/sysstats.py` | `/sysstats` bot command — live dashboard, 24h sparklines, Redis deep dive |
-| `scripts/system_config` | systemd unit files (notification + data-gateway + market-data + analysis-engine + resource-monitor + monolith — all always-on) |
+| `scripts/system_config` | systemd unit files (auth + notification + data-gateway + market-data + analysis-engine + resource-monitor + monolith — all always-on) |
 | `analyser/Analyser.py` | BaseAnalyzer (decorator framework) + AnalyserOrchestrator |
-| `zerodha/futures_fetcher.py` | FuturesFetcher — Kite historical futures data (still inline in monolith) |
-| `fno/sensibull_fetcher.py` | SensibullFetcher — legacy, used by dev mode only (production uses data-gateway) |
+| `zerodha/zerodha_connect.py` | Modified KiteConnect — enctoken auth, dual root URI (/oms for authenticated, api.kite.trade for public instruments) |
+| `zerodha/futures_fetcher.py` | FuturesFetcher — Kite historical futures data (used by data-gateway's ZerodhaFuturesManager) |
+| `services/data_gateway/zerodha_fetcher.py` | ZerodhaFuturesManager — fetches futures data via Zerodha REST → publishes to Redis (data:zerodha:*) |
+| `services/data_gateway/sensibull_fetcher.py` | Parallel Sensibull fetcher (10 workers) — stock_info + OI chain + IV chart + OI history → Redis hashes (authenticated via auth:sensibull cookies) |
 | `notification/Notification.py` | Telegram message sender — routes through Redis stream |
 | `notification/bot_listener.py` | Telegram bot entry point (Command Router) |
 | `notification/commands/stats.py` | `/debugstats` command — system dashboard + per-stock + all-stocks sorted views |
