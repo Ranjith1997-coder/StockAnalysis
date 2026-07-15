@@ -28,52 +28,265 @@ SENSIBULL_BASE = "https://oxide.sensibull.com/v1/compute"
 INDEX_ANALYSIS_EXCLUDE = {"INDIA_VIX", "FINNIFTY"}
 
 
+def _get_sensibull_cookies() -> dict | None:
+    """Read Sensibull access_token + client_info from env for authenticated API calls."""
+    access_token = os.environ.get("SENSIBULL_ACCESS_TOKEN", "")
+    client_info = os.environ.get("SENSIBULL_CLIENT_INFO", "")
+    if not access_token:
+        return None
+    cookies = {"access_token": access_token}
+    if client_info:
+        cookies["client_info"] = client_info
+    return cookies
+
+
+def _get_sensibull_headers() -> dict:
+    """Return headers required by Sensibull oxide API (Origin + Referer for CORS)."""
+    return {
+        "Origin": "https://web.sensibull.com",
+        "Referer": "https://web.sensibull.com/",
+    }
+
+
+def _compute_max_pain(per_strike_data: dict, spot: float | None) -> float | None:
+    """Compute max pain strike from per-strike OI data.
+
+    Max pain = strike where total option writer payoff is maximized
+    (equivalently, where option buyer loss is maximized).
+    """
+    if not per_strike_data or not spot:
+        return None
+    try:
+        strikes = sorted(float(s) for s in per_strike_data.keys())
+        min_pain = float("inf")
+        max_pain_strike = None
+        for exp_strike in strikes:
+            total_pain = 0.0
+            for s_str, data in per_strike_data.items():
+                s = float(s_str)
+                call_oi = data.get("call_oi", 0) or 0
+                put_oi = data.get("put_oi", 0) or 0
+                if exp_strike < s:
+                    total_pain += call_oi * (s - exp_strike)
+                elif exp_strike > s:
+                    total_pain += put_oi * (exp_strike - s)
+            if total_pain < min_pain:
+                min_pain = total_pain
+                max_pain_strike = exp_strike
+        return max_pain_strike
+    except Exception:
+        return None
+
+
+def _compute_iv_percentile(iv_chart_df: pd.DataFrame | None) -> tuple[float | None, str | None]:
+    """Compute IV percentile from IV chart history.
+
+    Returns (iv_percentile, ivp_type) where ivp_type is
+    VERY_LOW/LOW/MODERATE/HIGH/VERY_HIGH.
+    """
+    if iv_chart_df is None or iv_chart_df.empty:
+        return None, None
+    try:
+        recent = iv_chart_df.tail(252) if len(iv_chart_df) > 252 else iv_chart_df
+        latest_iv = recent["iv_close"].iloc[-1]
+        percentile = (recent["iv_close"] <= latest_iv).sum() / len(recent) * 100
+        if percentile >= 90:
+            ivp_type = "VERY_HIGH"
+        elif percentile >= 70:
+            ivp_type = "HIGH"
+        elif percentile >= 30:
+            ivp_type = "MODERATE"
+        elif percentile >= 10:
+            ivp_type = "LOW"
+        else:
+            ivp_type = "VERY_LOW"
+        return round(percentile, 1), ivp_type
+    except Exception:
+        return None, None
+
+
 def fetch_sensibull_data(symbol: str, mode: str = "intraday") -> dict | None:
     """
     Fetch Sensibull insights for a single symbol.
 
+    Tries the original insights API first. If it fails (404 — endpoint removed),
+    falls back to reconstructing the data from OI chain + IV chart APIs.
+
     Returns:
-        dict with keys: underlying_info, stats, per_expiry_map, nse_stats,
-        historical_row (for building historical_data)
+        dict with keys: underlying_info, stats, per_expiry_map, nse_stats
     """
+    cookies = _get_sensibull_cookies()
+    headers = _get_sensibull_headers()
     limiter = get_sensibull_limiter()
+
+    # ── Attempt 1: Original insights API (may come back online) ──────────
     try:
         @retry_on_429(max_retries=3, base_delay=1.0, max_delay=8.0)
         def _do_fetch():
             limiter.acquire()
             encoded = quote(symbol, safe="")
             url = f"{SENSIBULL_BASE}/cache/insights/stock_info?tradingsymbol={encoded}"
-            response = requests.get(url, timeout=(5, 10))
+            response = requests.get(url, timeout=(5, 10), cookies=cookies, headers=headers)
             response.raise_for_status()
             return response.json()
 
         data = _do_fetch()
 
-        if not (data.get("success") and "payload" in data):
-            logger.warning(f"[Sensibull] Unsuccessful response for {symbol}")
-            return None
-
-        payload = data["payload"]
-        stats = payload.get("stats", {})
-        base_stats = stats.get("underlying_base_stats", {})
-        per_expiry_map = stats.get("per_expiry_map", {})
-
-        result = {
-            "underlying_info": payload.get("underlying_info"),
-            "stats": stats,
-            "per_expiry_map": per_expiry_map,
-            "nse_stats": payload.get("nse_stats"),
-        }
-
-        return result
-
+        if data.get("success") and "payload" in data:
+            payload = data["payload"]
+            stats = payload.get("stats", {})
+            return {
+                "underlying_info": payload.get("underlying_info"),
+                "stats": stats,
+                "per_expiry_map": stats.get("per_expiry_map", {}),
+                "nse_stats": payload.get("nse_stats"),
+            }
+    except requests.exceptions.HTTPError as e:
+        if hasattr(e, 'response') and e.response is not None and e.response.status_code == 404:
+            logger.debug(f"[Sensibull] Insights API 404 for {symbol} — using fallback")
+        else:
+            logger.warning(f"[Sensibull] Insights API error for {symbol}: {e}")
     except requests.exceptions.Timeout:
-        logger.error(f"[Sensibull] Timeout fetching data for {symbol}")
-    except requests.exceptions.RequestException as e:
-        logger.error(f"[Sensibull] Request error for {symbol}: {e}")
+        logger.warning(f"[Sensibull] Insights API timeout for {symbol} — trying fallback")
     except Exception as e:
-        logger.error(f"[Sensibull] Error for {symbol}: {e}")
+        logger.warning(f"[Sensibull] Insights API error for {symbol}: {e} — trying fallback")
+
+    # ── Attempt 2: Fallback — reconstruct from OI chain + IV chart ────────
+    try:
+        return _fetch_insights_fallback(symbol, cookies, headers, limiter)
+    except Exception as e:
+        logger.error(f"[Sensibull] Fallback also failed for {symbol}: {e}")
     return None
+
+
+def _fetch_insights_fallback(symbol: str, cookies: dict | None,
+                              headers: dict, limiter) -> dict | None:
+    """Reconstruct insights data from OI chain + IV chart when insights API is down.
+
+    Calls OI chain with empty expiries (auto-discovers available expiries),
+    then builds per_expiry_map from the response + IV chart.
+    """
+    # Step 1: Fetch OI chain with empty expiries (auto-discover)
+    body = {
+        "underlying": symbol,
+        "expiries": {},
+        "atm_strike_selection": "twenty",
+        "input_min_strike": None,
+        "input_max_strike": None,
+        "auto_update": "full_day",
+        "show_prev_oi": True,
+    }
+
+    @retry_on_429(max_retries=2, base_delay=1.0, max_delay=4.0)
+    def _fetch_oi():
+        limiter.acquire()
+        url = f"{SENSIBULL_BASE}/1/oi_graphs/oi_chart"
+        response = requests.post(url, json=body, timeout=(5, 15), cookies=cookies, headers=headers)
+        response.raise_for_status()
+        return response.json()
+
+    oi_data = _fetch_oi()
+    if not (oi_data.get("success") and "payload" in oi_data):
+        logger.warning(f"[Sensibull] Fallback OI chain failed for {symbol}")
+        return None
+
+    payload = oi_data["payload"]
+    available_expiries = sorted(payload.get("input", {}).get("expiries", {}).keys())
+    if not available_expiries:
+        logger.warning(f"[Sensibull] Fallback: no expiries in OI chain response for {symbol}")
+        return None
+
+    # Step 2: Fetch IV chart for ATM IV + IV percentile
+    atm_iv = None
+    atm_iv_percentile = None
+    atm_ivp_type = None
+    try:
+        @retry_on_429(max_retries=2, base_delay=1.0, max_delay=4.0)
+        def _fetch_iv():
+            limiter.acquire()
+            encoded = quote(symbol, safe="")
+            url = f"{SENSIBULL_BASE}/iv_chart/{encoded}"
+            response = requests.get(url, timeout=(5, 15), cookies=cookies, headers=headers)
+            response.raise_for_status()
+            return response.json()
+
+        iv_data = _fetch_iv()
+        if iv_data.get("success") and "payload" in iv_data:
+            iv_ohlc = iv_data["payload"].get("iv_ohlc_data", {})
+            if iv_ohlc:
+                sorted_dates = sorted(iv_ohlc.keys())
+                latest_iv = iv_ohlc[sorted_dates[-1]].get("iv")
+                if latest_iv is not None:
+                    atm_iv = float(latest_iv)
+                iv_df = pd.DataFrame([
+                    {"date": d, "iv_close": float(e.get("iv", 0))}
+                    for d, e in iv_ohlc.items() if e.get("iv") is not None
+                ]).sort_values("date")
+                atm_iv_percentile, atm_ivp_type = _compute_iv_percentile(iv_df)
+    except Exception as e:
+        logger.debug(f"[Sensibull] Fallback IV chart failed for {symbol}: {e}")
+
+    # Step 3: Compute max pain from per_strike_data
+    per_strike_data = payload.get("per_strike_data", {})
+    spot = payload.get("current_ltp") or payload.get("date_ltp")
+    max_pain_strike = _compute_max_pain(per_strike_data, spot)
+
+    # Step 4: Build per_expiry_map (only nearest expiry has full data)
+    nearest = available_expiries[0]
+    pcr = payload.get("pcr")
+    atm_strike = payload.get("atm_strike")
+    total_call_oi = payload.get("total_call_oi", 0)
+    total_put_oi = payload.get("total_put_oi", 0)
+
+    per_expiry_map = {}
+    for exp in available_expiries:
+        if exp == nearest:
+            per_expiry_map[exp] = {
+                "atm_iv": atm_iv,
+                "atm_iv_change": None,
+                "atm_iv_percentile": atm_iv_percentile,
+                "atm_ivp_type": atm_ivp_type,
+                "max_pain_strike": max_pain_strike,
+                "max_pain_type": None,
+                "pcr": pcr,
+                "pcr_type": None,
+                "future_price": None,
+                "future_change_percent": None,
+                "atm_strike": atm_strike,
+                "lot_size": None,
+            }
+        else:
+            per_expiry_map[exp] = {
+                "atm_iv": None, "atm_iv_change": None, "atm_iv_percentile": None,
+                "atm_ivp_type": None, "max_pain_strike": None, "max_pain_type": None,
+                "pcr": None, "pcr_type": None, "future_price": None,
+                "future_change_percent": None, "atm_strike": None, "lot_size": None,
+            }
+
+    # Step 5: Build stats dict matching the original insights format
+    stats = {
+        "per_expiry_map": per_expiry_map,
+        "underlying_base_stats": {
+            "total_pcr": pcr,
+            "volume_spike": None,
+            "volume_spike_type": None,
+            "future_oi_change": None,
+            "oi_change_type": None,
+        },
+    }
+
+    logger.info(
+        f"[Sensibull] Fallback insights for {symbol}: "
+        f"expiries={len(available_expiries)} pcr={pcr} atm_iv={atm_iv} "
+        f"ivp={atm_iv_percentile} max_pain={max_pain_strike}"
+    )
+
+    return {
+        "underlying_info": None,
+        "stats": stats,
+        "per_expiry_map": per_expiry_map,
+        "nse_stats": None,
+    }
 
 
 def fetch_sensibull_oi_chain(symbol: str, per_expiry_map: dict, mode: str = "intraday") -> dict | None:
@@ -116,7 +329,9 @@ def fetch_sensibull_oi_chain(symbol: str, per_expiry_map: dict, mode: str = "int
         def _do_fetch():
             limiter.acquire()
             url = f"{SENSIBULL_BASE}/1/oi_graphs/oi_chart"
-            response = requests.post(url, json=body, timeout=(5, 15))
+            response = requests.post(url, json=body, timeout=(5, 15),
+                                      cookies=_get_sensibull_cookies(),
+                                      headers=_get_sensibull_headers())
             response.raise_for_status()
             return response.json()
 
@@ -183,7 +398,9 @@ def fetch_iv_chart(symbol: str) -> pd.DataFrame | None:
             limiter.acquire()
             encoded = quote(symbol, safe="")
             url = f"{SENSIBULL_BASE}/iv_chart/{encoded}"
-            response = requests.get(url, timeout=(5, 15))
+            response = requests.get(url, timeout=(5, 15),
+                                     cookies=_get_sensibull_cookies(),
+                                     headers=_get_sensibull_headers())
             response.raise_for_status()
             return response.json()
 
@@ -288,7 +505,9 @@ def fetch_oi_history(symbol: str, per_expiry_map: dict) -> pd.DataFrame | None:
         def _do_fetch():
             limiter.acquire()
             url = f"{SENSIBULL_BASE}/compute_intraday"
-            response = requests.post(url, json=payload, timeout=(5, 20))
+            response = requests.post(url, json=payload, timeout=(5, 20),
+                                      cookies=_get_sensibull_cookies(),
+                                      headers=_get_sensibull_headers())
             response.raise_for_status()
             return response.json()
 
