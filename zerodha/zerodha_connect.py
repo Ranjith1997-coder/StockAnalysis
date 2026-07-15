@@ -34,6 +34,7 @@ class KiteConnect(object):
     # Default root API endpoint. It's possible to
     # override this by passing the `root` parameter during initialisation.
     _default_root_uri = "https://kite.zerodha.com/oms"
+    _public_root_uri = "https://api.kite.trade"
     _default_login_uri = "https://kite.zerodha.com/connect/login"
     _default_timeout = 7  # In seconds
 
@@ -569,11 +570,14 @@ class KiteConnect(object):
         with tens of thousands of entries in the list.
 
         - `exchange` is specific exchange to fetch (Optional)
+
+        Uses the public api.kite.trade endpoint (no auth required) since
+        the /oms endpoint does not expose this route.
         """
         if exchange:
-            return self._parse_instruments(self._get("market.instruments", url_args={"exchange": exchange}))
+            return self._parse_instruments(self._get("market.instruments", url_args={"exchange": exchange}, root=self._public_root_uri))
         else:
-            return self._parse_instruments(self._get("market.instruments.all"))
+            return self._parse_instruments(self._get("market.instruments.all", root=self._public_root_uri))
 
     def quote(self, *instruments):
         """
@@ -864,23 +868,23 @@ class KiteConnect(object):
     def _user_agent(self):
         return (__title__ + "-python/").capitalize() + __version__
 
-    def _get(self, route, url_args=None, params=None, is_json=False):
+    def _get(self, route, url_args=None, params=None, is_json=False, root=None):
         """Alias for sending a GET request."""
-        return self._request(route, "GET", url_args=url_args, params=params, is_json=is_json)
+        return self._request(route, "GET", url_args=url_args, params=params, is_json=is_json, root=root)
 
-    def _post(self, route, url_args=None, params=None, is_json=False, query_params=None):
+    def _post(self, route, url_args=None, params=None, is_json=False, query_params=None, root=None):
         """Alias for sending a POST request."""
-        return self._request(route, "POST", url_args=url_args, params=params, is_json=is_json, query_params=query_params)
+        return self._request(route, "POST", url_args=url_args, params=params, is_json=is_json, query_params=query_params, root=root)
 
-    def _put(self, route, url_args=None, params=None, is_json=False, query_params=None):
+    def _put(self, route, url_args=None, params=None, is_json=False, query_params=None, root=None):
         """Alias for sending a PUT request."""
-        return self._request(route, "PUT", url_args=url_args, params=params, is_json=is_json, query_params=query_params)
+        return self._request(route, "PUT", url_args=url_args, params=params, is_json=is_json, query_params=query_params, root=root)
 
-    def _delete(self, route, url_args=None, params=None, is_json=False):
+    def _delete(self, route, url_args=None, params=None, is_json=False, root=None):
         """Alias for sending a DELETE request."""
-        return self._request(route, "DELETE", url_args=url_args, params=params, is_json=is_json)
+        return self._request(route, "DELETE", url_args=url_args, params=params, is_json=is_json, root=root)
 
-    def _request(self, route, method, url_args=None, params=None, is_json=False, query_params=None):
+    def _request(self, route, method, url_args=None, params=None, is_json=False, query_params=None, root=None):
         """Make an HTTP request."""
         # Form a restful URL
         if url_args:
@@ -888,7 +892,8 @@ class KiteConnect(object):
         else:
             uri = self._routes[route]
 
-        url = urljoin(self.root, uri)
+        base = root or self.root
+        url = urljoin(base, uri)
 
         # Custom headers
         headers = {
