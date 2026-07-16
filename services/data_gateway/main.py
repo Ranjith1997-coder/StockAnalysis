@@ -341,14 +341,13 @@ def main():
                     _prevday_nan_pending = set(nan_symbols)
                     # Phase 2: immediate Zerodha fallback (enctoken from last evening)
                     logger.info(f"[data-gateway] Zerodha fallback for {len(nan_symbols)} NaN symbols...")
-                    zerodha_mgr.fetch_prev_day_ohlcv(
+                    ok_count, fail_count, ok_symbols = zerodha_mgr.fetch_prev_day_ohlcv(
                         redis, list(_prevday_nan_pending), _prevday_token_map,
                     )
-                    # Remove successfully resolved symbols from pending
-                    for sym in list(_prevday_nan_pending):
-                        raw = redis.hget(f"data:price:{sym}", "prevDayOHLCV_json")
-                        if raw and "nan" not in raw.lower():
-                            _prevday_nan_pending.discard(sym)
+                    # Remove only symbols that were actually fetched successfully.
+                    # Do NOT use the "nan" check — stale prevDayOHLCV from a previous
+                    # day may still be in Redis with valid numbers, causing false positives.
+                    _prevday_nan_pending -= ok_symbols
                     if _prevday_nan_pending:
                         logger.warning(
                             f"[data-gateway] {len(_prevday_nan_pending)} symbols still NaN after fallback "
@@ -359,20 +358,17 @@ def main():
             except Exception as e:
                 logger.error(f"[data-gateway] prevDayOHLCV refresh failed: {e}")
 
-        # Phase 3: retry after 09:05 (fresh enctoken guaranteed from 09:00 monolith login)
+        # Phase 3: retry after 09:05 (fresh enctoken guaranteed from 09:00 auth-service login)
         if _prevday_nan_pending and now_time >= _time(9, 5):
             try:
                 logger.info(
                     f"[data-gateway] Retrying prevDay Zerodha fallback for "
                     f"{len(_prevday_nan_pending)} symbols..."
                 )
-                zerodha_mgr.fetch_prev_day_ohlcv(
+                ok_count, fail_count, ok_symbols = zerodha_mgr.fetch_prev_day_ohlcv(
                     redis, list(_prevday_nan_pending), _prevday_token_map,
                 )
-                for sym in list(_prevday_nan_pending):
-                    raw = redis.hget(f"data:price:{sym}", "prevDayOHLCV_json")
-                    if raw and "nan" not in raw.lower():
-                        _prevday_nan_pending.discard(sym)
+                _prevday_nan_pending -= ok_symbols
                 if not _prevday_nan_pending:
                     logger.info("[data-gateway] All prevDay NaN symbols resolved via retry")
                 else:

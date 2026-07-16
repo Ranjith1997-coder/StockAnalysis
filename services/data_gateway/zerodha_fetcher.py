@@ -371,7 +371,7 @@ class ZerodhaFuturesManager:
         redis,
         nan_symbols: list[str],
         token_map: dict[str, int],
-    ) -> tuple[int, int]:
+    ) -> tuple[int, int, set[str]]:
         """Fetch prevDay OHLCV from Zerodha for symbols where yfinance returned NaN.
 
         Uses kc.historical_data with interval="day" to get the last completed
@@ -385,12 +385,12 @@ class ZerodhaFuturesManager:
                        final_derivatives_list.json
 
         Returns:
-            (ok_count, fail_count)
+            (ok_count, fail_count, set_of_successfully_fetched_symbols)
         """
         with self._lock:
             if not self._has_enctoken or self._kc is None:
                 logger.warning("[zerodha-fetcher] No enctoken — prevDay fallback skipped")
-                return 0, len(nan_symbols)
+                return 0, len(nan_symbols), set()
             kc = self._kc
 
         today = datetime.date.today()
@@ -399,6 +399,7 @@ class ZerodhaFuturesManager:
 
         limiter = get_zerodha_limiter()
         ok, fail = 0, 0
+        ok_symbols: set[str] = set()
         for symbol in nan_symbols:
             token = token_map.get(symbol)
             if not token:
@@ -447,6 +448,7 @@ class ZerodhaFuturesManager:
                     mapping={"prevDayOHLCV_json": json.dumps(prev_day, default=str)},
                 )
                 ok += 1
+                ok_symbols.add(symbol)
 
             except Exception as e:
                 err_str = str(e)
@@ -459,4 +461,4 @@ class ZerodhaFuturesManager:
                     fail += 1
 
         logger.info(f"[zerodha-fetcher] prevDay fallback: {ok} ok, {fail} failed (of {len(nan_symbols)})")
-        return ok, fail
+        return ok, fail, ok_symbols
