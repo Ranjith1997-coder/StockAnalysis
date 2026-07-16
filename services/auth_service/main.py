@@ -351,27 +351,44 @@ def _run_schedule(redis: RedisProxy):
     logger.info(f"[auth-service] v{BUILD_LABEL} starting")
     logger.info("[auth-service] Entering scheduling loop")
 
+    _morning_done = False
+    _evening_done = False
+    _schedule_date = datetime.now().date()
+
     while _running:
         try:
             now = datetime.now()
+            today = now.date()
+
+            # Reset daily flags at midnight
+            if today != _schedule_date:
+                _morning_done = False
+                _evening_done = False
+                _schedule_date = today
+
             hour_min = now.hour * 60 + now.minute
 
-            if hour_min < 555:  # before 09:15
+            if hour_min < 555 and not _morning_done:  # before 09:15 and morning not done
                 _wait_until(9, 0)
                 if not _running:
                     break
                 _last_refresh_ts = time.time()
                 _do_refresh(redis, reason="scheduled_morning")
-            elif hour_min < 1130:  # before 18:50
+                _morning_done = True
+            elif hour_min < 1130 and not _evening_done:  # before 18:50 and evening not done
                 _wait_until(18, 50)
                 if not _running:
                     break
                 _last_refresh_ts = time.time()
                 _do_refresh(redis, reason="scheduled_evening")
-            else:
+                _evening_done = True
+            elif hour_min >= 1130:  # past 18:50
                 logger.info("[auth-service] Past 18:50 — sleeping until midnight")
                 _sleep_until_midnight()
                 continue
+            else:
+                # Both morning and evening done — sleep until next event
+                time.sleep(60)
 
             _update_heartbeat(redis)
         except Exception as e:
