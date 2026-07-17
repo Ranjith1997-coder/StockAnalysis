@@ -30,12 +30,14 @@ def _mark_ran_today() -> None:
         logging.warning(f"Could not write lock file: {e}")
 
 
-def generate_enctoken() -> tuple[bool, "requests.Session | None"]:
+def generate_enctoken() -> tuple[bool, "requests.Session | None", str | None]:
     """Run the full Zerodha login flow and write the enctoken to .env.
 
-    Returns (True, session) on success, (False, None) on any failure.
+    Returns (True, session, enctoken) on success, (False, None, None) on failure.
     The session object is returned so callers can reuse it for Sensibull OAuth
     without doing a second login (which would invalidate this enctoken).
+    The enctoken is returned directly to avoid reliance on load_dotenv re-reading
+    the .env file (which may not override systemd's EnvironmentFile values).
     """
     load_dotenv()
     user_id      = os.getenv("ZERODHA_USER")
@@ -45,7 +47,7 @@ def generate_enctoken() -> tuple[bool, "requests.Session | None"]:
 
     if not all([user_id, password, totp_secret]):
         logging.error("Missing ZERODHA_USER / ZERODHA_PASS / ZERODHA_TOTP_SECRET in .env")
-        return False, None
+        return False, None, None
 
     session = requests.Session()
     headers = {
@@ -67,7 +69,7 @@ def generate_enctoken() -> tuple[bool, "requests.Session | None"]:
 
         if login_resp.get("status") != "success":
             logging.error(f"Login failed: {login_resp.get('message')}")
-            return False, None
+            return False, None, None
 
         request_id = login_resp["data"]["request_id"]
         totp_pin   = pyotp.TOTP(totp_secret).now()
@@ -85,20 +87,20 @@ def generate_enctoken() -> tuple[bool, "requests.Session | None"]:
 
         if twofa_resp.get("status") != "success":
             logging.error(f"2FA failed: {twofa_resp.get('message')}")
-            return False, None
+            return False, None, None
 
         enctoken = session.cookies.get("enctoken")
         if not enctoken:
             logging.error("Could not find enctoken in cookies.")
-            return False, None
+            return False, None, None
 
         set_key(env_file_path, "ZERODHA_ENC_TOKEN", enctoken)
         logging.info("✅ enctoken refreshed successfully.")
-        return True, session
+        return True, session, enctoken
 
     except Exception as e:
         logging.error(f"Auth failed: {e}")
-        return False, None
+        return False, None, None
 
 
 if __name__ == "__main__":
@@ -115,7 +117,7 @@ if __name__ == "__main__":
         logging.info("Run with --force or 'make auth-force' to override.")
         sys.exit(0)
 
-    success, _session = generate_enctoken()
+    success, _session, _enc = generate_enctoken()
     if success:
         _mark_ran_today()   # only written on success — failure retries next run
         sys.exit(0)

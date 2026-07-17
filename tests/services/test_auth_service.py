@@ -18,7 +18,7 @@ class TestDoRefresh:
     def test_success_publishes_enctoken(self, mock_gen, mock_getenv, mock_load):
         from services.auth_service.main import _do_refresh, AUTH_HASH, AUTH_CHANNEL
 
-        mock_gen.return_value = (True, MagicMock())
+        mock_gen.return_value = (True, MagicMock(), "fresh_token_abc123")
         mock_getenv.side_effect = lambda key, default=None: {
             "ZERODHA_ENC_TOKEN": "fresh_token_abc123",
             "ZERODHA_USER": "user123",
@@ -46,7 +46,7 @@ class TestDoRefresh:
     def test_failure_sends_alert(self, mock_gen):
         from services.auth_service.main import _do_refresh
 
-        mock_gen.return_value = (False, None)
+        mock_gen.return_value = (False, None, None)
         redis = MagicMock()
         result = _do_refresh(redis, reason="scheduled_morning")
 
@@ -78,9 +78,9 @@ class TestDoRefresh:
     def test_missing_enctoken_after_login(self, mock_gen, mock_getenv, mock_load):
         from services.auth_service.main import _do_refresh
 
-        mock_gen.return_value = (True, MagicMock())
+        # generate_enctoken returns success but no enctoken (edge case)
+        mock_gen.return_value = (True, MagicMock(), None)
         mock_getenv.side_effect = lambda key, default=None: {
-            "ZERODHA_ENC_TOKEN": None,  # missing!
             "ZERODHA_USER": "user123",
         }.get(key, default or "")
 
@@ -99,9 +99,8 @@ class TestDoRefresh:
     def test_publishes_correct_hash_fields(self, mock_gen, mock_getenv, mock_load):
         from services.auth_service.main import _do_refresh, AUTH_HASH
 
-        mock_gen.return_value = (True, MagicMock())
+        mock_gen.return_value = (True, MagicMock(), "fresh_token_abc123")
         mock_getenv.side_effect = lambda key, default=None: {
-            "ZERODHA_ENC_TOKEN": "tok_123",
             "ZERODHA_USER": "my_user",
         }.get(key, default or "")
 
@@ -110,7 +109,7 @@ class TestDoRefresh:
 
         mapping = redis.hset.call_args[1]["mapping"]
         assert set(mapping.keys()) == {"enctoken", "issued_at", "user_id", "last_reason"}
-        assert mapping["enctoken"] == "tok_123"
+        assert mapping["enctoken"] == "fresh_token_abc123"
         assert mapping["user_id"] == "my_user"
         assert mapping["last_reason"] == "scheduled_evening"
 
@@ -120,9 +119,8 @@ class TestDoRefresh:
     def test_publishes_pubsub_channel(self, mock_gen, mock_getenv, mock_load):
         from services.auth_service.main import _do_refresh, AUTH_CHANNEL
 
-        mock_gen.return_value = (True, MagicMock())
+        mock_gen.return_value = (True, MagicMock(), "fresh_token_abc123")
         mock_getenv.side_effect = lambda key, default=None: {
-            "ZERODHA_ENC_TOKEN": "tok_123",
             "ZERODHA_USER": "user",
         }.get(key, default or "")
 

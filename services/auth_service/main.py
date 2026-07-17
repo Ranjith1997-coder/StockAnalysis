@@ -66,21 +66,14 @@ def _do_refresh(redis: RedisProxy, reason: str = "scheduled") -> bool:
     """
     try:
         from auth.auth_login import generate_enctoken
-        success, session = generate_enctoken()
-        if not success:
+        success, session, enctoken = generate_enctoken()
+        if not success or not enctoken:
             logger.error(f"[auth-service] TOTP login failed (reason={reason})")
             _send_alert(redis, f"Zerodha auth refresh failed ({reason})")
             return False
     except Exception as e:
         logger.exception(f"[auth-service] TOTP login error (reason={reason}): {e}")
         _send_alert(redis, f"Zerodha auth refresh error: {e}")
-        return False
-
-    load_dotenv(override=True)
-    enctoken = os.getenv(constant.ENV_ZERODHA_ENC_TOKEN)
-    if not enctoken:
-        logger.error("[auth-service] enctoken not found in .env after login")
-        _send_alert(redis, "Zerodha auth: enctoken missing after login")
         return False
 
     now_ts = time.time()
