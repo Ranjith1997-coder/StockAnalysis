@@ -66,7 +66,7 @@ def _do_refresh(redis: RedisProxy, reason: str = "scheduled") -> bool:
     """
     try:
         from auth.auth_login import generate_enctoken
-        success = generate_enctoken()
+        success, session = generate_enctoken()
         if not success:
             logger.error(f"[auth-service] TOTP login failed (reason={reason})")
             _send_alert(redis, f"Zerodha auth refresh failed ({reason})")
@@ -94,19 +94,24 @@ def _do_refresh(redis: RedisProxy, reason: str = "scheduled") -> bool:
     logger.info(f"[auth-service] Enctoken refreshed and published (reason={reason})")
     incr_system("auth_refreshes")
 
-    # Also refresh Sensibull session (uses Zerodha session to get Sensibull access_token)
-    _do_sensibull_refresh(redis, reason=reason)
+    # Also refresh Sensibull session — reuse the Zerodha session to avoid
+    # a second login that would invalidate this enctoken.
+    _do_sensibull_refresh(redis, reason=reason, zerodha_session=session)
 
     return True
 
 
-def _do_sensibull_refresh(redis: RedisProxy, reason: str = "scheduled") -> bool:
+def _do_sensibull_refresh(redis: RedisProxy, reason: str = "scheduled",
+                           zerodha_session=None) -> bool:
     """Refresh Sensibull access_token using the Zerodha session.
 
     Flow:
-      1. Use Zerodha enctoken session to hit Sensibull login endpoint
+      1. Use existing Zerodha session (from generate_enctoken) to hit Sensibull login endpoint
       2. Follow OAuth redirect chain → get request_token
       3. POST request_token to Sensibull generate endpoint → get access_token + client_info
+
+    If zerodha_session is None, does a fresh Zerodha login (fallback for standalone use).
+    WARNING: a fresh login invalidates any existing enctoken — prefer passing the session.
 
     Publishes access_token + client_info to Redis hash 'auth:sensibull'.
     """
@@ -115,43 +120,45 @@ def _do_sensibull_refresh(redis: RedisProxy, reason: str = "scheduled") -> bool:
     from urllib.parse import urlparse, parse_qs
 
     try:
-        load_dotenv(override=True)
-        user_id = os.getenv("ZERODHA_USER")
-        password = os.getenv("ZERODHA_PASS")
-        totp_secret = os.getenv("ZERODHA_TOTP_SECRET")
-        enctoken = os.getenv(constant.ENV_ZERODHA_ENC_TOKEN)
+        if zerodha_session is not None:
+            session = zerodha_session
+        else:
+            logger.warning("[auth-service] Sensibull refresh: no Zerodha session — doing fresh login (may invalidate existing enctoken)")
+            load_dotenv(override=True)
+            user_id = os.getenv("ZERODHA_USER")
+            password = os.getenv("ZERODHA_PASS")
+            totp_secret = os.getenv("ZERODHA_TOTP_SECRET")
 
-        if not all([user_id, password, totp_secret]):
-            logger.error("[auth-service] Sensibull refresh: missing Zerodha credentials")
-            return False
+            if not all([user_id, password, totp_secret]):
+                logger.error("[auth-service] Sensibull refresh: missing Zerodha credentials")
+                return False
 
-        # Step 1: Fresh Zerodha login (needed for OAuth redirect)
-        session = requests.Session()
-        zk_headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "X-Kite-Version": "3",
-        }
-        login_resp = session.post(
-            "https://kite.zerodha.com/api/login",
-            data={"user_id": user_id, "password": password},
-            headers=zk_headers, timeout=10,
-        ).json()
+            session = requests.Session()
+            zk_headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "X-Kite-Version": "3",
+            }
+            login_resp = session.post(
+                "https://kite.zerodha.com/api/login",
+                data={"user_id": user_id, "password": password},
+                headers=zk_headers, timeout=10,
+            ).json()
 
-        if login_resp.get("status") != "success":
-            logger.error(f"[auth-service] Sensibull refresh: Zerodha login failed: {login_resp.get('message')}")
-            return False
+            if login_resp.get("status") != "success":
+                logger.error(f"[auth-service] Sensibull refresh: Zerodha login failed: {login_resp.get('message')}")
+                return False
 
-        request_id = login_resp["data"]["request_id"]
-        totp_pin = pyotp.TOTP(totp_secret).now()
-        twofa_resp = session.post(
-            "https://kite.zerodha.com/api/twofa",
-            data={"user_id": user_id, "request_id": request_id, "twofa_value": totp_pin},
-            headers=zk_headers, timeout=10,
-        ).json()
+            request_id = login_resp["data"]["request_id"]
+            totp_pin = pyotp.TOTP(totp_secret).now()
+            twofa_resp = session.post(
+                "https://kite.zerodha.com/api/twofa",
+                data={"user_id": user_id, "request_id": request_id, "twofa_value": totp_pin},
+                headers=zk_headers, timeout=10,
+            ).json()
 
-        if twofa_resp.get("status") != "success":
-            logger.error(f"[auth-service] Sensibull refresh: Zerodha 2FA failed: {twofa_resp.get('message')}")
-            return False
+            if twofa_resp.get("status") != "success":
+                logger.error(f"[auth-service] Sensibull refresh: Zerodha 2FA failed: {twofa_resp.get('message')}")
+                return False
 
         # Step 2: Follow Sensibull OAuth redirect chain (auto-approves since we're logged in)
         r = session.get(
