@@ -30,10 +30,12 @@ def _mark_ran_today() -> None:
         logging.warning(f"Could not write lock file: {e}")
 
 
-def generate_enctoken() -> bool:
+def generate_enctoken() -> tuple[bool, "requests.Session | None"]:
     """Run the full Zerodha login flow and write the enctoken to .env.
 
-    Returns True on success, False on any failure.
+    Returns (True, session) on success, (False, None) on any failure.
+    The session object is returned so callers can reuse it for Sensibull OAuth
+    without doing a second login (which would invalidate this enctoken).
     """
     load_dotenv()
     user_id      = os.getenv("ZERODHA_USER")
@@ -43,7 +45,7 @@ def generate_enctoken() -> bool:
 
     if not all([user_id, password, totp_secret]):
         logging.error("Missing ZERODHA_USER / ZERODHA_PASS / ZERODHA_TOTP_SECRET in .env")
-        return False
+        return False, None
 
     session = requests.Session()
     headers = {
@@ -65,7 +67,7 @@ def generate_enctoken() -> bool:
 
         if login_resp.get("status") != "success":
             logging.error(f"Login failed: {login_resp.get('message')}")
-            return False
+            return False, None
 
         request_id = login_resp["data"]["request_id"]
         totp_pin   = pyotp.TOTP(totp_secret).now()
@@ -83,20 +85,20 @@ def generate_enctoken() -> bool:
 
         if twofa_resp.get("status") != "success":
             logging.error(f"2FA failed: {twofa_resp.get('message')}")
-            return False
+            return False, None
 
         enctoken = session.cookies.get("enctoken")
         if not enctoken:
             logging.error("Could not find enctoken in cookies.")
-            return False
+            return False, None
 
         set_key(env_file_path, "ZERODHA_ENC_TOKEN", enctoken)
         logging.info("✅ enctoken refreshed successfully.")
-        return True
+        return True, session
 
     except Exception as e:
         logging.error(f"Auth failed: {e}")
-        return False
+        return False, None
 
 
 if __name__ == "__main__":
@@ -113,7 +115,7 @@ if __name__ == "__main__":
         logging.info("Run with --force or 'make auth-force' to override.")
         sys.exit(0)
 
-    success = generate_enctoken()
+    success, _session = generate_enctoken()
     if success:
         _mark_ran_today()   # only written on success — failure retries next run
         sys.exit(0)

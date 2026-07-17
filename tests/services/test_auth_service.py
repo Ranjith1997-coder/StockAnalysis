@@ -18,7 +18,7 @@ class TestDoRefresh:
     def test_success_publishes_enctoken(self, mock_gen, mock_getenv, mock_load):
         from services.auth_service.main import _do_refresh, AUTH_HASH, AUTH_CHANNEL
 
-        mock_gen.return_value = True
+        mock_gen.return_value = (True, MagicMock())
         mock_getenv.side_effect = lambda key, default=None: {
             "ZERODHA_ENC_TOKEN": "fresh_token_abc123",
             "ZERODHA_USER": "user123",
@@ -46,7 +46,7 @@ class TestDoRefresh:
     def test_failure_sends_alert(self, mock_gen):
         from services.auth_service.main import _do_refresh
 
-        mock_gen.return_value = False
+        mock_gen.return_value = (False, None)
         redis = MagicMock()
         result = _do_refresh(redis, reason="scheduled_morning")
 
@@ -78,7 +78,7 @@ class TestDoRefresh:
     def test_missing_enctoken_after_login(self, mock_gen, mock_getenv, mock_load):
         from services.auth_service.main import _do_refresh
 
-        mock_gen.return_value = True
+        mock_gen.return_value = (True, MagicMock())
         mock_getenv.side_effect = lambda key, default=None: {
             "ZERODHA_ENC_TOKEN": None,  # missing!
             "ZERODHA_USER": "user123",
@@ -99,7 +99,7 @@ class TestDoRefresh:
     def test_publishes_correct_hash_fields(self, mock_gen, mock_getenv, mock_load):
         from services.auth_service.main import _do_refresh, AUTH_HASH
 
-        mock_gen.return_value = True
+        mock_gen.return_value = (True, MagicMock())
         mock_getenv.side_effect = lambda key, default=None: {
             "ZERODHA_ENC_TOKEN": "tok_123",
             "ZERODHA_USER": "my_user",
@@ -120,7 +120,7 @@ class TestDoRefresh:
     def test_publishes_pubsub_channel(self, mock_gen, mock_getenv, mock_load):
         from services.auth_service.main import _do_refresh, AUTH_CHANNEL
 
-        mock_gen.return_value = True
+        mock_gen.return_value = (True, MagicMock())
         mock_getenv.side_effect = lambda key, default=None: {
             "ZERODHA_ENC_TOKEN": "tok_123",
             "ZERODHA_USER": "user",
@@ -262,7 +262,7 @@ class TestRunSchedule:
         call_count = [0]
         def fake_now():
             call_count[0] += 1
-            if call_count[0] == 1:
+            if call_count[0] <= 2:  # init + first loop iteration
                 return datetime(2026, 7, 13, 8, 0)  # 08:00 → morning branch
             else:
                 auth_main._running = False
@@ -288,7 +288,7 @@ class TestRunSchedule:
         call_count = [0]
         def fake_now():
             call_count[0] += 1
-            if call_count[0] == 1:
+            if call_count[0] <= 2:  # init + first loop iteration
                 return datetime(2026, 7, 13, 12, 0)  # noon → evening branch
             else:
                 auth_main._running = False
@@ -314,7 +314,7 @@ class TestRunSchedule:
         call_count = [0]
         def fake_now():
             call_count[0] += 1
-            if call_count[0] == 1:
+            if call_count[0] <= 2:  # init + first loop iteration
                 return datetime(2026, 7, 13, 20, 0)  # 8 PM → midnight branch
             else:
                 auth_main._running = False
