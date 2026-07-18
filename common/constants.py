@@ -55,6 +55,12 @@ ANALYSIS_RESULTS_STREAM  = "analysis:results"
 ANALYSIS_JOBS_GROUP      = "analysis-workers"
 ANALYSIS_RESULTS_GROUP   = "monolith"
 
+# Signal intelligence: cross-layer confluence stream contracts
+SIGNALS_STREAM       = "intelligence:signals"
+SIGNALS_GROUP        = "signal-intelligence"
+CONFLUENCE_STREAM    = "intelligence:confluence"
+CONFLUENCE_GROUP     = "monolith-confluence"
+
 
 #DEV_CONSTANTS
 # Set NO_OF_STOCKS / NO_OF_INDEX env vars to limit how many stocks/indices are loaded

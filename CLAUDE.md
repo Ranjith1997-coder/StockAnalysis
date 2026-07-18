@@ -12,12 +12,12 @@
 
 # Architecture & Constraints
 - Indian NSE/BSE equity & derivatives analysis.
-- **Always-running services**: monolith + data-gateway + notification-service (all 24/7, `Restart=always`).
+- **Always-running services**: monolith + data-gateway + market-data + analysis-engine + signal-intelligence + notification-service + auth-service + resource-monitor (all 24/7, `Restart=always`).
 - **Data flow**: data-gateway fetches yfinance + Sensibull → Redis hashes → monolith reads from Redis → writes notifications to Redis stream → notification-service sends Telegram/Discord.
 - **Cycle sync**: data-gateway publishes `data:cycle_ready` (Pub/Sub) + `data:cycle_stream` (durable stream) after each fetch. Monolith's `CycleSubscriber` blocks until signal arrives.
 - Zerodha KiteConnect WebSocket + Sensibull REST (via data-gateway) + yfinance (via data-gateway) + Telegram.
 - **Entry point:** `intraday/intraday_monitor.py` → `_run_daily_loop()` (production) or `start_stock_analysis()` (dev).
-- **Signal Correlation:** `SignalBus` → `SignalCorrelator` → `MarketNarrator` (Gemini Flash LLM).
+- **Signal Correlation:** every process (monolith, analysis-engine, market-data) emits `Signal` objects via `RedisSignalBus` → `intelligence:signals` stream. The standalone `signal-intelligence` service (single instance — NOT horizontally scalable) is the only consumer that combines LIVE+INTRADAY+POSITIONAL into one `SignalCorrelator`; on confluence it sends the base Telegram alert directly and publishes `intelligence:confluence` → monolith's `MarketNarrator` (Gemini Flash LLM) for HIGH-level narratives only.
 - **Registration Order:** `OptionSellerCompositeAnalyser` MUST be registered last.
 - **Options Source:** When `OPTIONS_SOURCE=both`, Zerodha is authoritative. Sensibull enriches ONLY `{delta, gamma, theta, vega, iv, iv_change}` via `TickStore.update_option_tick(merge=True)`.
 - **Logging:** All services use `services/common/logging.py` via `get_logger()`. Monolith's `common/logging_util.py` is a shim.

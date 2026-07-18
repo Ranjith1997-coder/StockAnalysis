@@ -617,7 +617,7 @@ server-enable-always-on: timers-disable
 
 .PHONY: server-svcs-status
 server-svcs-status:
-	@for svc in redis-server stockanalysis stockanalysis-notification stockanalysis-data-gateway stockanalysis-analysis-engine; do \
+	@for svc in redis-server stockanalysis stockanalysis-notification stockanalysis-data-gateway stockanalysis-analysis-engine stockanalysis-signal-intelligence; do \
 		STATUS=$$(ssh $(SERVER) "systemctl is-active $$svc 2>/dev/null || echo not loaded"); \
 		printf "  %-32s %s\n" "$$svc" "$$STATUS"; \
 	done
@@ -747,6 +747,43 @@ server-analysis-engine-start:
 
 server-analysis-engine-stop:
 	ssh $(SERVER) "sudo systemctl stop stockanalysis-analysis-engine && echo 'Stopped'"
+
+# ─── Signal Intelligence ──────────────────────────────────────────────────────
+.PHONY: run-signal-intelligence signal-intelligence-deploy server-signal-intelligence-status
+.PHONY: server-signal-intelligence-start server-signal-intelligence-stop server-signal-intelligence-logs
+
+run-signal-intelligence:
+	@echo "Starting signal-intelligence..."
+	@echo "Press Ctrl+C to stop."
+	REDIS_URL=redis://localhost:6379 PYTHONPATH=$(CURDIR) $(PYTHON) services/signal_intelligence/main.py
+
+svc-signal-intelligence-check:
+	@redis-cli XINFO GROUPS intelligence:signals 2>/dev/null || echo "No consumer group yet (start signal-intelligence first)"
+	@redis-cli XLEN intelligence:signals 2>/dev/null || echo "0"
+	@redis-cli XLEN intelligence:confluence 2>/dev/null || echo "0"
+	@redis-cli HGETALL service:registry:signal-intelligence 2>/dev/null || echo "No worker heartbeat"
+
+svc-signal-intelligence-logs:
+	@tail -50 logs/signal-intelligence.log 2>/dev/null || echo "No signal-intelligence logs found."
+
+signal-intelligence-deploy:
+	@echo "=== Deploying signal-intelligence systemd unit to server ==="
+	ssh $(SERVER) "sudo cp $$(pwd)/configs/stockanalysis-signal-intelligence.service /etc/systemd/system/stockanalysis-signal-intelligence.service 2>/dev/null; \
+		sudo systemctl daemon-reload && \
+		sudo systemctl enable stockanalysis-signal-intelligence && \
+		sudo systemctl restart stockanalysis-signal-intelligence && \
+		echo 'Signal intelligence deployed and started'"
+
+server-signal-intelligence-status:
+	ssh $(SERVER) "systemctl status stockanalysis-signal-intelligence --no-pager 2>/dev/null | head -10"
+	@echo ""
+	ssh $(SERVER) "redis-cli HGETALL service:registry:signal-intelligence 2>/dev/null" || true
+
+server-signal-intelligence-start:
+	ssh $(SERVER) "sudo systemctl start stockanalysis-signal-intelligence && echo 'Started' || echo 'FAILED'"
+
+server-signal-intelligence-stop:
+	ssh $(SERVER) "sudo systemctl stop stockanalysis-signal-intelligence && echo 'Stopped'"
 
 server-analysis-engine-logs:
 	ssh $(SERVER) "journalctl -u stockanalysis-analysis-engine --no-pager -n 50"

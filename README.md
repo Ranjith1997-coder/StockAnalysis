@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-StockAnalysis is an automated analysis system for Indian equity and derivatives markets (NSE). It targets NIFTY weekly options traders using live Zerodha WebSocket data for real-time tick-level analysis, Sensibull for OI chain and PCR data, and yfinance for historical price data. The system runs as 8 always-on microservices (monolith, data-gateway, market-data, analysis-engine, notification-service, resource-monitor, auth-service, Redis) with Redis as the sole shared-state and message-broker dependency.
+StockAnalysis is an automated analysis system for Indian equity and derivatives markets (NSE). It targets NIFTY weekly options traders using live Zerodha WebSocket data for real-time tick-level analysis, Sensibull for OI chain and PCR data, and yfinance for historical price data. The system runs as 9 always-on microservices (monolith, data-gateway, market-data, analysis-engine, signal-intelligence, notification-service, resource-monitor, auth-service, Redis) with Redis as the sole shared-state and message-broker dependency.
 
 ---
 
@@ -100,12 +100,17 @@ Data flow:
                   → Heartbeat: stats:system + per-stock tick counters (every 30s)
   analysis-engine → Consumes data:cycle_stream → runs 12 analysers + scoring
                   → Writes analysis metrics (stats:stock:*, stats:system)
+                  → RedisSignalBus emits INTRADAY/POSITIONAL signals → intelligence:signals
+  signal-intelligence → Consumes intelligence:signals (LIVE+INTRADAY+POSITIONAL, all processes)
+                  → single shared SignalCorrelator detects cross-layer confluence
+                  → XADDs intelligence:confluence + sends base Telegram alert directly
   resource-monitor → Polls psutil every 30s → sys:latest:* (system, per-service, Redis)
                   → sys:ts:* time-series (24h ZSET), sys:daily:* rollups (30d)
                   → Fires proactive alerts → notification:jobs
   monolith      → reads Redis hashes (sub-millisecond)
                   → writes notification:jobs stream
-                  → alert counters: alerts_trend, alerts_confluence, etc.
+                  → alert counters: alerts_trend, etc.
+                  → consumes intelligence:confluence (HIGH-only) for LLM narrator follow-up
   notification  → reads notification:jobs → sends Telegram/Discord
                   → increments alerts_delivered / alerts_failed
   metrics       → /debugstats bot command reads stats:system + stats:stock:*
@@ -183,14 +188,14 @@ total_score = base_score + alignment_bonus
 ## Intelligence Layer (opt-in)
 
 When `ENABLE_INTELLIGENCE=1`:
-- **SignalBus**: thread-safe pub/sub event bus — all analysers emit `Signal` objects
-- **SignalCorrelator**: detects cross-layer confluence (LIVE + INTRADAY + POSITIONAL alignment)
+- **RedisSignalBus**: every process (monolith, analysis-engine, market-data) emits `Signal` objects to the shared `intelligence:signals` Redis stream — not a local in-memory bus, since each layer's signals originate in a different process
+- **signal-intelligence service** (standalone, single instance): the one consumer that combines LIVE + INTRADAY + POSITIONAL into a single `SignalCorrelator` and detects cross-layer confluence; sends the base Telegram alert directly and publishes `intelligence:confluence` for downstream consumers
 - **Morning bias**: extracts positional bias signals from 8 PM analysis results (fast path — zero HTTP, ~0.5s). Falls back to full recompute from Redis if monolith restarted overnight.
 - **LiveStockEngine**: per-tick VWAP cross, bid/ask imbalance, ORB, day high/low break signals
 
 When `ENABLE_NARRATOR=1` (requires `GEMINI_API_KEY`):
-- **MarketNarrator**: LLM-powered trade thesis via Google Gemini Flash
-- Triggered only on HIGH confluences (3+ layers aligned) with 30-min per-symbol cooldown
+- **MarketNarrator**: LLM-powered trade thesis via Google Gemini Flash, run from the monolith (needs live Stock/zerodha_ctx context)
+- Monolith consumes `intelligence:confluence`, filters to HIGH confluences (3+ layers aligned) with 30-min per-symbol cooldown, and calls the narrator
 - Also generates EOD positional briefing after ~4 PM positional run
 
 ---
@@ -247,7 +252,7 @@ When `ENABLE_NARRATOR=1` (requires `GEMINI_API_KEY`):
 | `ENABLE_POST_MARKET` | `0` | Enable post-market analysis pipeline |
 | `ENABLE_LIVE_OPTIONS` | `0` | Enable real-time option chain tracking |
 | `LIVE_OPTIONS_ONLY` | `0` | Skip all regular analysis — WebSocket live options only |
-| `ENABLE_INTELLIGENCE` | `0` | Enable SignalBus + Correlator + morning bias |
+| `ENABLE_INTELLIGENCE` | `0` | Enable RedisSignalBus emission + morning bias (correlation runs separately in signal-intelligence) |
 | `ENABLE_NARRATOR` | `0` | Enable LLM trade narratives (requires `GEMINI_API_KEY`) |
 | `OPTIONS_SOURCE` | `zerodha` | `zerodha` or `sensibull` for live option tick source |
 | `HEALTHCHECK_URL` | (empty) | Dead-man's switch ping URL (e.g., healthchecks.io) |
@@ -272,6 +277,7 @@ Log files (10 MB rotating, 3 backups each):
 | `logs/data-gateway.log` | Data gateway |
 | `logs/market-data.log` | Market-data (WebSocket ingestion) |
 | `logs/analysis-engine.log` | Analysis engine (12 analysers + scoring) |
+| `logs/signal-intelligence.log` | Signal intelligence (cross-layer confluence detection) |
 | `logs/notification-service.log` | Notification service |
 | `logs/resource-monitor.log` | Resource monitor (system metrics + alerts) |
 | `logs/cycle-subscriber.log` | Cycle subscriber (internal) |
@@ -346,6 +352,7 @@ All services run 24/7 with `Restart=always`. `scripts/system_config` contains th
 | `stockanalysis-data-gateway.service` | 24/7 (self-scheduling) | yfinance + Sensibull → Redis hashes + cycle signals |
 | `stockanalysis-market-data.service` | 24/7 | WebSocket ingestion (WS1 equity/index, WS2 options, Sensibull WS) → Redis snapshots + Pub/Sub signals |
 | `stockanalysis-analysis-engine.service` | 24/7 | Consumes data:cycle_stream → runs 12 analysers + scoring → writes analysis metrics |
+| `stockanalysis-signal-intelligence.service` | 24/7, single instance | Consumes intelligence:signals → cross-layer confluence via SignalCorrelator → intelligence:confluence + direct Telegram alert |
 | `stockanalysis-resource-monitor.service` | 24/7 | Polls psutil + Redis metrics every 30s → sys:latest:* + sys:ts:* + proactive alerts → notification:jobs |
 | `stockanalysis-auth.service` | 24/7 (self-scheduling) | Zerodha TOTP login (09:00 + 18:50) + Sensibull OAuth auto-login + reactive refresh via auth:commands stream |
 | `stockanalysis.service` | 24/7 (self-scheduling) | Monolith — pre-market, intraday, positional analysis |
@@ -492,7 +499,8 @@ StockAnalysis/
 ├── data/              # final_derivatives_list.json, backtest results
 ├── docs/              # DESIGN.md, DATA_SCHEMA.md, ANALYSER_DATA_SOURCES.md
 ├── fno/               # SensibullFetcher, sensibull_feed.py (OPTIONS_SOURCE=sensibull path)
-├── intelligence/      # SignalBus, SignalCorrelator, MarketNarrator, GeminiClient
+├── intelligence/      # Signal, SignalCorrelator (+ wire format), MarketNarrator, GeminiClient
+├── services/signal_intelligence/  # Standalone confluence-detection service (single instance)
 ├── intraday/          # intraday_monitor.py — main entry point
 ├── ml_pipeline/       # ML prediction pipeline (XGBoost, LightGBM, RF, Ensemble)
 ├── notification/      # Telegram sender + bot commands (Command Router pattern)
@@ -547,7 +555,7 @@ StockAnalysis/
 | `auth/auth_login.py` | Automated TOTP Zerodha login — called by auth-service at 09:00 + 18:50 |
 | `services/auth_service/main.py` | Auth-service — Zerodha TOTP login + Sensibull OAuth auto-login + reactive refresh via auth:commands stream |
 | `notification/commands/sysstats.py` | `/sysstats` bot command — live dashboard, 24h sparklines, Redis deep dive |
-| `scripts/system_config` | systemd unit files (auth + notification + data-gateway + market-data + analysis-engine + resource-monitor + monolith — all always-on) |
+| `configs/*.service` | systemd unit files (auth + notification + data-gateway + market-data + analysis-engine + signal-intelligence + resource-monitor + monolith — all always-on) |
 | `analyser/Analyser.py` | BaseAnalyzer (decorator framework) + AnalyserOrchestrator |
 | `zerodha/zerodha_connect.py` | Modified KiteConnect — enctoken auth, dual root URI (/oms for authenticated, api.kite.trade for public instruments) |
 | `zerodha/futures_fetcher.py` | FuturesFetcher — Kite historical futures data (used by data-gateway's ZerodhaFuturesManager) |
