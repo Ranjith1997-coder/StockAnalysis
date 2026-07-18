@@ -37,10 +37,10 @@ from post_market_analysis.runner import run_and_summarize
 from premarket.premarket_report import run_global_cues_report, run_preopen_report
 from urllib.parse import quote
 from common.token_registry import TokenRegistry, TokenInfo, TokenType
-from intelligence.signal_bus import SignalBus
-from intelligence.correlator import SignalCorrelator, Confluence
+from intelligence.correlator import Confluence
 from intelligence.signal import Signal, Direction, Layer, weight_to_strength
 from services.common.redis_proxy import RedisProxy
+from services.market_data.signal_publisher import RedisSignalBus
 from services.common.stock_loader import (
     load_price_data_from_redis,
     load_sensibull_from_redis,
@@ -211,7 +211,7 @@ ENABLE_TELEGRAM_BOT = False
 ENABLE_POST_MARKET = False
 ENABLE_LIVE_OPTIONS = False
 LIVE_OPTIONS_ONLY   = False   # When True: skip all regular analysis, run live options engine only
-ENABLE_INTELLIGENCE = False   # When True: SignalBus + Correlator + morning bias + LiveStockEngine
+ENABLE_INTELLIGENCE = False   # When True: RedisSignalBus + morning bias + LiveStockEngine
 redis_proxy: Optional[RedisProxy] = None
 cycle_subscriber: Optional[CycleSubscriber] = None
 
@@ -485,39 +485,18 @@ def create_stock_and_index_objects(stockName = None, indexName = None, commodity
 
     # Data is loaded from Redis by _load_initial_data_from_redis() after init.
 
-def _re_emit_signals_from_analysis(stock, layer: Layer):
-    """Re-emit signals from analysis dict to in-memory SignalBus.
-    
-    The analysis-engine worker's _emit_signals() no-ops because
-    shared.app_ctx.signal_bus is None in the worker process. The monolith
-    re-emits here so the Correlator/Narrator see the signals.
-    """
-    bus = shared.app_ctx.signal_bus
-    if not bus:
-        return
-    for sentiment in ("BULLISH", "BEARISH"):
-        direction = Direction[sentiment]
-        for analysis_type in stock.analysis.get(sentiment, {}):
-            weight = constant.ANALYSIS_WEIGHTS.get(
-                analysis_type, constant.ANALYSIS_WEIGHTS.get("DEFAULT", 10)
-            )
-            bus.emit(Signal(
-                symbol=stock.stock_symbol,
-                direction=direction,
-                source=analysis_type.lower(),
-                layer=layer,
-                strength=weight_to_strength(weight),
-            ))
-
-
 def _convert_stream_result(fields: dict, stock_obj) -> Tuple[MonitorResult, bool, Optional[str]]:
     """Convert a stream result dict to the standard tuple format + side effects.
     
     Side effects performed:
     - Updates stock_obj.analysis from result (for reporting/intelligence)
     - Adds to 52-week lists if applicable
-    - Re-emits signals to in-memory SignalBus
     - Sends Telegram notification if trend found
+
+    Signal emission for INTRADAY/POSITIONAL layers happens directly in the
+    analysis-engine worker process now (services/analysis_engine/main.py
+    wires a RedisSignalBus at startup), not here — this function used to
+    reconstruct and re-emit signals as a workaround for that being broken.
     """
     result_str = fields.get("result", "ERROR")
     trend_found = fields.get("trend_found", "false").lower() == "true"
@@ -541,14 +520,6 @@ def _convert_stream_result(fields: dict, stock_obj) -> Tuple[MonitorResult, bool
         shared.ticker_52_week_high_list.append(stock_obj)
     if is_52w_low:
         shared.ticker_52_week_low_list.append(stock_obj)
-
-    if shared.app_ctx.signal_bus and trend_found:
-        layer = (
-            Layer.POSITIONAL
-            if shared.app_ctx.mode == shared.Mode.POSITIONAL
-            else Layer.INTRADAY
-        )
-        _re_emit_signals_from_analysis(stock_obj, layer)
 
     if trend_found and message:
         _send_trend_notification(stock_obj, message)
@@ -1137,51 +1108,76 @@ def report_52_week_high_low(max_items: int = 40, clear_after: bool = False):
 
     return msg
 
-def _handle_confluence(confluence: Confluence):
-    """Format and send a confluence alert to the live options Telegram channel."""
-    layers_str = " + ".join(
-        l.value.upper() for l in sorted(confluence.layers_involved, key=lambda l: l.value)
-    )
-    sources = "\n".join(
-        f"  - {s.layer.value}: {s.source} ({s.strength.name})"
-        for s in sorted(confluence.signals, key=lambda s: s.timestamp)
-    )
-
-    level = confluence.level
-    caution = "\n  CAUTION: contradicting signals from other layers" if confluence.has_contradiction else ""
-
-    msg = (
-        f"{'[HIGH]' if level == 'HIGH' else '[MODERATE]'} "
-        f"<b>{confluence.symbol} — {level} CONFLUENCE {confluence.direction.value}</b>\n\n"
-        f"Layers: {layers_str}\n"
-        f"Score: {confluence.score:.0f}\n\n"
-        f"Signals:\n{sources}{caution}"
-    )
-
-    TELEGRAM_NOTIFICATIONS.send_live_options_notification(msg, parse_mode="HTML", symbol=confluence.symbol)
-    incr_stock(confluence.symbol, "alerts_confluence")
-    incr_system("total_confluences")
-    incr_daily("confluences")
-    logger.info(f"[Confluence] {confluence.symbol} {confluence.direction.value} "
-                f"{level} ({confluence.layer_count} layers, score={confluence.score:.0f})")
-
-    # Phase 2: async LLM narrative — HIGH confluences only (3+ layers aligned).
-    # MODERATE (2-layer) confluences get the raw alert above but no LLM call,
-    # which eliminates the bulk of morning-open notification flooding.
-    if shared.app_ctx.narrator and confluence.level == "HIGH":
-        shared.app_ctx.narrator.narrate_async(confluence)
-
-
 def _init_signal_intelligence():
-    """Set up the SignalBus and Correlator."""
-    bus = SignalBus()
-    correlator = SignalCorrelator(on_confluence=_handle_confluence)
-    bus.subscribe(correlator.on_signal)
+    """Wire the monolith's own signal emissions (morning bias + 8pm positional
+    run) into the shared intelligence:signals stream.
 
-    shared.app_ctx.signal_bus = bus
-    shared.app_ctx.correlator = correlator
+    Cross-layer confluence detection itself now lives in the standalone
+    signal-intelligence service (services/signal_intelligence/) — it's the
+    only process that ever sees LIVE + INTRADAY + POSITIONAL signals
+    together. The monolith no longer runs its own local SignalCorrelator;
+    it only consumes the resulting intelligence:confluence stream for
+    HIGH-level LLM narration (see _start_confluence_narrator_subscriber),
+    since that's the one piece that needs this process's live Stock/
+    zerodha_ctx state.
+    """
+    shared.app_ctx.signal_bus = RedisSignalBus(redis_proxy)
+    logger.info("Signal intelligence initialised (RedisSignalBus -> intelligence:signals)")
 
-    logger.info("Signal intelligence initialised (bus + correlator)")
+
+def _start_confluence_narrator_subscriber():
+    """Consume intelligence:confluence for HIGH-level LLM narration only.
+
+    The base Telegram alert for every confluence (MODERATE + HIGH) is
+    already sent by the signal-intelligence service itself — that call is
+    stateless (notification/Notification.py just XADDs to notification:jobs).
+    This consumer's only job is the narrative enrichment, which needs
+    MarketNarrator/ContextBuilder reading live stock.zerodha_ctx objects
+    that exist only in this process.
+    """
+    import threading as _th
+
+    consumer_group = constant.CONFLUENCE_GROUP
+    consumer_name = "monolith-1"
+
+    try:
+        redis_proxy.xgroup_create(consumer_group, constant.CONFLUENCE_STREAM, mkstream=True)
+    except Exception:
+        pass  # Group already exists
+
+    def _listen():
+        logger.info(f"[monolith] Subscribed to {constant.CONFLUENCE_STREAM} (HIGH-only narration)")
+        while True:
+            try:
+                messages = redis_proxy.xreadgroup(
+                    consumer_group, consumer_name,
+                    {constant.CONFLUENCE_STREAM: ">"},
+                    count=10, block=5000,
+                )
+            except Exception as e:
+                logger.error(f"[monolith] confluence xreadgroup error: {e}")
+                sleep(2)
+                continue
+
+            if not messages:
+                continue
+
+            entries = messages[0][1] if isinstance(messages, list) and messages else []
+            for msg_id, fields in entries:
+                try:
+                    confluence = Confluence.from_stream_fields(fields)
+                    if confluence.level == "HIGH" and shared.app_ctx.narrator:
+                        shared.app_ctx.narrator.narrate_async(confluence)
+                except Exception as e:
+                    logger.error(f"[monolith] Failed to process confluence {msg_id}: {e}")
+                finally:
+                    try:
+                        redis_proxy.xack(constant.CONFLUENCE_STREAM, consumer_group, msg_id)
+                    except Exception:
+                        pass
+
+    t = _th.Thread(target=_listen, daemon=True, name="confluence-narrator-subscriber")
+    t.start()
 
 
 _morning_bias_done = False
@@ -1666,7 +1662,7 @@ def init():
         LIVE_OPTIONS_ONLY = False
 
     if os.getenv(constant.ENV_ENABLE_INTELLIGENCE, "0") == "1":
-        logger.info("Intelligence layer enabled (SignalBus + Correlator + morning bias)")
+        logger.info("Intelligence layer enabled (RedisSignalBus + morning bias + confluence narrator)")
         ENABLE_INTELLIGENCE = True
     else:
         logger.info("Intelligence layer disabled")
@@ -1696,7 +1692,7 @@ def init():
     # Initialize token registry
     shared.app_ctx.token_registry = TokenRegistry()
 
-    # Initialize intelligence layer (SignalBus + Correlator)
+    # Initialize intelligence layer (RedisSignalBus + confluence narrator)
     if ENABLE_INTELLIGENCE:
         _init_signal_intelligence()
 
@@ -1712,6 +1708,8 @@ def init():
                 logger.info("MarketNarrator initialised (Gemini Flash)")
             else:
                 logger.warning("ENABLE_NARRATOR=1 but GEMINI_API_KEY not set — narrator disabled")
+
+        _start_confluence_narrator_subscriber()
 
     create_stock_and_index_objects(args.stock, args.index)
 

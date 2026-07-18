@@ -1,6 +1,6 @@
 # StockAnalysis - Comprehensive Design Document
 
-> **Last Updated**: July 2026 (Phase 1–4 complete: data-gateway, notification-service, market-data, analysis-engine, resource-monitor, auth-service all extracted as always-running microservices; monolith is always-running with self-scheduling daily loop; cycle sync via Redis Pub/Sub + stream; parallel Sensibull fetch (10 workers); unified logging via `services/common/logging.py`; per-stock + system-wide metrics/counters in Redis; `/debugstats` bot command; resource monitor with system/per-service/Redis metrics every 30s, time-series storage, proactive alerts, `/sysstats` bot command; prevDayOHLCV daily refresh with pre-open-safe `_get_prev_day_row()` helper + Zerodha fallback for NaN closes; service versioning via git SHA in Redis registry + `/version` bot command; auth-service handles scheduled TOTP login (09:00 + 18:50) + reactive refresh via auth:commands stream + automated Sensibull OAuth login; monolith reads enctoken from Redis via Pub/Sub subscriber; Zerodha REST endpoint changed from api.kite.trade to kite.zerodha.com/oms; Sensibull REST APIs now require cookie auth (access_token + client_info) — auto-refreshed by auth-service; Sensibull stock_info endpoint renamed from /cache/insights/stock_info to /cache/stock_info with fallback to OI chain + IV chart reconstruction; intraday futures fetch enabled for all symbols (was gated behind positional mode only); no systemd timers — all services self-schedule)
+> **Last Updated**: July 2026 (Phase 1–5 complete: data-gateway, notification-service, market-data, analysis-engine, resource-monitor, auth-service, signal-intelligence all extracted as always-running microservices; monolith is always-running with self-scheduling daily loop; cycle sync via Redis Pub/Sub + stream; parallel Sensibull fetch (10 workers); unified logging via `services/common/logging.py`; per-stock + system-wide metrics/counters in Redis; `/debugstats` bot command; resource monitor with system/per-service/Redis metrics every 30s, time-series storage, proactive alerts, `/sysstats` bot command; prevDayOHLCV daily refresh with pre-open-safe `_get_prev_day_row()` helper + Zerodha fallback for NaN closes; service versioning via git SHA in Redis registry + `/version` bot command; auth-service handles scheduled TOTP login (09:00 + 18:50) + reactive refresh via auth:commands stream + automated Sensibull OAuth login; monolith reads enctoken from Redis via Pub/Sub subscriber; Zerodha REST endpoint changed from api.kite.trade to kite.zerodha.com/oms; Sensibull REST APIs now require cookie auth (access_token + client_info) — auto-refreshed by auth-service; Sensibull stock_info endpoint renamed from /cache/insights/stock_info to /cache/stock_info with fallback to OI chain + IV chart reconstruction; intraday futures fetch enabled for all symbols (was gated behind positional mode only); no systemd timers — all services self-schedule; **NEW**: cross-layer signal confluence fixed at the root — analysis-engine + monolith now wire RedisSignalBus so INTRADAY/POSITIONAL signals actually reach `intelligence:signals` (previously silently dropped), and correlation itself moved out of the monolith into a standalone single-instance `signal-intelligence` service, which sends the base confluence alert directly and publishes `intelligence:confluence` for the monolith's HIGH-only LLM narrator)
 > **Purpose**: Complete architectural reference for the Indian Stock Market Analysis System targeting NSE (National Stock Exchange) equities. This document captures the entire codebase: architecture, data flows, module interactions, signal processing, scoring, notifications, and deployment details.
 
 ---
@@ -45,7 +45,7 @@ An automated stock market analysis system for the Indian market (NSE) that:
 - Runs **2 live options analyzers** (LiveOIAnalyser, LiveStraddleAnalyser) on real-time option ticks
 - Scores signals with a **weighted scoring engine** and sends alerts to **Telegram channels**
 - Generates **pre-market** and **post-market** summary reports
-- Detects **cross-layer signal confluence** (live + intraday + positional alignment) via SignalCorrelator
+- Detects **cross-layer signal confluence** (live + intraday + positional alignment) via a standalone `signal-intelligence` service consuming a unified Redis stream from all three layers
 - Generates **LLM-powered trade narratives** and EOD market briefings via Google Gemini Flash
 - Supports **backtesting** with Optuna-based parameter optimization
 - Includes **sentiment analysis** via FinBERT on news headlines
@@ -93,8 +93,13 @@ StockAnalysis/
 |
 |-- intelligence/
 |   |-- signal.py                    # Signal dataclass, Direction, Layer, SignalStrength enums
-|   |-- signal_bus.py                # Thread-safe pub/sub event bus for cross-layer signals
+|   |-- signal_bus.py                # SignalBus interface (in-memory pub/sub) — kept for type
+|                                    # hints only; every process now uses RedisSignalBus instead
+|                                    # (services/market_data/signal_publisher.py) so signals reach
+|                                    # the shared intelligence:signals stream, not a private buffer
 |   |-- correlator.py                # SignalCorrelator — time-windowed cross-layer confluence
+|                                    # + Confluence.to_stream_fields()/from_stream_fields() — the
+|                                    # shared intelligence:confluence wire format
 |   |-- context_builder.py           # ContextBuilder — gathers live market data for LLM prompts
 |   |-- narrator.py                  # MarketNarrator — LLM-powered trade thesis & EOD briefing
 |   |-- llm_client.py                # GeminiClient — Google Gemini Flash API wrapper
@@ -108,7 +113,7 @@ StockAnalysis/
 |   |-- logging_util.py              # Logger configuration (monolith, legacy)
 |   |-- token_registry.py            # TokenRegistry — O(1) tick routing, zone management
 
-|-- services/                        # Microservices (Phase 1–3 extraction)
+|-- services/                        # Microservices (Phase 1–5 extraction)
 |   |-- common/
 |   |   |-- logging.py               # Per-service logger: get_logger("service-name")
 |   |   |-- redis_proxy.py           # Sync Redis wrapper (hset, hgetall, xadd, xreadgroup, publish, pubsub)
@@ -132,14 +137,21 @@ StockAnalysis/
 |   |   |-- signal_publisher.py      # Pub/Sub signal bus for live options alerts (signal:channel)
 |   |-- analysis_engine/             # EXTRACTED — always-running stream consumer
 |   |   |-- main.py                  # Consumes data:cycle_stream, dispatches worker pool
+|   |   |                            # Wires RedisSignalBus at startup — INTRADAY/POSITIONAL
+|   |   |                            # signals from _emit_signals() now reach intelligence:signals
 |   |   |-- worker.py                # Per-stock worker: 12 analysers + scoring → metrics
+|   |-- signal_intelligence/         # EXTRACTED — always-running cross-layer confluence service
+|   |   |-- main.py                  # Single-instance XREADGROUP consumer on intelligence:signals
+|   |   |                            # (NOT horizontally scalable — one shared SignalCorrelator)
+|   |   |-- worker.py                # reconstruct_signal(), on_confluence() — XADDs
+|   |   |                            # intelligence:confluence + sends the base Telegram alert
+|   |   |                            # directly (stateless — no monolith round trip needed)
 |   |-- resource_monitor/            # EXTRACTED — always-running system metrics collector
 |   |   |-- main.py                  # Polls psutil + Redis every 30s, stores sys:latest:* + sys:ts:* time-series, fires proactive alerts
 |   |-- auth_service/                # EXTRACTED — always-running Zerodha enctoken + Sensibull OAuth lifecycle manager
 |   |   |-- main.py                  # Self-scheduling TOTP login (09:00 + 18:50) + Sensibull OAuth auto-login + reactive auth:commands consumer → Redis publish
 |   |-- coordinator/                 # Designed — orchestrator + intelligence + bot merged
 |   |-- orchestrator/                # Designed — standalone orchestrator
-|   |-- intelligence-service/        # Designed — SignalBus + Correlator + Narrator
 |   |-- bot-service/                 # Designed — Telegram bot commands
 
 |-- notification/
@@ -212,6 +224,7 @@ StockAnalysis/
 |                                    #   stockanalysis-data-gateway.service   (24/7 self-scheduling fetcher)
 |                                    #   stockanalysis-market-data.service    (24/7 WebSocket ingestion)
 |                                    #   stockanalysis-analysis-engine.service(24/7 stream consumer + 12 analysers)
+|                                    #   stockanalysis-signal-intelligence.service(24/7 confluence detector, 10% CPU quota, single instance)
 |                                    #   stockanalysis-resource-monitor.service(24/7 metrics collector, 10% CPU quota)
 |                                    #   stockanalysis-auth.service           (24/7 enctoken + Sensibull OAuth lifecycle, 10% CPU quota)
 |                                    #   stockanalysis.service                 (24/7 monolith — Restart=always)
@@ -219,10 +232,10 @@ StockAnalysis/
 |-- configs/                         # Configuration files
 |-- data/                            # Stock lists (final_derivatives_list.json, etc.)
 |-- docs/                            # Documentation
-|-- tests/                           # Test suite (1251 tests, 69 files across 8 subdirectories)
+|-- tests/                           # Test suite (1260 tests, 70 files across 8 subdirectories)
 |   |-- analyser/                    # 17 test files covering all 11 analyser classes
 |   |-- common/                      # 6 test files (Stock, scoring, token_registry, market_calendar, etc.)
-|   |-- services/                    # 8 test files (auth_service, rate_limiter, stock_loader, cycle_subscriber, version, prevday_fallback, analysis_worker, crash_handler/observability)
+|   |-- services/                    # 9 test files (auth_service, rate_limiter, stock_loader, cycle_subscriber, version, prevday_fallback, analysis_worker, signal_intelligence, crash_handler/observability)
 |   |-- zerodha/                     # 5 test files (ZerodhaTickerManager, LiveOptionsEngine, LiveStockEngine, etc.)
 |   |-- notification/                # 2 test files (Notification, bot_listener)
 |   |-- post_market_analysis/        # 9 test files (all sources, runner, summary, analysis)
@@ -365,8 +378,11 @@ class AppContext:
     zd_ticker_manager             # ZerodhaTickerManager reference
     zd_kc                         # KiteConnect instance
     token_registry: TokenRegistry # Central token registry for O(1) tick routing
-    signal_bus: SignalBus         # Cross-layer signal event bus (when ENABLE_INTELLIGENCE=1)
-    correlator: SignalCorrelator  # Cross-layer confluence detector (when ENABLE_INTELLIGENCE=1)
+    signal_bus: SignalBus         # RedisSignalBus in every process (when ENABLE_INTELLIGENCE=1);
+                                  # emits to intelligence:signals, doesn't correlate locally
+    correlator: SignalCorrelator  # Unused in the monolith's own AppContext — the one live
+                                  # SignalCorrelator instance now runs only inside the standalone
+                                  # signal-intelligence service, not per-process
     narrator: MarketNarrator      # LLM narrative generator (when ENABLE_NARRATOR=1)
     last_equity_tick_time: float  # epoch of last equity WebSocket tick; 0.0 = no tick yet
                                   # Set by ZerodhaTickerManager.on_ticks(); used by /status
@@ -1393,12 +1409,36 @@ The intelligence layer adds cross-layer signal correlation and LLM-powered trade
 ```
 intelligence/
 |-- signal.py           # Signal, Direction, Layer, SignalStrength
-|-- signal_bus.py       # SignalBus (pub/sub)
-|-- correlator.py       # SignalCorrelator + Confluence
-|-- context_builder.py  # ContextBuilder + MarketContext
-|-- narrator.py         # MarketNarrator (LLM trade thesis)
-|-- llm_client.py       # GeminiClient (Gemini Flash API)
+|-- signal_bus.py       # SignalBus interface — kept for type hints; every process now
+|                        # uses RedisSignalBus (services/market_data/signal_publisher.py)
+|-- correlator.py        # SignalCorrelator + Confluence (+ wire-format serialization)
+|-- context_builder.py   # ContextBuilder + MarketContext
+|-- narrator.py          # MarketNarrator (LLM trade thesis)
+|-- llm_client.py        # GeminiClient (Gemini Flash API)
+
+services/signal_intelligence/   # Standalone confluence-detection service (single instance)
+|-- main.py              # XREADGROUP intelligence:signals -> one shared SignalCorrelator
+|-- worker.py            # reconstruct_signal(), on_confluence() -> XADD intelligence:confluence
+                          # + sends the base Telegram alert directly (stateless)
 ```
+
+**Cross-process signal flow.** Confluence requires ≥2 of {LIVE, INTRADAY, POSITIONAL} to align
+for the same symbol/direction, but each layer's signals originate in a different OS process:
+LIVE from `market_data` (WebSocket ticks), INTRADAY from `analysis_engine` (per-cycle analyser
+jobs), POSITIONAL from the monolith (morning bias + 8pm run). All three now publish to a single
+Redis stream, `intelligence:signals`, via `RedisSignalBus` — the only component that ever
+combines them is the standalone `signal-intelligence` service, which is why it must run as
+exactly one instance (a symbol's signals across layers need to land in one in-memory
+`SignalCorrelator` buffer; horizontally scaling it would let Redis round-robin a symbol's
+signals across processes and silently prevent confluence from ever firing).
+
+On confluence, `signal-intelligence` XADDs a `Confluence` to `intelligence:confluence`
+(`Confluence.to_stream_fields()`/`from_stream_fields()` in `intelligence/correlator.py` define
+the shared wire format) and sends the base Telegram alert itself, directly — that call is
+stateless (just another `notification:jobs` XADD), so it needs no data from any other process.
+The monolith consumes `intelligence:confluence` too, but only for `level == "HIGH"` entries, to
+call `MarketNarrator.narrate_async()` — the one piece of this pipeline that genuinely needs the
+monolith's in-memory `Stock`/`zerodha_ctx` objects for LLM context.
 
 ### Phase 1: Signal Correlation (`ENABLE_INTELLIGENCE=1`)
 
@@ -1422,17 +1462,23 @@ class Signal:
 **Layer**: `LIVE` (per-tick), `INTRADAY` (5-min), `POSITIONAL` (daily/morning bias)
 **SignalStrength**: Derived from analysis weight — `WEAK` (<10), `MODERATE` (10-15), `STRONG` (>=16)
 
-#### SignalBus — Thread-Safe Event Bus
+#### RedisSignalBus — Cross-Process Event Bus
 
-Synchronous pub/sub bus. All analysers call `bus.emit(signal)` and the correlator subscribes:
+Every process that emits signals calls `bus.emit(signal)`, exactly as it would against the
+original in-memory `SignalBus`:
 
 ```python
-bus = SignalBus()
-bus.subscribe(correlator.on_signal)
-bus.emit(Signal(...))
+bus = RedisSignalBus(redis)
+shared.app_ctx.signal_bus = bus
+bus.emit(Signal(...))   # XADDs to intelligence:signals, tagged with signal.layer.name
 ```
 
-Thread-safe via `threading.Lock`. Tracks `total_emitted` count for monitoring.
+`RedisSignalBus` (`services/market_data/signal_publisher.py`) implements the same interface as
+the original in-memory `SignalBus`, so analysers don't know or care which one is wired up — but
+because it publishes to Redis instead of an in-process buffer, signals from `market_data`,
+`analysis_engine`, and the monolith all land in the same stream, where the standalone
+`signal-intelligence` service is the only subscriber that combines them into one
+`SignalCorrelator`. Tracks `total_emitted` count for monitoring, same as before.
 
 #### SignalCorrelator — Cross-Layer Confluence
 
@@ -1487,11 +1533,17 @@ Morning bias is skipped in POSITIONAL mode (EOD analysis already runs positional
 
 #### Signal Emission Points
 
-| Layer | Source | When | Score Gate |
-|-------|--------|------|------------|
-| POSITIONAL | `intraday_monitor.compute_morning_bias()` | Once at startup | `score >= MIN_NOTIFICATION_SCORE (110)` |
-| INTRADAY | `AnalyserOrchestrator.run_all_intraday()` | Every 5-min cycle, per stock | `score >= MIN_NOTIFICATION_SCORE (110)` |
-| LIVE | `LiveOptionsEngine.on_option_tick()` | Per tick (via LiveOI/LiveStraddle analysers) | None — always emitted |
+| Layer | Source | Process | When | Score Gate |
+|-------|--------|---------|------|------------|
+| POSITIONAL | `intraday_monitor.compute_morning_bias()` / `positional_analysis()` | monolith | Startup + 8pm run | `score >= MIN_NOTIFICATION_SCORE (110)` |
+| INTRADAY | `AnalyserOrchestrator.run_all_intraday()` | analysis-engine worker | Every 5-min cycle, per stock | `score >= MIN_NOTIFICATION_SCORE (110)` |
+| LIVE | `LiveOptionsEngine.on_option_tick()` | market-data | Per tick (via LiveOI/LiveStraddle analysers) | None — always emitted |
+
+All three call `_emit_signals()` (`analyser/Analyser.py`) exactly the same way regardless of
+process — the only thing that differs is which `RedisSignalBus` instance is wired into that
+process's `shared.app_ctx.signal_bus`. Every emission lands in the same `intelligence:signals`
+stream; the standalone `signal-intelligence` service is what actually reassembles them across
+processes into one correlator buffer per symbol.
 
 **Score gate rationale:** All analysers for a stock run sequentially to completion on the same candle. `_emit_signals()` is only called if `score_result.total_score >= MIN_NOTIFICATION_SCORE (110)`. Stocks that fire only 1-2 weak indicators never reach the correlator. LIVE signals bypass the gate because they originate from per-tick WebSocket data and have no batch score context — latency is the priority.
 
@@ -1554,13 +1606,18 @@ System prompt focuses on:
 
 Before routing a confluence to `narrate_async()`, two gates are applied:
 
-1. **Level gate** (in `_handle_confluence`, `intraday_monitor.py`): Only `HIGH` confluences (3+ layers aligned) trigger the narrator. `MODERATE` confluences (2 layers) still send the raw alert but skip the LLM call. This eliminates ~90% of morning-open LLM calls.
+1. **Level gate** (in `_start_confluence_narrator_subscriber`, `intraday_monitor.py` — a small
+   consumer thread on `intelligence:confluence`): Only `HIGH` confluences (3+ layers aligned)
+   trigger the narrator. `MODERATE` confluences (2 layers) still get the raw alert (sent
+   directly by the `signal-intelligence` service, not the monolith) but skip the LLM call. This
+   eliminates ~90% of morning-open LLM calls.
 
 2. **Per-symbol cooldown** (`MarketNarrator.NARRATE_SYMBOL_COOLDOWN = 1800`): The same symbol cannot be narrated more than once per 30 minutes, regardless of direction. Cooldown is tracked in `_last_narrated: dict[str, float]` (symbol → epoch). Skipped calls are logged at DEBUG level with remaining cooldown seconds.
 
 ```python
-# Guard in _handle_confluence (intraday_monitor.py)
-if shared.app_ctx.narrator and confluence.level == "HIGH":
+# Guard in _start_confluence_narrator_subscriber (intraday_monitor.py)
+confluence = Confluence.from_stream_fields(fields)
+if confluence.level == "HIGH" and shared.app_ctx.narrator:
     shared.app_ctx.narrator.narrate_async(confluence)
 
 # Guard in narrate_async (narrator.py)
@@ -1595,46 +1652,49 @@ RISKS & CONTRADICTIONS:  [mixed signals, key levels, event risk]
 ### Intelligence Data Flow
 
 ```
-                    ┌─────────────────────┐
-                    │   POSITIONAL Layer   │
-                    │  (morning bias, EOD) │
-                    └──────────┬──────────┘
-                               │ Signal
-    ┌──────────────────┐       │       ┌──────────────┐
-    │   INTRADAY Layer │       │       │   LIVE Layer  │
-    │  (5-min cycle)   │       │       │  (per tick)   │
-    └────────┬─────────┘       │       └──────┬───────┘
-             │ Signal          │              │ Signal
-             v                 v              v
-         ┌───────────────────────────────────────┐
-         │              SignalBus                 │
-         │         (thread-safe pub/sub)          │
-         └───────────────────┬───────────────────┘
-                             │
-                             v
-         ┌───────────────────────────────────────┐
-         │          SignalCorrelator              │
-         │  (time-windowed cross-layer check)    │
-         └───────────────────┬───────────────────┘
-                             │ Confluence detected
-                             v
-         ┌───────────────────────────────────────┐
-         │          MarketNarrator               │
-         │  (LLM trade thesis via Gemini Flash)  │
-         └───────────────────┬───────────────────┘
-                             │
-                             v
-         ┌───────────────────────────────────────┐
-         │        Telegram Notification          │
-         │   (Live Options / Positional channel) │
-         └───────────────────────────────────────┘
+ monolith                    analysis-engine              market-data
+ (POSITIONAL: morning         worker (INTRADAY: per        (LIVE: per-tick
+  bias, 8pm run)              5-min cycle, per stock)       via LiveStock/
+     │                             │                        LiveOptionsEngine)
+     │ RedisSignalBus.emit()       │ RedisSignalBus.emit()        │ RedisSignalBus.emit()
+     └─────────────────────────────┼───────────────────────────────┘
+                                   v
+                    ┌───────────────────────────────┐
+                    │      intelligence:signals      │   (Redis Stream, maxlen=2000)
+                    └───────────────┬───────────────┘
+                                    │ XREADGROUP (group: signal-intelligence)
+                                    v
+                    ┌───────────────────────────────┐
+                    │   services/signal_intelligence │   <- single instance, one shared
+                    │   SignalCorrelator             │      correlator buffer per symbol
+                    │   (time-windowed cross-layer)  │
+                    └───────────────┬───────────────┘
+                                    │ Confluence detected
+                    ┌───────────────┴───────────────┐
+                    v                                 v
+     ┌───────────────────────────┐   ┌───────────────────────────────┐
+     │  Base Telegram alert       │   │   intelligence:confluence      │
+     │  (sent directly, stateless)│   │   (Redis Stream)               │
+     └───────────────────────────┘   └───────────────┬───────────────┘
+                                                      │ XREADGROUP, filter level=="HIGH"
+                                                      v
+                                       ┌───────────────────────────────┐
+                                       │  monolith: MarketNarrator      │
+                                       │  (LLM trade thesis, needs live │
+                                       │   Stock/zerodha_ctx context)   │
+                                       └───────────────┬───────────────┘
+                                                       v
+                                       ┌───────────────────────────────┐
+                                       │   Follow-up Telegram message   │
+                                       │   (Live Options channel)       │
+                                       └───────────────────────────────┘
 ```
 
 ### Environment Variables
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `ENABLE_INTELLIGENCE` | `0` | Toggle SignalBus + Correlator + morning bias |
+| `ENABLE_INTELLIGENCE` | `0` | Toggle RedisSignalBus emission + morning bias + confluence narrator subscriber (correlation itself always runs in the standalone `signal-intelligence` service) |
 | `ENABLE_NARRATOR` | `0` | Toggle LLM narratives (requires `GEMINI_API_KEY`) |
 | `GEMINI_API_KEY` | (empty) | Google AI Studio API key for Gemini Flash |
 | `HEALTHCHECK_URL` | (empty) | Dead-man's switch ping URL (e.g., healthchecks.io). If set, pinged at end of every analysis cycle. Unset = no-op. |
@@ -1903,7 +1963,7 @@ All sensitive config via env vars:
   - Sends alerts to `LIVE_OPTIONS_CHAT_ID`
   - Skips commodity token subscriptions (index-only WebSocket mode)
 - `LIVE_OPTIONS_ONLY` — set to `1` alongside `ENABLE_LIVE_OPTIONS` to disable all regular intraday/positional analysers and run WebSocket-only
-- `ENABLE_INTELLIGENCE` — set to `1` to activate SignalBus, SignalCorrelator, morning bias, and LiveStockEngine
+- `ENABLE_INTELLIGENCE` — set to `1` to activate RedisSignalBus emission, morning bias, and LiveStockEngine (confluence correlation runs separately in the `signal-intelligence` service regardless of this flag on any single process)
 - `ENABLE_NARRATOR` — set to `1` to activate LLM-powered trade narratives (requires `GEMINI_API_KEY`)
 - `GEMINI_API_KEY` — Google AI Studio API key for Gemini Flash model
 
@@ -2122,6 +2182,7 @@ Captured once at import time via `subprocess.run(["git", "rev-parse", "--short",
 | market-data | `service:registry:market-data` hash → `version`, `commit` fields | Every heartbeat (30s) |
 | notification-service | `service:registry:notification-service` hash → `version`, `commit` fields | Every heartbeat (~30s) |
 | analysis-engine | `service:registry:analysis-engine:{worker}` hash → `version`, `commit` fields | Every heartbeat |
+| signal-intelligence | `service:registry:signal-intelligence` hash → `version`, `commit`, `total_confluences` fields | Every heartbeat (~30s, or after each batch) |
 | resource-monitor | `service:registry:resource-monitor` hash → `version`, `commit` fields | Every heartbeat (30s) |
 | monolith | `service:registry:monolith` hash → `version`, `commit` fields | Every cycle (~310s) |
 
@@ -2141,6 +2202,7 @@ Every service also logs its version at startup:
   📦 data-gateway          v1.0.0+1c4b128   ✅ clean   up 3h 41m
   📦 market-data           v1.0.0+1c4b128   ⚠️ dirty   up 3h 41m
   📦 analysis-engine       v1.0.0+1c4b128   ✅ clean   up 3h 41m
+  📦 signal-intelligence   v1.0.0+1c4b128   ✅ clean   up 3h 41m
   📦 notification-service  v1.0.0+1c4b128   ✅ clean   up 3h 41m
   📦 resource-monitor      v1.0.0+1c4b128   ✅ clean   up 3h 41m
 
@@ -2203,7 +2265,7 @@ A lightweight per-stock + system-wide counters system stored in Redis, providing
 | `trends_found` | analysis-engine | Total trends detected for this stock |
 | `analysis_errors` | analysis-engine | Number of analysis errors |
 | `alerts_trend` | monolith (intraday) | Trend alert count |
-| `alerts_confluence` | monolith (intraday) | Confluence alert count |
+| `alerts_confluence` | signal-intelligence | Confluence alert count |
 | `alerts_stale_data` | monolith (intraday) | Stale data alert count |
 | `alerts_live_options` | monolith (live options) | Live options alert count |
 | `alerts_narrative` | monolith (narrator) | LLM narrative alert count |
@@ -2226,7 +2288,7 @@ A lightweight per-stock + system-wide counters system stored in Redis, providing
 | `result_no_data_count` | analysis-engine | NO_DATA results |
 | `result_error_count` | analysis-engine | Error results |
 | `trends_found` | monolith (intraday) | Total trends found system-wide |
-| `total_confluences` | monolith (intraday) | Total confluence signals detected |
+| `total_confluences` | signal-intelligence | Total confluence signals detected |
 | `stale_stocks_count` | monolith (intraday) | Number of stocks with stale data |
 | `alerts_attempted` | Notification.py | Total alerts queued |
 | `alerts_delivered` | notification-service | Total alerts delivered |
@@ -2296,7 +2358,14 @@ Instead of subscribing all 514 NIFTY option tokens, only 94 tokens in 3 zones ar
 `LiveOptionsEngine` maintains a `_last_alert` dict keyed by `(symbol, alert_type)`. Each alert type has a configurable cooldown (10–30 min). This prevents alert flooding in choppy markets while ensuring signals are not missed — the first occurrence always fires.
 
 ### 12. Cross-Layer Signal Correlation (Intelligence)
-The `SignalBus` + `SignalCorrelator` pattern decouples signal producers (analysers) from consumers (correlator, narrator). Analysers emit standardized `Signal` objects without knowing what will consume them. The correlator buffers signals with per-layer time windows and detects alignment across 2+ layers as a `Confluence`. This pub/sub design makes it trivial to add new signal sources or consumers.
+The `RedisSignalBus` + `SignalCorrelator` pattern decouples signal producers (analysers, running
+across three separate processes: monolith, analysis-engine, market-data) from the one consumer
+that combines them — the standalone `signal-intelligence` service. Analysers emit standardized
+`Signal` objects without knowing what will consume them or which process will read them back.
+The correlator buffers signals with per-layer time windows and detects alignment across 2+
+layers as a `Confluence`. This pub/sub-over-Redis design is what makes cross-process confluence
+possible at all — it replaced an earlier in-memory `SignalBus` that could only ever see signals
+emitted within its own process.
 
 **Score-gated emission (INTRADAY/POSITIONAL only):** `_emit_signals()` is only called when `score_result.total_score >= MIN_NOTIFICATION_SCORE (75)`. This ensures the correlator only receives signals from stocks with genuine multi-indicator conviction — the same bar used for Telegram alerts. Stocks that fire only 1-2 weak indicators are silently dropped at the bus boundary. LIVE layer signals bypass this gate since they have no batch score context and require minimum latency.
 
@@ -2306,7 +2375,7 @@ The `SignalBus` + `SignalCorrelator` pattern decouples signal producers (analyse
 `MarketNarrator` uses a single-worker `ThreadPoolExecutor` to run LLM calls off the hot path. The raw alert fires instantly via Telegram; the LLM-generated narrative follows 1-3 seconds later without blocking the analysis pipeline. This pattern ensures the core system latency is unaffected by LLM response time.
 
 ### 14. Dual-Gate Flood Control (Narrator)
-The narrator uses two independent guards before queuing an LLM call: a **level gate** (`level == "HIGH"`) in `_handle_confluence` and a **per-symbol cooldown** in `narrate_async`. Separating the gates at different call sites means each can be tuned or disabled independently without touching the other. See [Section 21](#21-observability-system) for implementation details.
+The narrator uses two independent guards before queuing an LLM call: a **level gate** (`level == "HIGH"`) in the monolith's `_start_confluence_narrator_subscriber` (a consumer thread on `intelligence:confluence`) and a **per-symbol cooldown** in `narrate_async`. Separating the gates at different call sites means each can be tuned or disabled independently without touching the other. See [Section 21](#21-observability-system) for implementation details.
 
 ### 15. Fail-Silent Observability Helpers
 `_crash_handler`, `_ping_healthcheck`, and `check_data_freshness` are designed on the principle that observability code must **never** affect the system it observes. All three catch all exceptions internally and log at DEBUG/WARNING rather than propagating. This "fail-silent" pattern is enforced in tests by injecting `side_effect=Exception` into Telegram/requests mocks and asserting that the production call still returns normally.
@@ -2481,6 +2550,7 @@ _route_tick(tick)
          data-gateway idle. notification-service draining stream.
          market-data: WS connected, receiving ticks (if any pre-open).
          analysis-engine: idle, waiting for cycle stream.
+         signal-intelligence: idle, blocked on XREADGROUP intelligence:signals.
 
 09:00  Monolith: _refresh_zerodha_auth() — TOTP login
        Data-gateway: prevDayOHLCV daily refresh (all 211 stocks + 6 indices +
@@ -2495,6 +2565,9 @@ _route_tick(tick)
        |    → heartbeat: stats:system + stats:stock:* (every 30s)
        |  analysis-engine: consumes data:cycle_stream → 12 analysers + scoring
        |    → stats:stock:* (analysis_count, result, duration, trends)
+       |    → RedisSignalBus emits INTRADAY signals → intelligence:signals
+       |  signal-intelligence: correlates LIVE+INTRADAY+POSITIONAL per symbol
+       |    → on confluence: intelligence:confluence + direct Telegram alert
        |  Monolith: orchestrates cycle, reads Redis, dispatches alerts
        |    → notification:jobs stream (with alerts_attempted counter)
        |  notification-service: consumes stream → Telegram/Discord

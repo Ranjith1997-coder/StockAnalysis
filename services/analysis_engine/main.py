@@ -31,6 +31,8 @@ from analyser.OptionSellerCompositeAnalyser import OptionSellerCompositeAnalyser
 from services.analysis_engine.worker import process_job
 from services.common.redis_proxy import RedisProxy
 from services.common.version import BUILD_LABEL, GIT_COMMIT, GIT_DIRTY
+from services.market_data.signal_publisher import RedisSignalBus
+import common.shared as shared
 from common.logging_util import logger
 
 
@@ -86,6 +88,11 @@ def main():
         redis.xgroup_create(constant.ANALYSIS_JOBS_GROUP, constant.ANALYSIS_JOBS_STREAM, mkstream=True)
     except Exception:
         pass
+
+    # Root-cause fix: without this, Analyser._emit_signals() silently no-ops
+    # (shared.app_ctx.signal_bus is None per-process) and INTRADAY/POSITIONAL
+    # signals never reach intelligence:signals for cross-layer confluence.
+    shared.app_ctx.signal_bus = RedisSignalBus(redis)
 
     orchestrator = AnalyserOrchestrator()
     orchestrator.register(VolumeAnalyser())

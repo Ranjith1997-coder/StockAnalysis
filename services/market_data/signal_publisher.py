@@ -20,10 +20,9 @@ if TYPE_CHECKING:
 
 from intelligence.signal import Signal
 from common.logging_util import logger
+from common.constants import SIGNALS_STREAM
 
 Subscriber = Callable[[Signal], None]
-
-SIGNALS_STREAM = "intelligence:signals"
 
 
 class RedisSignalBus:

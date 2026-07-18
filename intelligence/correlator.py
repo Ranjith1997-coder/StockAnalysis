@@ -11,6 +11,7 @@ Confluence levels:
 """
 
 from __future__ import annotations
+import json
 import time
 import threading
 from collections import defaultdict
@@ -41,6 +42,55 @@ class Confluence:
         if self.layer_count >= 3:
             return "HIGH"
         return "MODERATE"
+
+    def to_stream_fields(self) -> dict:
+        """Serialize for XADD to intelligence:confluence — the one wire format
+        shared by every producer/consumer of this stream."""
+        return {
+            "symbol": self.symbol,
+            "direction": self.direction.name,
+            "level": self.level,
+            "score": str(self.score),
+            "layer_count": str(self.layer_count),
+            "layers": ",".join(sorted(l.name for l in self.layers_involved)),
+            "has_contradiction": str(self.has_contradiction),
+            "sources": json.dumps([
+                {
+                    "layer": s.layer.name,
+                    "source": s.source,
+                    "strength": s.strength.name,
+                    "timestamp": s.timestamp,
+                }
+                for s in self.signals
+            ]),
+            "timestamp": str(self.timestamp),
+        }
+
+    @classmethod
+    def from_stream_fields(cls, fields: dict) -> "Confluence":
+        """Reconstruct a Confluence from an intelligence:confluence stream message."""
+        direction = Direction[fields["direction"]]
+        symbol = fields["symbol"]
+        signals = [
+            Signal(
+                symbol=symbol,
+                direction=direction,
+                source=s["source"],
+                layer=Layer[s["layer"]],
+                strength=SignalStrength[s["strength"]],
+                timestamp=float(s["timestamp"]),
+            )
+            for s in json.loads(fields.get("sources", "[]"))
+        ]
+        return cls(
+            symbol=symbol,
+            direction=direction,
+            signals=signals,
+            layers_involved={Layer[l] for l in fields["layers"].split(",") if l},
+            score=float(fields.get("score", 0)),
+            has_contradiction=fields.get("has_contradiction") == "True",
+            timestamp=float(fields.get("timestamp", time.time())),
+        )
 
 
 class SignalCorrelator:
