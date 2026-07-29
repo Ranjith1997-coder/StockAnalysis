@@ -253,7 +253,7 @@ def load_tick_from_redis(redis: RedisProxy, stock: Stock) -> bool:
         zd = stock._tick_store._zerodha_data
         for field in ("last_price", "open", "high", "low", "close",
                        "volume_traded", "total_buy_quantity", "total_sell_quantity",
-                       "average_traded_price", "change"):
+                       "average_traded_price", "change", "timestamp"):
             val = tick_raw.get(field)
             if val is not None and val != "":
                 try:
