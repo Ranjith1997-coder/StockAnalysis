@@ -42,6 +42,7 @@ class TickStore:
             "average_traded_price": 0,
             "total_buy_quantity": 0,
             "total_sell_quantity": 0,
+            "timestamp": 0.0,
         }
 
         # Live options tick data from WebSocket (keyed by strike -> CE/PE)
@@ -119,6 +120,8 @@ class TickStore:
                           "total_buy_quantity", "total_sell_quantity"):
                 if field in ticker_data:
                     d[field] = ticker_data[field]
+
+            d["timestamp"] = time.time()
 
     # ------------------------------------------------------------------
     # Options ticks

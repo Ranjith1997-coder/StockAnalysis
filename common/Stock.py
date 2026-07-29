@@ -84,8 +84,13 @@ class Stock:
             return
 
         # Prefer live WS tick (real-time) over DataFrame close (stale 5-min bar)
+        # BUT only if the tick is fresh (< 30s old). Stale WS data (e.g. after
+        # enctoken refresh killed the session) silently freezes the last known
+        # price — fall back to yfinance to avoid showing yesterday's price all day.
         ws_price = self._tick_store._zerodha_data.get("last_price", 0)
-        if ws_price and ws_price > 0:
+        ws_ts = self._tick_store._zerodha_data.get("timestamp", 0.0)
+        ws_age = time.time() - float(ws_ts) if ws_ts and float(ws_ts) > 0 else 999.0
+        if ws_price and ws_price > 0 and ws_age < 30.0:
             current_close = ws_price
         else:
             current_close = valid_closes.iloc[-1]

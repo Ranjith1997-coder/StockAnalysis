@@ -149,9 +149,17 @@ class ZerodhaTickerManager:
 
     def update_enctoken(self, new_enctoken):
         self.encToken = new_enctoken
+        self.close_connection()
         self._init_kite_ticker_base()
         self._init_kite_ticker_options()
-        logger.info("Enctoken updated for both WebSockets")
+        logger.info("Enctoken updated for both WebSockets — reconnecting...")
+        try:
+            self._kt_base.connect(threaded=True)
+            if self._needs_options_ws():
+                self._kt_options.connect(threaded=True)
+            logger.info("Enctoken updated — WebSockets reconnected successfully")
+        except Exception as e:
+            logger.error(f"Enctoken updated — WebSocket reconnect failed: {e}")
         self.is_enctoken_updated = True
 
     def refresh_enctoken(self, twofa):
