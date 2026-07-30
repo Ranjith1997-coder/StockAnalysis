@@ -10,7 +10,7 @@ User=hacker
 WorkingDirectory=/home/hacker/StockAnalysis
 Environment=PYTHONPATH=/home/hacker/StockAnalysis
 Environment=REDIS_URL=redis://localhost:6379
-ExecStart=/home/hacker/StockAnalysis/.venv/bin/python services/auth_service/main.py
+ExecStart=/home/hacker/StockAnalysis/.venv/bin/python -m services.auth_service.main
 Restart=always
 RestartSec=10
 StandardOutput=journal
