@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Callable
 if TYPE_CHECKING:
     from services.common.redis_proxy import RedisProxy
 
-from intelligence.signal import Signal
+from lib.intelligence.signal import Signal
 from services.common.logging import get_logger
 logger = get_logger("market-data")
 from common.constants import SIGNALS_STREAM

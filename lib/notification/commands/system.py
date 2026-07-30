@@ -302,7 +302,7 @@ async def job_llm_budget_alert(context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.warning(f"[BudgetAlert] LLM daily budget at {pct:.1f}% ({used:,}/{limit:,} tokens)")
 
     # Reset flag at midnight (next calendar day the narrator resets its counter)
-    from intelligence.llm_client import GeminiClient
+    from lib.intelligence.llm_client import GeminiClient
     if isinstance(client, GeminiClient):
         # Register callback so the counter reset also resets our warned flag
         original_cb = client._budget_alert_callback

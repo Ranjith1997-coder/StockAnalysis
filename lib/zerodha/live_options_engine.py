@@ -20,7 +20,7 @@ from services.analysis_engine.analyser.LiveOptionsHistory import LiveOptionsHist
 from lib.notification.Notification import TELEGRAM_NOTIFICATIONS
 from services.common.metrics import incr_stock
 from common.constants import LIVE_OPTIONS_INDICES
-from intelligence.signal import Signal, Direction, Layer, SignalStrength
+from lib.intelligence.signal import Signal, Direction, Layer, SignalStrength
 
 
 class LiveOptionsEngine:

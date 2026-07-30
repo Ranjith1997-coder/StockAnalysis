@@ -9,7 +9,7 @@ from __future__ import annotations
 import threading
 from typing import Callable
 
-from intelligence.signal import Signal
+from .signal import Signal
 from services.common.logging import get_logger
 logger = get_logger("intelligence")
 

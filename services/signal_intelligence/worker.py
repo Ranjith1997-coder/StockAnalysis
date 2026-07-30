@@ -14,8 +14,8 @@ from __future__ import annotations
 
 import json
 
-from intelligence.signal import Signal, Direction, Layer, SignalStrength
-from intelligence.correlator import Confluence
+from lib.intelligence.signal import Signal, Direction, Layer, SignalStrength
+from lib.intelligence.correlator import Confluence
 from common.constants import CONFLUENCE_STREAM
 from services.common.logging import get_logger
 logger = get_logger("signal-intelligence")

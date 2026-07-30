@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch, call
 
 from lib.zerodha.live_options_engine import LiveOptionsEngine
 from common.constants import LIVE_OPTIONS_INDICES
-from intelligence.signal import Direction
+from lib.intelligence.signal import Direction
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
