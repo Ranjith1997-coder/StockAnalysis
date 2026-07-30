@@ -1,6 +1,6 @@
 """Tests for zerodha/zerodha_exceptions.py — exception hierarchy."""
 import pytest
-from zerodha.zerodha_exceptions import (
+from lib.zerodha.zerodha_exceptions import (
     KiteException,
     GeneralException,
     TokenException,

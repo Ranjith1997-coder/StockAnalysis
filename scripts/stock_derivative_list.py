@@ -4,7 +4,7 @@ sys.path.append(os.getcwd())
 from nse.nse_utils import nse_urlfetch
 import json
 
-from zerodha.zerodha_connect import KiteConnect
+from lib.zerodha.zerodha_connect import KiteConnect
 
 
 DUMMY_API_KEY_ZERODHA = "dummy_api_key"

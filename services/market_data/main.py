@@ -55,10 +55,10 @@ from services.market_data.signal_publisher import RedisSignalBus
 from services.common.metrics import incr_stock, set_stock, incr_system, set_system
 
 # ── Lazy imports (heavy deps) ──────────────────────────────────────────────
-from zerodha.zerodha_analysis import ZerodhaTickerManager
-from zerodha.zerodha_connect import KiteConnect
-from zerodha.live_options_engine import LiveOptionsEngine
-from zerodha.live_stock_engine import LiveStockEngine
+from lib.zerodha.zerodha_analysis import ZerodhaTickerManager
+from lib.zerodha.zerodha_connect import KiteConnect
+from lib.zerodha.live_options_engine import LiveOptionsEngine
+from lib.zerodha.live_stock_engine import LiveStockEngine
 from fno.sensibull_feed import SensibullFeed
 from fno.sensibull_adapter import SensibullAdapter
 from notification.Notification import TELEGRAM_NOTIFICATIONS

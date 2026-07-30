@@ -2,7 +2,7 @@
 import hashlib
 import pytest
 from unittest.mock import MagicMock, patch
-from zerodha.zerodha_connect import KiteConnect
+from lib.zerodha.zerodha_connect import KiteConnect
 import kiteconnect.exceptions as ex
 
 

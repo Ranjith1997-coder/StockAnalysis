@@ -8,7 +8,7 @@ from common.helperFunctions import percentageChange
 import common.shared as shared
 from services.common.logging import get_logger
 logger = get_logger("common")
-from zerodha.tick_store import TickStore
+from lib.zerodha.tick_store import TickStore
 import numpy as np
 import datetime
 import time
@@ -122,7 +122,7 @@ class Stock:
             DeprecationWarning,
             stacklevel=2,
         )
-        from zerodha.futures_fetcher import FuturesFetcher
+        from lib.zerodha.futures_fetcher import FuturesFetcher
         return FuturesFetcher(shared.app_ctx.zd_kc).fetch(
             self, mode=mode, is_next_expiry_required=is_next_expiry_required
         )

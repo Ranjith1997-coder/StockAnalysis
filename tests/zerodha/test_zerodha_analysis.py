@@ -5,7 +5,7 @@ import threading
 import pytest
 from unittest.mock import MagicMock, patch, call
 
-from zerodha.zerodha_analysis import ZerodhaTickerManager
+from lib.zerodha.zerodha_analysis import ZerodhaTickerManager
 from common.token_registry import TokenInfo, TokenType, OptionZone
 from tests.zerodha.conftest import (
     make_stock, make_equity_info, make_index_info,
@@ -15,12 +15,12 @@ from tests.zerodha.conftest import (
 
 # ── Fixtures / helpers ────────────────────────────────────────────────────────
 
-_TELEGRAM = "zerodha.zerodha_analysis.TELEGRAM_NOTIFICATIONS"
-_SHARED   = "zerodha.zerodha_analysis.shared"
+_TELEGRAM = "lib.zerodha.zerodha_analysis.TELEGRAM_NOTIFICATIONS"
+_SHARED   = "lib.zerodha.zerodha_analysis.shared"
 
 
 def _manager():
-    with patch("zerodha.zerodha_analysis.KiteTicker"):
+    with patch("lib.zerodha.zerodha_analysis.KiteTicker"):
         mgr = ZerodhaTickerManager("user", "pass", "enctoken")
     return mgr
 
@@ -198,7 +198,7 @@ class TestProcessOptionTick:
         patched_app_ctx.token_registry.get_parent_object.return_value = parent
         with patch(_SHARED) as mock_shared:
             mock_shared.app_ctx = patched_app_ctx
-            with patch("zerodha.zerodha_analysis.time.time", return_value=100.0):
+            with patch("lib.zerodha.zerodha_analysis.time.time", return_value=100.0):
                 mgr._process_option_tick({"instrument_token": 99001}, info)
         parent.recompute_options_aggregate.assert_called_once()
 
@@ -211,7 +211,7 @@ class TestProcessOptionTick:
         mgr._last_aggregate_time["NIFTY"] = 100.0
         with patch(_SHARED) as mock_shared:
             mock_shared.app_ctx = patched_app_ctx
-            with patch("zerodha.zerodha_analysis.time.time", return_value=100.5):  # < 1s
+            with patch("lib.zerodha.zerodha_analysis.time.time", return_value=100.5):  # < 1s
                 mgr._process_option_tick({"instrument_token": 99001}, info)
         parent.recompute_options_aggregate.assert_not_called()
 
@@ -225,7 +225,7 @@ class TestProcessOptionTick:
         mgr.live_options_engine = live_opts
         with patch(_SHARED) as mock_shared:
             mock_shared.app_ctx = patched_app_ctx
-            with patch("zerodha.zerodha_analysis.time.time", return_value=200.0):
+            with patch("lib.zerodha.zerodha_analysis.time.time", return_value=200.0):
                 mgr._process_option_tick({"instrument_token": 99001}, info)
         live_opts.on_aggregate_updated.assert_called_once_with(parent, 22000.0)
 
