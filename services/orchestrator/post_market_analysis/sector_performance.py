@@ -1,5 +1,7 @@
 import requests, time, pandas as pd
 from .base import PostMarketSource
+from lib.logging_util import get_logger
+logger = get_logger("post-market-analysis")
 
 class SectorPerformanceSource(PostMarketSource):
     source_name = "sector_performance"

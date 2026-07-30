@@ -93,8 +93,13 @@ class Stock:
         ws_age = time.time() - float(ws_ts) if ws_ts and float(ws_ts) > 0 else 999.0
         if ws_price and ws_price > 0 and ws_age < 30.0:
             current_close = ws_price
+            logger.debug("[%s] ltp from WS tick: %.2f (age=%.1fs)", self.stock_symbol, ws_price, ws_age)
         else:
             current_close = valid_closes.iloc[-1]
+            if ws_age > 300:
+                logger.warning("[%s] WS tick stale (age=%.0fs) — falling back to yfinance close: %.2f", self.stock_symbol, ws_age, current_close)
+            else:
+                logger.debug("[%s] ltp from yfinance close: %.2f (ws_age=%.1fs)", self.stock_symbol, current_close, ws_age)
 
         if self.prevDayOHLCV is None:
             logger.warning(f"[Stock] prevDayOHLCV not set for {self.stock_symbol} — ltp_change_perc will be 0")

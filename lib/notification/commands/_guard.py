@@ -12,6 +12,9 @@ import os
 from functools import wraps
 from typing import Callable
 
+from lib.logging_util import get_logger
+logger = get_logger("notification")
+
 from telegram import Update
 from telegram.ext import ContextTypes
 
@@ -74,6 +77,7 @@ def guard(fn: Callable) -> Callable:
     @wraps(fn)
     async def wrapped(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not chat_allowed(update):
+            logger.debug("[guard] blocked chat_id=%d from %s", update.effective_chat.id, fn.__name__)
             return
         return await fn(update, context)
     return wrapped

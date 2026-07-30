@@ -39,11 +39,14 @@ class SignalBus:
         with self._lock:
             listeners = list(self._subscribers)
             self._total_emitted += 1
+        logger.debug("[SignalBus] emit #%d %s layer=%s source=%s dir=%s",
+                     self._total_emitted, signal.symbol, signal.layer.value,
+                     signal.source, signal.direction.value)
         for cb in listeners:
             try:
                 cb(signal)
             except Exception as e:
-                logger.error(f"[SignalBus] subscriber error on {signal.source}: {e}")
+                logger.error("[SignalBus] subscriber error on %s: %s", signal.source, e, exc_info=True)
 
     @property
     def total_emitted(self) -> int:

@@ -64,11 +64,11 @@ def _send_discord(webhook_url: str, message: str, parse_mode: str | None = None)
             timeout=(5, 10),
         )
         if resp.status_code not in (200, 204):
-            logger.error(f"Discord webhook failed: {resp.status_code}: {resp.text}")
+            logger.error("Discord webhook failed: %s: %s", resp.status_code, resp.text)
             return False
         return True
     except Exception as e:
-        logger.error(f"Discord webhook error: {e}")
+        logger.error("Discord webhook error: %s", e, exc_info=True)
         return False
 
 
@@ -120,7 +120,7 @@ def _notify_via_redis(chat_type: str, message: str, parse_mode=None, message_typ
         incr_daily("alerts_attempted")
         return True
     except Exception as e:
-        logger.error(f"[Notification] Redis dispatch failed: {e}")
+        logger.error("[Notification] Redis dispatch failed: %s", e, exc_info=True)
         return False
 
 
@@ -168,17 +168,17 @@ class TELEGRAM_NOTIFICATIONS:
                     if resp.status_code == 200:
                         logger.info("Message sent directly (Redis fallback)")
                         return True
-                    logger.error(f"Telegram send failed (attempt {attempt}): {resp.status_code}")
+                    logger.error("Telegram send failed (attempt %d): %d", attempt, resp.status_code)
                     if attempt < 3:
                         from time import sleep as _sleep
                         _sleep(2 ** attempt)
                 except (requests.Timeout, requests.ConnectionError) as e:
-                    logger.error(f"Telegram {type(e).__name__} (attempt {attempt})")
+                    logger.error("Telegram %s (attempt %d)", type(e).__name__, attempt)
                     if attempt < 3:
                         from time import sleep as _sleep
                         _sleep(2 ** attempt)
                 except Exception as e:
-                    logger.error(f"Telegram send failed: {e}")
+                    logger.error("Telegram send failed: %s", e, exc_info=True)
                     return False
             return False
         return True

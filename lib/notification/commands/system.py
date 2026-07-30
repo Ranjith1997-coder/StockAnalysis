@@ -55,8 +55,8 @@ def _feed_health_lines() -> list[str]:
             _md = _r.hgetall("service:registry:market-data")
             if _md.get("status") == "healthy":
                 last_equity_tick = float(_md.get("last_equity_tick", 0))
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("[status] Redis feed health read failed: %s", e)
     if last_equity_tick == 0.0:
         last_equity_tick = ctx.last_equity_tick_time
 
@@ -87,10 +87,10 @@ def _feed_health_lines() -> list[str]:
                             last_opt = float(last_val)
                             if last_opt > 0:
                                 opt_lags.append((index_obj.stock_symbol, now - last_opt))
-                        except (ValueError, TypeError):
-                            pass
-    except Exception:
-        pass
+                        except (ValueError, TypeError) as e:
+                            logger.debug("[status] options_agg parse failed for %s: %s", index_obj.stock_symbol, e)
+    except Exception as e:
+        logger.debug("[status] Redis options_agg read failed: %s", e)
 
     if not opt_lags:
         # Fallback: read from in-memory TickStore

@@ -1,6 +1,8 @@
 import requests
 import pandas as pd
 from .base import PostMarketSource
+from lib.logging_util import get_logger
+logger = get_logger("post-market-analysis")
 
 class FoParticipantOISource(PostMarketSource):
     source_name = "fo_participant_oi"

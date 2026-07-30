@@ -11,6 +11,8 @@ import time
 
 import common.shared as shared
 from ._helpers import find_stock_by_symbol
+from lib.logging_util import get_logger
+logger = get_logger("notification")
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -67,7 +69,8 @@ def _read_market_data_registry() -> dict:
             "sensibull_feeds": int(raw.get("sensibull_feeds", 0)),
             "last_equity_tick": _fmt_age(float(raw.get("last_equity_tick", 0))),
         }
-    except Exception:
+    except Exception as e:
+        logger.debug("[debug_inspect] _read_market_data_registry failed: %s", e)
         return {}
 
 
@@ -347,10 +350,11 @@ def inspect_redis(symbol: str) -> dict:
         try:
             xlen = redis_proxy.xlen("data:cycle_stream")
             result["cycle_stream_length"] = xlen
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("[debug_inspect] cycle_stream xlen failed: %s", e)
 
     except Exception as e:
+        logger.warning("[debug_inspect] Redis inspection failed: %s", e)
         result["error"] = str(e)
 
     return result

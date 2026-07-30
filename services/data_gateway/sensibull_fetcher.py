@@ -95,7 +95,8 @@ def _compute_max_pain(per_strike_data: dict, spot: float | None) -> float | None
                 min_pain = total_pain
                 max_pain_strike = exp_strike
         return max_pain_strike
-    except Exception:
+    except Exception as e:
+        logger.debug("[sensibull] max pain computation failed: %s", e)
         return None
 
 
@@ -122,7 +123,8 @@ def _compute_iv_percentile(iv_chart_df: pd.DataFrame | None) -> tuple[float | No
         else:
             ivp_type = "VERY_LOW"
         return round(percentile, 1), ivp_type
-    except Exception:
+    except Exception as e:
+        logger.debug("[sensibull] iv percentile computation failed: %s", e)
         return None, None
 
 

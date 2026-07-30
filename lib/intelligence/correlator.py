@@ -129,10 +129,14 @@ class SignalCorrelator:
     def _prune(self, symbol: str):
         """Remove expired signals outside their layer's time window."""
         now = time.time()
+        before = len(self._buffer[symbol])
         self._buffer[symbol] = [
             s for s in self._buffer[symbol]
             if (now - s.timestamp) < self.WINDOW[s.layer]
         ]
+        pruned = before - len(self._buffer[symbol])
+        if pruned > 0:
+            logger.debug("[Correlator] %s pruned %d expired signals", symbol, pruned)
 
     def _dedupe_and_add(self, signal: Signal):
         """Replace any existing signal with same key (source+layer+direction)."""
@@ -141,6 +145,9 @@ class SignalCorrelator:
             if s.key != signal.key
         ]
         self._buffer[signal.symbol].append(signal)
+        logger.debug("[Correlator] %s new: %s %s %s (buffer=%d)",
+                     signal.symbol, signal.layer.value, signal.source,
+                     signal.direction.value, len(self._buffer[signal.symbol]))
 
     def _check_confluence(self, symbol: str):
         """Check if buffered signals form a cross-layer confluence."""
@@ -173,7 +180,13 @@ class SignalCorrelator:
             opposing_layers = {s.layer for s in opposing_signals}
             has_contradiction = len(opposing_layers) > 0
 
-            score = self._score(aligned_signals, layers, has_contradiction)
+            base = sum(s.strength.value for s in aligned_signals)
+            layer_bonus = (len(layers) - 1) * 5
+            live_bonus = 3 if Layer.LIVE in layers else 0
+            contra = -3 if has_contradiction else 0
+            score = base + layer_bonus + live_bonus + contra
+            logger.debug("[Correlator] %s score: base=%.0f layer_bonus=%.0f live_bonus=%.0f contra=%d total=%.0f",
+                         symbol, base, layer_bonus, live_bonus, contra, score)
 
             confluence = Confluence(
                 symbol=symbol,
@@ -191,12 +204,15 @@ class SignalCorrelator:
             level = confluence.level
             caution = " [CAUTION: contradicting signals]" if has_contradiction else ""
             logger.info(
-                f"[Correlator] {symbol} {direction.value} {level} confluence "
-                f"({len(layers)} layers, score={score:.1f}){caution}"
+                "[Correlator] %s %s %s confluence (%d layers, score=%.1f)%s",
+                symbol, direction.value, level, len(layers), score, caution
             )
 
             if self._on_confluence:
-                self._on_confluence(confluence)
+                try:
+                    self._on_confluence(confluence)
+                except Exception as e:
+                    logger.error("[Correlator] on_confluence callback failed: %s", e, exc_info=True)
 
     def _score(self, signals: list[Signal], layers: set[Layer],
                has_contradiction: bool) -> float:
@@ -208,6 +224,9 @@ class SignalCorrelator:
           +5 per additional layer beyond the first
           +3 if LIVE layer present (most timely confirmation)
           -3 if contradicting signals exist (dampener)
+
+        Note: _check_confluence() inlines this logic for DEBUG logging.
+        Keeping this as the canonical function for any external callers.
         """
         base = sum(s.strength.value for s in signals)
         layer_bonus = (len(layers) - 1) * 5

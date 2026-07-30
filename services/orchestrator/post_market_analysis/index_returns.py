@@ -1,5 +1,7 @@
 import requests, time, pandas as pd
 from .base import PostMarketSource
+from lib.logging_util import get_logger
+logger = get_logger("post-market-analysis")
 
 class IndexReturnsSource(PostMarketSource):
     source_name = "index_returns"

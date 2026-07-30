@@ -530,8 +530,8 @@ class ZerodhaTickerManager:
                 "Equity/index ticks have stopped. Options WS may still be alive.",
                 parse_mode="HTML",
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("[ZerodhaWS] Telegram notify fail on WS1 noreconnect: %s", e)
 
     # ─── WS2 Callbacks (options only) ──────────────────────────────────
 
@@ -566,8 +566,8 @@ class ZerodhaTickerManager:
                 "Live option ticks have stopped. Option analysis may be stale.",
                 parse_mode="HTML",
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("[ZerodhaWS] Telegram notify fail on WS2 noreconnect: %s", e)
 
     # ─── Shared Callbacks ──────────────────────────────────────────────
 
@@ -599,8 +599,8 @@ class ZerodhaTickerManager:
                 if kt:
                     try:
                         kt.stop_retry()
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug("[ZerodhaWS] stop_retry failed for %s: %s", label, e)
 
             TELEGRAM_NOTIFICATIONS.send_notification(
                 "⚠️ <b>Zerodha WS 403 — enctoken expired</b>\n"

@@ -11,7 +11,8 @@ def _get_redis():
     try:
         import intraday.intraday_monitor as _im
         return getattr(_im, "redis_proxy", None)
-    except Exception:
+    except Exception as e:
+        logger.debug("[helpers] Redis import failed: %s", e)
         return None
 
 
@@ -73,7 +74,8 @@ def build_gainers_losers():
             try:
                 load_tick_from_redis(redis, stock)
                 stock.update_latest_data()
-            except Exception:
+            except Exception as e:
+                logger.debug("[helpers] build_gainers_losers skip %s: %s", stock.stock_symbol, e)
                 continue
 
     gainers, losers = [], []
@@ -88,7 +90,8 @@ def build_gainers_losers():
                             gainers.append((stock.stock_symbol, change))
                         else:
                             losers.append((stock.stock_symbol, change))
-        except Exception:
+        except Exception as e:
+            logger.debug("[helpers] build_gainers_losers score skip %s: %s", stock.stock_symbol, e)
             continue
 
     gainers.sort(key=lambda x: x[1], reverse=True)

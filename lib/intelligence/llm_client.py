@@ -82,7 +82,7 @@ class GeminiClient(LLMClient):
         try:
             resp = requests.post(url, json=payload, timeout=self.TIMEOUT)
             if resp.status_code != 200:
-                logger.error(f"[Gemini] API error {resp.status_code}: {resp.text[:200]}")
+                logger.error("[Gemini] API error %d: %s", resp.status_code, resp.text[:200], exc_info=True)
                 return None
 
             data = resp.json()
@@ -99,7 +99,8 @@ class GeminiClient(LLMClient):
                 self._daily_tokens += total_tokens
                 tokens_now = self._daily_tokens
 
-            logger.info(f"[Gemini] finish={finish_reason} prompt={prompt_tokens} output={output_tokens} daily={tokens_now}")
+            logger.info("[Gemini] finish=%s prompt=%d output=%d daily=%d",
+                        finish_reason, prompt_tokens, output_tokens, tokens_now)
             if finish_reason == "MAX_TOKENS":
                 logger.warning("[Gemini] Response hit MAX_TOKENS limit — consider increasing MAX_OUTPUT_TOKENS")
 
@@ -108,8 +109,8 @@ class GeminiClient(LLMClient):
             if tokens_now >= budget_threshold and callable(self._budget_alert_callback):
                 try:
                     self._budget_alert_callback(tokens_now, self.DAILY_TOKEN_LIMIT)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("[Gemini] budget alert callback failed: %s", e)
 
             return text.strip()
 
@@ -117,7 +118,7 @@ class GeminiClient(LLMClient):
             logger.warning("[Gemini] Request timed out")
             return None
         except (requests.RequestException, KeyError, IndexError, json.JSONDecodeError) as e:
-            logger.error(f"[Gemini] Request failed: {e}")
+            logger.error("[Gemini] Request failed: %s", e, exc_info=True)
             return None
 
     @property

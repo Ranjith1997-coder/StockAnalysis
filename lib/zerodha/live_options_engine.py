@@ -155,8 +155,8 @@ class LiveOptionsEngine:
             import common.shared as shared
             if shared.app_ctx.token_registry:
                 return shared.app_ctx.token_registry.get_strike_gap(symbol)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("[LiveOptionsEngine] strike_gap lookup failed for %s: %s", symbol, e)
         return 50.0  # NIFTY default
 
     def _run_oi_checks(

@@ -144,11 +144,11 @@ class SensibullFetcher:
             return updated_df
 
         except requests.exceptions.Timeout:
-            logger.error(f"Timeout fetching Sensibull data for {stock.stock_symbol}")
+            logger.error("Timeout fetching Sensibull data for %s", stock.stock_symbol, exc_info=True)
         except requests.exceptions.RequestException as e:
-            logger.error(f"Request error fetching Sensibull data for {stock.stock_symbol}: {e}")
+            logger.error("Request error fetching Sensibull data for %s: %s", stock.stock_symbol, e, exc_info=True)
         except Exception as e:
-            logger.error(f"Unexpected error fetching Sensibull data for {stock.stock_symbol}: {e}")
+            logger.error("Unexpected error fetching Sensibull data for %s: %s", stock.stock_symbol, e, exc_info=True)
         return None
 
     def fetch_oi_chain(self, stock: "Stock", mode: str = "positional") -> Optional[dict]:
@@ -247,11 +247,11 @@ class SensibullFetcher:
             return oi_chain
 
         except requests.exceptions.Timeout:
-            logger.error(f"Timeout fetching Sensibull OI chain for {stock.stock_symbol}")
+            logger.error("Timeout fetching Sensibull OI chain for %s", stock.stock_symbol, exc_info=True)
         except requests.exceptions.RequestException as e:
-            logger.error(f"Request error fetching OI chain for {stock.stock_symbol}: {e}")
+            logger.error("Request error fetching OI chain for %s: %s", stock.stock_symbol, e, exc_info=True)
         except Exception as e:
-            logger.error(f"Unexpected error fetching OI chain for {stock.stock_symbol}: {e}")
+            logger.error("Unexpected error fetching OI chain for %s: %s", stock.stock_symbol, e, exc_info=True)
         return None
 
     def fetch_iv_chart(self, stock: "Stock") -> Optional[object]:
@@ -327,11 +327,11 @@ class SensibullFetcher:
             return df
 
         except requests.exceptions.Timeout:
-            logger.error(f"[IV_CHART] Timeout fetching iv_chart for {stock.stock_symbol}")
+            logger.error("[IV_CHART] Timeout fetching iv_chart for %s", stock.stock_symbol, exc_info=True)
         except requests.exceptions.RequestException as e:
-            logger.error(f"[IV_CHART] Request error fetching iv_chart for {stock.stock_symbol}: {e}")
+            logger.error("[IV_CHART] Request error fetching iv_chart for %s: %s", stock.stock_symbol, e, exc_info=True)
         except Exception as e:
-            logger.error(f"[IV_CHART] Unexpected error for {stock.stock_symbol}: {e}")
+            logger.error("[IV_CHART] Unexpected error for %s: %s", stock.stock_symbol, e, exc_info=True)
         return None
 
     def fetch_oi_history(self, stock: "Stock") -> Optional[object]:
@@ -500,12 +500,11 @@ class SensibullFetcher:
             return df
 
         except requests.exceptions.Timeout:
-            logger.error(f"[OI_HISTORY] Timeout fetching OI history for {stock.stock_symbol}")
+            logger.error("[OI_HISTORY] Timeout fetching OI history for %s", stock.stock_symbol, exc_info=True)
         except requests.exceptions.RequestException as e:
-            logger.error(f"[OI_HISTORY] Request error for {stock.stock_symbol}: {e}")
+            logger.error("[OI_HISTORY] Request error for %s: %s", stock.stock_symbol, e, exc_info=True)
         except Exception as e:
-            logger.error(f"[OI_HISTORY] Unexpected error for {stock.stock_symbol}: {e}")
-            logger.error(__import__("traceback").format_exc())
+            logger.error("[OI_HISTORY] Unexpected error for %s: %s", stock.stock_symbol, e, exc_info=True)
         return None
 
     # ------------------------------------------------------------------

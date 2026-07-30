@@ -123,6 +123,7 @@ class TickStore:
                     d[field] = ticker_data[field]
 
             d["timestamp"] = time.time()
+        logger.debug("[TickStore] equity #%d: price=%.2f", self.tick_count, d.get("last_price", 0))
 
     # ------------------------------------------------------------------
     # Options ticks
@@ -180,6 +181,9 @@ class TickStore:
                 entry["depth"] = tick["depth"]
 
             self.options_live[strike][option_type] = entry
+        logger.debug("[TickStore] option #%d %s strike=%.0f ltp=%.2f oi=%d",
+                     self.option_tick_count, option_type, strike,
+                     entry.get("ltp", 0), entry.get("oi", 0))
 
     def recompute_options_aggregate(self, spot_price: Optional[float] = None) -> None:
         """Recompute aggregate metrics from options_live data."""
@@ -230,6 +234,9 @@ class TickStore:
                 )
 
             agg["last_updated"] = time.time()
+        logger.debug("[TickStore] aggregate: strikes=%d pcr=%.3f atm=%s straddle=%.1f",
+                     len(self.options_live), agg.get("live_pcr", 0),
+                     agg.get("atm_strike"), agg.get("atm_straddle_premium", 0))
 
     # ------------------------------------------------------------------
     # Futures ticks
@@ -255,3 +262,5 @@ class TickStore:
                 entry["close"] = tick["ohlc"].get("close", 0)
 
             self.futures_live[expiry_key] = entry
+        logger.debug("[TickStore] futures %s ltp=%.2f oi=%d", expiry_key,
+                     entry.get("ltp", 0), entry.get("oi", 0))
