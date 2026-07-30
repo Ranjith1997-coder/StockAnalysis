@@ -365,10 +365,32 @@ def _run_schedule(redis: RedisProxy):
                 _morning_done = False
                 _evening_done = False
                 _schedule_date = today
+                logger.info(f"[auth-service] New day {today} — flags reset")
 
             hour_min = now.hour * 60 + now.minute
 
+            # Safety net: if no enctoken in Redis and we haven't refreshed yet,
+            # do it now regardless of schedule. This catches post-reboot
+            # scenarios where the startup refresh failed or was skipped.
+            if not _morning_done:
+                existing = redis.hget(AUTH_HASH, "enctoken")
+                if not existing:
+                    logger.warning(
+                        f"[auth-service] No enctoken in Redis at {now.strftime('%H:%M')} "
+                        f"— refreshing immediately (schedule recovery)"
+                    )
+                    _last_refresh_ts = time.time()
+                    if _do_refresh(redis, reason="schedule_recovery_no_enctoken"):
+                        _morning_done = True
+                        _update_heartbeat(redis)
+                        continue
+                    else:
+                        logger.error("[auth-service] Schedule recovery refresh failed — retrying in 60s")
+                        time.sleep(60)
+                        continue
+
             if hour_min < 555 and not _morning_done:  # before 09:15 and morning not done
+                logger.info(f"[auth-service] Waiting until 09:00 for morning refresh (now={now.strftime('%H:%M')})")
                 _wait_until(9, 0)
                 if not _running:
                     break
@@ -376,6 +398,7 @@ def _run_schedule(redis: RedisProxy):
                 _do_refresh(redis, reason="scheduled_morning")
                 _morning_done = True
             elif hour_min < 1130 and not _evening_done:  # before 18:50 and evening not done
+                logger.info(f"[auth-service] Waiting until 18:50 for evening refresh (now={now.strftime('%H:%M')})")
                 _wait_until(18, 50)
                 if not _running:
                     break
@@ -424,16 +447,23 @@ def main():
     # Check if enctoken already exists in Redis (from a previous run)
     existing = redis.hget(AUTH_HASH, "enctoken")
     if existing:
-        logger.info("[auth-service] Existing enctoken found in Redis — waiting for next scheduled refresh")
+        logger.info(
+            f"[auth-service] Existing enctoken found in Redis "
+            f"(len={len(existing)}) — waiting for next scheduled refresh"
+        )
     else:
-        # No enctoken yet — if before 09:15, refresh immediately
+        # No enctoken in Redis — refresh immediately regardless of time.
+        # This handles post-reboot scenarios where Redis has no persistence
+        # (save="", appendonly=no) and loses all keys on restart. Without
+        # this, the auth-service would wait until 18:50 — leaving market-data
+        # unable to connect WS for 6+ hours.
         now = datetime.now()
-        if now.time() < dtime(9, 15):
-            logger.info("[auth-service] No enctoken in Redis and before market open — refreshing now")
-            _last_refresh_ts = time.time()
-            _do_refresh(redis, reason="startup")
-        else:
-            logger.info("[auth-service] No enctoken in Redis — waiting for next scheduled refresh")
+        logger.warning(
+            f"[auth-service] No enctoken in Redis at startup "
+            f"(time={now.strftime('%H:%M:%S')}) — refreshing immediately"
+        )
+        _last_refresh_ts = time.time()
+        _do_refresh(redis, reason="startup_no_enctoken")
 
     # Start reactive refresh consumer
     _start_auth_commands_consumer(redis)

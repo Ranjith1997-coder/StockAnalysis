@@ -219,7 +219,12 @@ def _register_one_symbol(registry, stock, all_options_df, all_futures_df, parent
 # ── Enctoken handling ──────────────────────────────────────────────────────
 
 def _wait_for_enctoken(redis: RedisProxy, timeout: int = 600) -> str | None:
-    """Wait for enctoken to appear in Redis (published by monolith at 09:00)."""
+    """Wait for enctoken to appear in Redis (published by auth-service at 09:00).
+
+    If timeout expires, publishes a refresh_enctoken command to auth:commands
+    stream so the auth-service can reactively refresh. Retries once after
+    publishing the command.
+    """
     deadline = time.time() + timeout
     while time.time() < deadline and _running:
         enctoken = redis.hget(AUTH_HASH, "enctoken")
@@ -227,7 +232,28 @@ def _wait_for_enctoken(redis: RedisProxy, timeout: int = 600) -> str | None:
             logger.info("[market-data] Enctoken found in Redis")
             return enctoken
         time.sleep(2)
-    logger.error("[market-data] Timeout waiting for enctoken")
+
+    # Timeout — no enctoken. Ask auth-service to refresh immediately.
+    logger.error("[market-data] Timeout waiting for enctoken — requesting reactive refresh")
+    try:
+        redis.xadd("auth:commands", {
+            "command": "refresh_enctoken",
+            "reason": "market_data_timeout",
+        }, maxlen=100)
+        logger.info("[market-data] Published refresh_enctoken command to auth:commands")
+    except Exception as e:
+        logger.error(f"[market-data] Failed to publish refresh command: {e}")
+
+    # Wait a bit more for the reactive refresh to complete
+    retry_deadline = time.time() + 120
+    while time.time() < retry_deadline and _running:
+        enctoken = redis.hget(AUTH_HASH, "enctoken")
+        if enctoken:
+            logger.info("[market-data] Enctoken received after reactive refresh request")
+            return enctoken
+        time.sleep(3)
+
+    logger.error("[market-data] Enctoken still missing after reactive refresh request — exiting")
     return None
 
 
