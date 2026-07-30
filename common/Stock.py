@@ -136,7 +136,7 @@ class Stock:
             DeprecationWarning,
             stacklevel=2,
         )
-        from fno.sensibull_fetcher import SensibullFetcher
+        from lib.fno.sensibull_fetcher import SensibullFetcher
         return SensibullFetcher().fetch_data(self, mode=mode)
 
     def fetch_sensibull_oi_chain(self, mode="positional"):
@@ -148,7 +148,7 @@ class Stock:
             DeprecationWarning,
             stacklevel=2,
         )
-        from fno.sensibull_fetcher import SensibullFetcher
+        from lib.fno.sensibull_fetcher import SensibullFetcher
         return SensibullFetcher().fetch_oi_chain(self, mode=mode)
 
     # ------------------------------------------------------------------
