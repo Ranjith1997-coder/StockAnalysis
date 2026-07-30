@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-"""Terminal debug client — sends commands to the Telegram bot via Telethon.
+"""Terminal debug client — READ commands via Telegram bot, WRITE commands via Redis.
 
-Acts as a Telegram *user* (not a bot) to send /debug* commands to the bot
-and receive responses.  Reuses the bot's existing command handlers — zero
-monolith code changes needed.
+READ commands (/debug, /status, /ltp, /signals, etc.) inspect the running
+process's memory and must go through the Telegram bot (which runs inside
+the orchestrator process).
+
+WRITE commands (/loglevel) set Redis keys directly — the service picks
+them up independently via heartbeat.  No Telegram bot needed.
 
 One-time setup:
   1. pip install telethon
@@ -15,20 +18,24 @@ One-time setup:
   4. First run: enter phone number + code (session saved for subsequent runs)
 
 Usage:
-  python scripts/debug_cli.py overview
-  python scripts/debug_cli.py stock RELIANCE
-  python scripts/debug_cli.py signals
-  python scripts/debug_cli.py signals RELIANCE
-  python scripts/debug_cli.py cycle
-  python scripts/debug_cli.py redis RELIANCE
-  python scripts/debug_cli.py counters
-  python scripts/debug_cli.py memory
-  python scripts/debug_cli.py analyzers
+   python scripts/debug_cli.py overview
+   python scripts/debug_cli.py stock RELIANCE
+   python scripts/debug_cli.py signals
+   python scripts/debug_cli.py signals RELIANCE
+   python scripts/debug_cli.py cycle
+   python scripts/debug_cli.py redis RELIANCE
+   python scripts/debug_cli.py counters
+   python scripts/debug_cli.py memory
+   python scripts/debug_cli.py analyzers
 
-  # Also supports existing bot commands:
-  python scripts/debug_cli.py status
-  python scripts/debug_cli.py ltp RELIANCE
-  python scripts/debug_cli.py help
+   # Log level control:
+   python scripts/debug_cli.py loglevel
+   python scripts/debug_cli.py loglevel analyser DEBUG
+
+   # Also supports existing bot commands:
+   python scripts/debug_cli.py status
+   python scripts/debug_cli.py ltp RELIANCE
+   python scripts/debug_cli.py help
 """
 from __future__ import annotations
 
@@ -43,11 +50,12 @@ try:
 except ImportError:
     pass
 
+_telethon_available = False
 try:
-    from telethon import TelegramClient
+    from telethon import TelegramClient  # noqa: F401
+    _telethon_available = True
 except ImportError:
-    print("ERROR: telethon not installed. Run: pip install telethon")
-    sys.exit(1)
+    pass
 
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -73,6 +81,7 @@ COMMAND_MAP = {
     "counters":   "/debugcounters",
     "memory":     "/debugmemory",
     "analyzers":  "/debuganalyzers",
+    "loglevel":   "/loglevel",
     # existing bot commands (passthrough)
     "status":     "/status",
     "ltp":        "/ltp",
@@ -154,6 +163,72 @@ async def _run(command: str) -> None:
         print(f"(No response from bot within {RESPONSE_TIMEOUT}s — is it running?)")
 
 
+ALL_LOG_SERVICES = [
+    "analyser", "zerodha", "intelligence", "fno", "notification", "common",
+    "premarket", "post-market-analysis", "backtest", "nse", "sentiment",
+    "auth-service", "analysis-engine", "market-data", "data-gateway",
+    "orchestrator", "notification-service", "resource-monitor",
+    "paper-trading", "signal-intelligence",
+]
+
+
+def _handle_loglevel_redis(args: list[str]) -> None:
+    """Set or display log levels directly via Redis — no Telegram needed."""
+    import redis as _redis
+
+    redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
+    try:
+        r = _redis.Redis.from_url(redis_url, socket_connect_timeout=5)
+        r.ping()
+    except Exception as e:
+        print(f"ERROR: Cannot connect to Redis at {redis_url}: {e}")
+        sys.exit(1)
+
+    if not args:
+        print(f"Log Levels (via {redis_url})")
+        print("─" * 45)
+        for svc in sorted(ALL_LOG_SERVICES):
+            val = r.get(f"service:log_level:{svc}")
+            if val:
+                level = val.decode() if isinstance(val, bytes) else val
+                print(f"  {svc:.<30} {level}")
+            else:
+                print(f"  {svc:.<30} default")
+        return
+
+    service = args[0]
+    if service == "all":
+        level = args[1].upper() if len(args) > 1 else "INFO"
+        if level not in ("DEBUG", "INFO", "WARNING", "ERROR"):
+            print(f"Invalid level: {level}")
+            sys.exit(1)
+        for svc in ALL_LOG_SERVICES:
+            r.set(f"service:log_level:{svc}", level)
+        print(f"ALL services → {level}  (takes effect in ≤30s)")
+        return
+    if service not in ALL_LOG_SERVICES:
+        print(f"Unknown service: {service}")
+        print(f"Available: {', '.join(ALL_LOG_SERVICES)}")
+        sys.exit(1)
+
+    if len(args) < 2:
+        val = r.get(f"service:log_level:{service}")
+        if val:
+            level = val.decode() if isinstance(val, bytes) else val
+            print(f"{service}: {level}")
+        else:
+            print(f"{service}: default")
+        return
+
+    level = args[1].upper()
+    if level not in ("DEBUG", "INFO", "WARNING", "ERROR"):
+        print(f"Invalid level: {level}. Use DEBUG, INFO, WARNING, or ERROR")
+        sys.exit(1)
+
+    r.set(f"service:log_level:{service}", level)
+    print(f"{service} → {level}  (takes effect in ≤30s)")
+
+
 def main() -> None:
     if len(sys.argv) < 2:
         print(__doc__)
@@ -165,9 +240,20 @@ def main() -> None:
     subcmd = sys.argv[1].lower().strip()
     args = sys.argv[2:]
 
+    # ── WRITE commands — Redis direct path (no Telegram needed) ──
+    if subcmd == "loglevel":
+        _handle_loglevel_redis(args)
+        return
+
+    # ── READ commands — Telegram bot path ──
+    if not _telethon_available:
+        print("ERROR: telethon not installed. Run: pip install telethon")
+        print("READ commands (debug, status, ltp, etc.) require Telethon.")
+        print("WRITE commands (loglevel) work without Telethon via Redis directly.")
+        sys.exit(1)
+
     tg_command = COMMAND_MAP.get(subcmd)
     if tg_command is None:
-        # Allow raw /command passthrough
         if subcmd.startswith("/"):
             tg_command = subcmd
         else:
