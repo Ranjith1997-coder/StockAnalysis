@@ -2,7 +2,7 @@ from .zerodha_ticker import KiteTicker
 import common.shared as shared
 import time
 from common.Stock import Stock
-from services.common.logging import get_logger
+from lib.logging_util import get_logger
 logger = get_logger("zerodha")
 from common.token_registry import (
     TokenType, OptionZone, TokenRegistry, TokenInfo,
@@ -403,7 +403,7 @@ class ZerodhaTickerManager:
         """Subscribe Zerodha option tokens on WS2."""
         from common.token_registry import TokenType
         from common.constants import LIVE_OPTIONS_INDICES
-        from services.common.logging import get_logger
+        from lib.logging_util import get_logger
         logger = get_logger("zerodha")
         from lib.notification.Notification import TELEGRAM_NOTIFICATIONS
 

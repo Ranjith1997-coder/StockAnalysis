@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Optional
 
-from services.common.logging import get_logger
+from lib.logging_util import get_logger
 logger = get_logger("paper-trading")
 from services.paper_trading.models import (
     DEFAULT_BROKERAGE_PER_ORDER,

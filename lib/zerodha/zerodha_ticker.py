@@ -12,7 +12,6 @@ import sys
 import time
 import json
 import struct
-import logging
 import threading
 from datetime import datetime
 from twisted.internet import reactor, ssl
@@ -23,7 +22,8 @@ from autobahn.twisted.websocket import WebSocketClientProtocol, \
 
 from .__version__ import __version__, __title__
 
-log = logging.getLogger(__name__)
+import lib.logging_util  # noqa: E402
+log = lib.logging_util.get_logger("zerodha")
 
 
 class KiteTickerClientProtocol(WebSocketClientProtocol):

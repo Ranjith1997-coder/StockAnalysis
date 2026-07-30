@@ -19,7 +19,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from ._guard import guard, debug_chat_only
-from services.common.logging import get_logger
+from lib.logging_util import get_logger
 logger = get_logger("notification")
 from services.common.metrics import (
     get_system_stats,

@@ -38,12 +38,8 @@ from enum import Enum
 import pandas as pd
 import numpy as np
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+from lib.logging_util import get_logger
+logger = get_logger("ml-pipeline")
 
 
 class LabelClass(Enum):

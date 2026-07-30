@@ -24,7 +24,7 @@ from services.common.stock_loader import (
 )
 from services.common.serialization import safe_json_dumps, safe_json_loads
 from services.common.metrics import incr_stock, set_stock, incr_system, incr_daily
-from services.common.logging import get_logger
+from lib.logging_util import get_logger
 logger = get_logger("analysis-engine")
 
 

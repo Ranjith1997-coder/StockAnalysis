@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from common.constants import LIVE_OPTIONS_INDICES
-from services.common.logging import get_logger
+from lib.logging_util import get_logger
 logger = get_logger("paper-trading")
 from lib.intelligence.correlator import Confluence
 from lib.intelligence.signal import Direction

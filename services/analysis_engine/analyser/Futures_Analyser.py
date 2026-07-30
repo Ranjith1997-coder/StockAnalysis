@@ -4,7 +4,7 @@ import pandas as pd
 from .Analyser import BaseAnalyzer
 from common.Stock import Stock
 from common.helperFunctions import percentageChange
-from services.common.logging import get_logger
+from lib.logging_util import get_logger
 logger = get_logger("analyser")
 from collections import namedtuple
 import common.shared as shared

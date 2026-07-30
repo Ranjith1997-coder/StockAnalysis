@@ -18,7 +18,7 @@ import os
 import time
 import traceback
 
-from services.common.logging import get_logger
+from lib.logging_util import get_logger
 logger = get_logger("crash-handler")
 
 

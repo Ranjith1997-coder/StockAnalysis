@@ -15,7 +15,7 @@ from common.helperFunctions import *
 from common.market_calendar import is_trading_day
 from enum import Enum
 from time import sleep
-from services.common.logging import get_logger
+from lib.logging_util import get_logger
 logger = get_logger("orchestrator")
 from typing import List, Tuple, Optional
 from dotenv import load_dotenv
@@ -765,7 +765,7 @@ def _dispatch_and_collect_stream(
 
 
 def fetch_and_analyze_stocks() -> List[Tuple[MonitorResult, bool, Optional[str]]]:
-    from services.common.logging import refresh_level_from_redis
+    from lib.logging_util import refresh_level_from_redis
     refresh_level_from_redis(redis_proxy, "orchestrator")
     logger.info("Fetching and analyzing data for all stocks")
 

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import common.shared as shared
-from services.common.logging import get_logger
+from lib.logging_util import get_logger
 logger = get_logger("notification")
 
 

@@ -2,7 +2,7 @@ import pandas as pd, os, datetime, json
 from .registry import load_sources
 from .analysis import PostMarketAnalyzer
 from .summary import PostMarketSummaryBuilder
-from services.common.logging import get_logger
+from lib.logging_util import get_logger
 logger = get_logger("post-market-analysis")
 
 # DATA_DIR = "post_market/data"

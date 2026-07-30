@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from services.common.redis_proxy import RedisProxy
 
-from services.common.logging import get_logger
+from lib.logging_util import get_logger
 logger = get_logger("data-gateway")
 from common.helperFunctions import get_stock_objects_from_json
 from services.common.stock_proxy import StockProxy

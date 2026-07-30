@@ -17,7 +17,7 @@ import json
 from lib.intelligence.signal import Signal, Direction, Layer, SignalStrength
 from lib.intelligence.correlator import Confluence
 from common.constants import CONFLUENCE_STREAM
-from services.common.logging import get_logger
+from lib.logging_util import get_logger
 logger = get_logger("signal-intelligence")
 from lib.notification.Notification import TELEGRAM_NOTIFICATIONS
 from services.common.metrics import incr_stock, incr_system, incr_daily

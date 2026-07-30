@@ -33,7 +33,7 @@ from services.common.redis_proxy import RedisProxy
 from services.common.version import BUILD_LABEL, GIT_COMMIT, GIT_DIRTY
 from services.market_data.signal_publisher import RedisSignalBus
 import common.shared as shared
-from services.common.logging import get_logger
+from lib.logging_util import get_logger
 logger = get_logger("analysis-engine")
 
 
@@ -47,7 +47,7 @@ def signal_handler(signum, frame):
 
 
 def _update_heartbeat(redis: RedisProxy, worker_name: str):
-    from services.common.logging import refresh_level_from_redis
+    from lib.logging_util import refresh_level_from_redis
     refresh_level_from_redis(redis, "analysis-engine")
     redis.hset(f"service:registry:analysis-engine:{worker_name}", mapping={
         "name": "analysis-engine",

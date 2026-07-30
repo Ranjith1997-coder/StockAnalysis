@@ -23,7 +23,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from services.common.logging import get_logger
+from lib.logging_util import get_logger
 logger = get_logger("common")
 
 # ---------------------------------------------------------------------------
