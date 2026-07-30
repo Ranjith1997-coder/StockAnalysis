@@ -1,7 +1,7 @@
 import traceback
 import numpy as np
 import pandas as pd
-from analyser.Analyser import BaseAnalyzer
+from .Analyser import BaseAnalyzer
 from common.Stock import Stock
 from common.helperFunctions import percentageChange
 from services.common.logging import get_logger

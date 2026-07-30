@@ -4,7 +4,7 @@ import pandas as pd
 from unittest.mock import patch, MagicMock
 
 import common.shared as shared
-from analyser.PCRAnalyser import PCRAnalyser
+from services.analysis_engine.analyser.PCRAnalyser import PCRAnalyser
 from tests.analyser.conftest import make_stock, make_sensibull_ctx
 
 

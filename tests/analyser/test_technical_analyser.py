@@ -5,7 +5,7 @@ import numpy as np
 from unittest.mock import patch, MagicMock
 
 import common.shared as shared
-from analyser.TechnicalAnalyser import TechnicalAnalyser
+from services.analysis_engine.analyser.TechnicalAnalyser import TechnicalAnalyser
 from tests.analyser.conftest import make_stock
 
 

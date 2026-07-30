@@ -5,7 +5,7 @@ import numpy as np
 from unittest.mock import patch, MagicMock
 
 import common.shared as shared
-from analyser.candleStickPatternAnalyser import CandleStickAnalyser
+from services.analysis_engine.analyser.candleStickPatternAnalyser import CandleStickAnalyser
 from tests.analyser.conftest import make_stock, make_ohlcv_df, patch_ctx
 
 

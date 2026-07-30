@@ -1,6 +1,6 @@
 """Tests for analyser/MessageFormatter.py."""
 from collections import namedtuple
-from analyser.MessageFormatter import MessageFormatter
+from services.analysis_engine.analyser.MessageFormatter import MessageFormatter
 
 
 class TestRegisteredTypes:

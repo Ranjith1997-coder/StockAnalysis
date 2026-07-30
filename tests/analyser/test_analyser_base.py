@@ -2,7 +2,7 @@
 import pytest
 from unittest.mock import MagicMock, patch
 
-from analyser.Analyser import BaseAnalyzer, AnalyserOrchestrator
+from services.analysis_engine.analyser.Analyser import BaseAnalyzer, AnalyserOrchestrator
 import common.shared as shared
 from tests.analyser.conftest import make_stock, patch_ctx
 

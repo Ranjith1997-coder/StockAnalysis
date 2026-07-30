@@ -2,11 +2,11 @@ import time
 from collections import deque
 from services.common.logging import get_logger
 logger = get_logger("analyser")
-from analyser.LiveAlertFormatter import F
+from .LiveAlertFormatter import F
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-    from analyser.LiveOptionsHistory import LiveOptionsHistory
+    from .LiveOptionsHistory import LiveOptionsHistory
 
 
 class LiveStraddleAnalyser:

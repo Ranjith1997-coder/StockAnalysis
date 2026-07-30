@@ -5,7 +5,7 @@ from common.scoring import (
     calculate_score, should_notify, format_score_message,
     NotificationPriority, ScoreResult
 )
-from analyser.MessageFormatter import MessageFormatter
+from .MessageFormatter import MessageFormatter
 from intelligence.signal import Signal, Direction, Layer, SignalStrength, weight_to_strength
 
 class BaseAnalyzer():

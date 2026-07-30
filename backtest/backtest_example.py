@@ -16,11 +16,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from datetime import datetime, timedelta
 from backtest.backtest import Backtester
-from analyser.TechnicalAnalyser import TechnicalAnalyser
-from analyser.VolumeAnalyser import VolumeAnalyser
-from analyser.candleStickPatternAnalyser import CandleStickAnalyser
-from analyser.Futures_Analyser import FuturesAnalyser
-from analyser.IVAnalyser import IVAnalyser
+from services.analysis_engine.analyser.TechnicalAnalyser import TechnicalAnalyser
+from services.analysis_engine.analyser.VolumeAnalyser import VolumeAnalyser
+from services.analysis_engine.analyser.candleStickPatternAnalyser import CandleStickAnalyser
+from services.analysis_engine.analyser.Futures_Analyser import FuturesAnalyser
+from services.analysis_engine.analyser.IVAnalyser import IVAnalyser
 import common.shared as shared
 
 

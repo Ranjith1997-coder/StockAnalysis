@@ -3,7 +3,7 @@ import pytest
 from unittest.mock import patch, MagicMock
 
 import common.shared as shared
-from analyser.GEXAnalyser import GEXAnalyser
+from services.analysis_engine.analyser.GEXAnalyser import GEXAnalyser
 from tests.analyser.conftest import make_stock, patch_ctx
 
 

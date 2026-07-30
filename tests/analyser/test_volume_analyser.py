@@ -5,7 +5,7 @@ import numpy as np
 from unittest.mock import patch, MagicMock
 
 import common.shared as shared
-from analyser.VolumeAnalyser import VolumeAnalyser
+from services.analysis_engine.analyser.VolumeAnalyser import VolumeAnalyser
 from tests.analyser.conftest import make_stock
 
 

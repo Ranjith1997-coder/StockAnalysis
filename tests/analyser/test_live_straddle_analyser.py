@@ -1,8 +1,8 @@
 """Tests for analyser/LiveStraddleAnalyser.py."""
 import time
 import pytest
-from analyser.LiveStraddleAnalyser import LiveStraddleAnalyser
-from analyser.LiveOptionsHistory import LiveOptionsHistory, OptionsSnapshot
+from services.analysis_engine.analyser.LiveStraddleAnalyser import LiveStraddleAnalyser
+from services.analysis_engine.analyser.LiveOptionsHistory import LiveOptionsHistory, OptionsSnapshot
 
 
 def _make_agg(straddle=200.0, atm_strike=20000, ce_ltp=100.0, pe_ltp=100.0):
@@ -137,7 +137,7 @@ class TestCheckSkewReversal:
         assert result is None
 
     def test_ce_heavy_skew_detected(self):
-        from analyser.LiveStraddleAnalyser import LiveStraddleAnalyser as LSA
+        from services.analysis_engine.analyser.LiveStraddleAnalyser import LiveStraddleAnalyser as LSA
         a = LSA("NIFTY")
         agg = {
             "atm_straddle_premium": 200.0,

@@ -16,18 +16,18 @@ import sys
 import time
 
 import common.constants as constant
-from analyser.Analyser import AnalyserOrchestrator
-from analyser.Futures_Analyser import FuturesAnalyser
-from analyser.VolumeAnalyser import VolumeAnalyser
-from analyser.TechnicalAnalyser import TechnicalAnalyser
-from analyser.candleStickPatternAnalyser import CandleStickAnalyser
-from analyser.IVAnalyser import IVAnalyser
-from analyser.PCRAnalyser import PCRAnalyser
-from analyser.MaxPainAnalyser import MaxPainAnalyser
-from analyser.OIChainAnalyser import OIChainAnalyser
-from analyser.GEXAnalyser import GEXAnalyser
-from analyser.PanicModeAnalyser import PanicModeAnalyser
-from analyser.OptionSellerCompositeAnalyser import OptionSellerCompositeAnalyser
+from .analyser.Analyser import AnalyserOrchestrator
+from .analyser.Futures_Analyser import FuturesAnalyser
+from .analyser.VolumeAnalyser import VolumeAnalyser
+from .analyser.TechnicalAnalyser import TechnicalAnalyser
+from .analyser.candleStickPatternAnalyser import CandleStickAnalyser
+from .analyser.IVAnalyser import IVAnalyser
+from .analyser.PCRAnalyser import PCRAnalyser
+from .analyser.MaxPainAnalyser import MaxPainAnalyser
+from .analyser.OIChainAnalyser import OIChainAnalyser
+from .analyser.GEXAnalyser import GEXAnalyser
+from .analyser.PanicModeAnalyser import PanicModeAnalyser
+from .analyser.OptionSellerCompositeAnalyser import OptionSellerCompositeAnalyser
 from services.analysis_engine.worker import process_job
 from services.common.redis_proxy import RedisProxy
 from services.common.version import BUILD_LABEL, GIT_COMMIT, GIT_DIRTY

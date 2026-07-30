@@ -15,7 +15,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from backtest.optimizer import ThresholdOptimizer
-from analyser.TechnicalAnalyser import TechnicalAnalyser
+from services.analysis_engine.analyser.TechnicalAnalyser import TechnicalAnalyser
 import common.shared as shared
 
 

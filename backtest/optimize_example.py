@@ -469,7 +469,7 @@ def example_8_apply_and_backtest():
     print("\n=== Example 8: Optimise → Apply → Backtest ===\n")
 
     from backtest.backtest import Backtester
-    from analyser.TechnicalAnalyser import TechnicalAnalyser
+    from services.analysis_engine.analyser.TechnicalAnalyser import TechnicalAnalyser
 
     # Step 1: Optimise on a large, diverse stock pool
     optimizer = ThresholdOptimizer(

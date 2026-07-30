@@ -1,5 +1,5 @@
 """Tests for analyser/LiveAlertFormatter.py."""
-from analyser.LiveAlertFormatter import LiveAlertFormatter, F
+from services.analysis_engine.analyser.LiveAlertFormatter import LiveAlertFormatter, F
 
 
 class TestHeader:

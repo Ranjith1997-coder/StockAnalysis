@@ -1,7 +1,7 @@
 """Tests for analyser/LiveOIAnalyser.py."""
 import pytest
-from analyser.LiveOIAnalyser import LiveOIAnalyser
-from analyser.LiveOptionsHistory import LiveOptionsHistory
+from services.analysis_engine.analyser.LiveOIAnalyser import LiveOIAnalyser
+from services.analysis_engine.analyser.LiveOptionsHistory import LiveOptionsHistory
 
 
 def _make_agg(pcr=1.0, ce_oi=100_000, pe_oi=100_000, ce_wall=20200,
@@ -133,7 +133,7 @@ class TestPcrSustainedTrend:
             )
         # Manually adjust timestamps so minutes_of_data >= 15
         # Rewrite using direct manipulation
-        from analyser.LiveOptionsHistory import OptionsSnapshot
+        from services.analysis_engine.analyser.LiveOptionsHistory import OptionsSnapshot
         import time as t
         h2 = _make_history()
         base = t.time() - 20 * 60
@@ -153,7 +153,7 @@ class TestPcrSustainedTrend:
         assert result[0] == "PCR_SUSTAINED_BULLISH"
 
     def test_sustained_bearish_trend_detected(self):
-        from analyser.LiveOptionsHistory import OptionsSnapshot
+        from services.analysis_engine.analyser.LiveOptionsHistory import OptionsSnapshot
         import time as t
         analyser = LiveOIAnalyser("NIFTY", 100)
         h = _make_history()
