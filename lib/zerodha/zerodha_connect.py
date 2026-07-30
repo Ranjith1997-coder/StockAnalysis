@@ -13,7 +13,6 @@ import csv
 import json
 import dateutil.parser
 import hashlib
-import logging
 import datetime
 import requests
 import warnings
@@ -21,7 +20,8 @@ import warnings
 from .__version__ import __version__, __title__
 import kiteconnect.exceptions as ex
 
-log = logging.getLogger(__name__)
+import lib.logging_util  # noqa: E402
+log = lib.logging_util.get_logger("zerodha")
 
 
 class KiteConnect(object):

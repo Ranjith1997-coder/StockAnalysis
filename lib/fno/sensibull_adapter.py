@@ -28,7 +28,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from services.common.logging import get_logger
+from lib.logging_util import get_logger
 logger = get_logger("fno")
 
 if TYPE_CHECKING:

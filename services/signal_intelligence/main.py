@@ -25,7 +25,7 @@ from services.common.redis_proxy import RedisProxy
 from services.common.version import BUILD_LABEL, GIT_COMMIT, GIT_DIRTY
 from services.signal_intelligence.worker import reconstruct_signal, make_on_confluence
 from lib.notification.Notification import TELEGRAM_NOTIFICATIONS
-from services.common.logging import get_logger
+from lib.logging_util import get_logger
 logger = get_logger("signal-intelligence")
 
 CONSUMER_NAME = "signal-intelligence-1"

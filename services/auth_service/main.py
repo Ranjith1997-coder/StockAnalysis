@@ -30,7 +30,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import common.constants as constant
-from services.common.logging import get_logger
+from lib.logging_util import get_logger
 logger = get_logger("auth-service")
 from services.common.redis_proxy import RedisProxy
 from services.common.version import BUILD_LABEL, GIT_COMMIT, GIT_DIRTY
@@ -307,7 +307,7 @@ def _start_auth_commands_consumer(redis: RedisProxy):
 # ═══════════════════════════════════════════════════════════════════════════
 
 def _update_heartbeat(redis: RedisProxy):
-    from services.common.logging import refresh_level_from_redis
+    from lib.logging_util import refresh_level_from_redis
     refresh_level_from_redis(redis, "auth-service")
     redis.hset("service:registry:auth-service", mapping={
         "name": "auth-service",

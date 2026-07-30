@@ -17,7 +17,7 @@ import threading
 import time
 from typing import Optional
 
-from services.common.logging import get_logger
+from lib.logging_util import get_logger
 logger = get_logger("zerodha")
 
 

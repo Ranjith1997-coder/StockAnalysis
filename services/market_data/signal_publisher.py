@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from services.common.redis_proxy import RedisProxy
 
 from lib.intelligence.signal import Signal
-from services.common.logging import get_logger
+from lib.logging_util import get_logger
 logger = get_logger("market-data")
 from common.constants import SIGNALS_STREAM
 

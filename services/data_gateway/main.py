@@ -33,7 +33,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from dotenv import load_dotenv
 load_dotenv()
 
-from services.common.logging import get_logger
+from lib.logging_util import get_logger
 logger = get_logger("data-gateway")
 from datetime import time as _time
 from common.helperFunctions import get_stock_objects_from_json, isNowInTimePeriod

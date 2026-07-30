@@ -21,7 +21,7 @@ from urllib.parse import quote
 
 import requests
 
-from services.common.logging import get_logger
+from lib.logging_util import get_logger
 logger = get_logger("fno")
 
 if TYPE_CHECKING:

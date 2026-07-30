@@ -8,7 +8,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 import common.shared as shared
-from services.common.logging import get_logger
+from lib.logging_util import get_logger
 logger = get_logger("notification")
 from ._guard import guard
 from ._helpers import find_stock_by_symbol, build_gainers_losers, refresh_stock_from_redis

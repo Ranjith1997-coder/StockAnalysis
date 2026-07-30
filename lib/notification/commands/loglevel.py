@@ -13,7 +13,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from ._guard import guard, debug_chat_only
-from services.common.logging import set_runtime_level, reset_runtime_level
+from lib.logging_util import set_runtime_level, reset_runtime_level
 
 ALL_SERVICES = [
     "analyser", "zerodha", "intelligence", "fno", "notification", "common",

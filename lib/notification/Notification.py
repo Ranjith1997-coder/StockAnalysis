@@ -16,7 +16,7 @@ from common.constants import (
     DISCORD_POSITIONAL_WEBHOOK_URL,
     DISCORD_LIVE_OPTIONS_WEBHOOK_URL,
 )
-from services.common.logging import get_logger
+from lib.logging_util import get_logger
 logger = get_logger("notification")
 from services.common.metrics import incr_stock, incr_system, incr_daily
 

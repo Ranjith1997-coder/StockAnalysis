@@ -1,6 +1,6 @@
 import time
 from collections import deque
-from services.common.logging import get_logger
+from lib.logging_util import get_logger
 logger = get_logger("analyser")
 from .LiveAlertFormatter import F
 

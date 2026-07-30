@@ -46,7 +46,7 @@ from tools.backtest.backtest import Backtester, BacktestResult
 from services.analysis_engine.analyser.TechnicalAnalyser import TechnicalAnalyser
 from services.analysis_engine.analyser.candleStickPatternAnalyser import CandleStickAnalyser
 from services.analysis_engine.analyser.VolumeAnalyser import VolumeAnalyser
-from services.common.logging import get_logger
+from lib.logging_util import get_logger
 logger = get_logger("backtest")
 import common.shared as shared
 

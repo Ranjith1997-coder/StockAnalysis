@@ -15,7 +15,7 @@ from typing import NamedTuple, Optional
 
 import requests
 
-from services.common.logging import get_logger
+from lib.logging_util import get_logger
 logger = get_logger("paper-trading")
 from services.paper_trading.models import instruments_key
 

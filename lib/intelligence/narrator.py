@@ -17,7 +17,7 @@ from .context_builder import ContextBuilder, MarketContext
 from .llm_client import LLMClient
 from lib.notification.Notification import TELEGRAM_NOTIFICATIONS
 from services.common.metrics import incr_stock
-from services.common.logging import get_logger
+from lib.logging_util import get_logger
 logger = get_logger("intelligence")
 import common.shared as shared
 

@@ -5,10 +5,11 @@ import pathlib
 import argparse
 import requests
 import pyotp
-import logging
+# removed: import logging (replaced by lib.logging_util)
 from dotenv import load_dotenv, set_key
 
-logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
+from lib.logging_util import get_logger
+logger = get_logger("auth-service")
 
 # Persists across service restarts; outside the repo so it's never committed.
 LOCK_FILE = pathlib.Path.home() / ".zerodha_auth_last_run"
@@ -27,7 +28,7 @@ def _mark_ran_today() -> None:
     try:
         LOCK_FILE.write_text(str(datetime.date.today()))
     except Exception as e:
-        logging.warning(f"Could not write lock file: {e}")
+        logger.warning("Could not write lock file: %s", e)
 
 
 def generate_enctoken() -> tuple[bool, "requests.Session | None", str | None]:
@@ -46,7 +47,7 @@ def generate_enctoken() -> tuple[bool, "requests.Session | None", str | None]:
     env_file_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
 
     if not all([user_id, password, totp_secret]):
-        logging.error("Missing ZERODHA_USER / ZERODHA_PASS / ZERODHA_TOTP_SECRET in .env")
+        logger.error("Missing ZERODHA_USER / ZERODHA_PASS / ZERODHA_TOTP_SECRET in .env")
         return False, None, None
 
     session = requests.Session()
@@ -60,7 +61,7 @@ def generate_enctoken() -> tuple[bool, "requests.Session | None", str | None]:
     }
 
     try:
-        logging.info("Initiating Zerodha login...")
+        logger.info("Initiating Zerodha login...")
         login_resp = session.post(
             "https://kite.zerodha.com/api/login",
             data={"user_id": user_id, "password": password},
@@ -68,13 +69,13 @@ def generate_enctoken() -> tuple[bool, "requests.Session | None", str | None]:
         ).json()
 
         if login_resp.get("status") != "success":
-            logging.error(f"Login failed: {login_resp.get('message')}")
+            logger.error("Login failed: %s", login_resp.get("message"))
             return False, None, None
 
         request_id = login_resp["data"]["request_id"]
         totp_pin   = pyotp.TOTP(totp_secret).now()
 
-        logging.info("Completing 2FA...")
+        logger.info("Completing 2FA...")
         twofa_resp = session.post(
             "https://kite.zerodha.com/api/twofa",
             data={
@@ -86,20 +87,20 @@ def generate_enctoken() -> tuple[bool, "requests.Session | None", str | None]:
         ).json()
 
         if twofa_resp.get("status") != "success":
-            logging.error(f"2FA failed: {twofa_resp.get('message')}")
+            logger.error("2FA failed: %s", twofa_resp.get("message"))
             return False, None, None
 
         enctoken = session.cookies.get("enctoken")
         if not enctoken:
-            logging.error("Could not find enctoken in cookies.")
+            logger.error("Could not find enctoken in cookies.")
             return False, None, None
 
         set_key(env_file_path, "ZERODHA_ENC_TOKEN", enctoken)
-        logging.info("✅ enctoken refreshed successfully.")
+        logger.info("enctoken refreshed successfully.")
         return True, session, enctoken
 
     except Exception as e:
-        logging.error(f"Auth failed: {e}")
+        logger.error("Auth failed: %s", e)
         return False, None, None
 
 
@@ -113,8 +114,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if not args.force and _already_ran_today():
-        logging.info(f"Auth already ran today ({datetime.date.today()}) — skipping.")
-        logging.info("Run with --force or 'make auth-force' to override.")
+        logger.info("Auth already ran today (%s) — skipping.", datetime.date.today())
+        logger.info("Run with --force or 'make auth-force' to override.")
         sys.exit(0)
 
     success, _session, _enc = generate_enctoken()

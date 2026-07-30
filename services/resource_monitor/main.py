@@ -33,7 +33,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import redis as sync_redis
-from services.common.logging import get_logger
+from lib.logging_util import get_logger
 logger = get_logger("resource-monitor")
 
 try:

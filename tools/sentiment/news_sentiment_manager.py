@@ -4,7 +4,7 @@ import hashlib
 import feedparser
 import threading
 from datetime import datetime
-from services.common.logging import get_logger
+from lib.logging_util import get_logger
 logger = get_logger("sentiment")
 
 from transformers import AutoTokenizer, AutoModelForSequenceClassification

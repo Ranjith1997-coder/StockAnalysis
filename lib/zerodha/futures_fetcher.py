@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Tuple
 
 import pandas as pd
 
-from services.common.logging import get_logger
+from lib.logging_util import get_logger
 logger = get_logger("zerodha")
 
 if TYPE_CHECKING:

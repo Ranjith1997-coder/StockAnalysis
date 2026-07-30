@@ -34,7 +34,7 @@ import os
 import time
 from datetime import date
 
-from services.common.logging import get_logger
+from lib.logging_util import get_logger
 logger = get_logger("common")
 
 _REDIS_CLIENT = None

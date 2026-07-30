@@ -14,7 +14,7 @@ import time
 from datetime import date, datetime, time as dtime
 from typing import Optional
 
-from services.common.logging import get_logger
+from lib.logging_util import get_logger
 logger = get_logger("paper-trading")
 from services.paper_trading.models import (
     DEFAULT_EXCHANGE_CHARGES_PCT,

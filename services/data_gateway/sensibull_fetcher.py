@@ -18,7 +18,7 @@ from urllib.parse import quote
 import requests
 import pandas as pd
 
-from services.common.logging import get_logger
+from lib.logging_util import get_logger
 logger = get_logger("data-gateway")
 from services.common.stock_proxy import StockProxy
 from services.common.rate_limiter import get_sensibull_limiter, retry_on_429
