@@ -765,6 +765,8 @@ def _dispatch_and_collect_stream(
 
 
 def fetch_and_analyze_stocks() -> List[Tuple[MonitorResult, bool, Optional[str]]]:
+    from services.common.logging import refresh_level_from_redis
+    refresh_level_from_redis(redis_proxy, "orchestrator")
     logger.info("Fetching and analyzing data for all stocks")
 
     stock_objs = list(shared.app_ctx.stock_token_obj_dict.values())

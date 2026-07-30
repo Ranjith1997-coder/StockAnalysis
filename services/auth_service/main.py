@@ -307,6 +307,8 @@ def _start_auth_commands_consumer(redis: RedisProxy):
 # ═══════════════════════════════════════════════════════════════════════════
 
 def _update_heartbeat(redis: RedisProxy):
+    from services.common.logging import refresh_level_from_redis
+    refresh_level_from_redis(redis, "auth-service")
     redis.hset("service:registry:auth-service", mapping={
         "name": "auth-service",
         "pid": str(os.getpid()),

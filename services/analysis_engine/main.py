@@ -47,6 +47,8 @@ def signal_handler(signum, frame):
 
 
 def _update_heartbeat(redis: RedisProxy, worker_name: str):
+    from services.common.logging import refresh_level_from_redis
+    refresh_level_from_redis(redis, "analysis-engine")
     redis.hset(f"service:registry:analysis-engine:{worker_name}", mapping={
         "name": "analysis-engine",
         "worker": worker_name,
