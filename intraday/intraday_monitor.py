@@ -15,18 +15,6 @@ from common.helperFunctions import *
 from common.market_calendar import is_trading_day
 from enum import Enum
 from time import sleep
-from analyser.Analyser import AnalyserOrchestrator
-from analyser.Futures_Analyser import FuturesAnalyser
-from analyser.VolumeAnalyser import VolumeAnalyser
-from analyser.TechnicalAnalyser import TechnicalAnalyser
-from analyser.candleStickPatternAnalyser import CandleStickAnalyser
-from analyser.IVAnalyser import IVAnalyser
-from analyser.PCRAnalyser import PCRAnalyser
-from analyser.MaxPainAnalyser import MaxPainAnalyser
-from analyser.OIChainAnalyser import OIChainAnalyser
-from analyser.GEXAnalyser import GEXAnalyser
-from analyser.PanicModeAnalyser import PanicModeAnalyser
-from analyser.OptionSellerCompositeAnalyser import OptionSellerCompositeAnalyser
 from common.logging_util import logger
 from typing import List, Tuple, Optional
 from dotenv import load_dotenv
@@ -201,8 +189,6 @@ class Trend (Enum):
     BEARISH = "BEARISH"
     NEUTRAL = "NEUTRAL"
 
-
-orchestrator : AnalyserOrchestrator =  None
 PRODUCTION = False
 DEV_NOTIFY = False      # True = send Telegram alerts even in dev mode (DEV_NOTIFY=1)
 ENABLE_ZERODHA_DERIVATIVES = False
@@ -1180,143 +1166,10 @@ def _start_confluence_narrator_subscriber():
     t.start()
 
 
-_morning_bias_done = False
 
 
-def _compute_daily_hv(stock) -> float | None:
-    """
-    Compute annualised Historical Volatility (%) from daily closes.
-    Uses std(log_returns, 20-day window) × √252 × 100.
-
-    Called once at morning bias while priceData still holds 1y daily bars.
-    Returns HV as a percentage (e.g. 28.5), or None if insufficient data.
-    """
-    import numpy as np
-    try:
-        price_data = stock.priceData
-        if price_data is None or price_data.empty:
-            return None
-        closes = price_data["Close"].dropna()
-        # Need at least 21 rows for a 20-bar window (20 log returns)
-        if len(closes) < 21:
-            return None
-        window = closes.iloc[-21:]
-        log_returns = np.log(window / window.shift(1)).dropna()
-        if len(log_returns) < 2:
-            return None
-        std = float(log_returns.std())
-        if std == 0:
-            return None
-        return round(std * (252 ** 0.5) * 100, 2)
-    except Exception as e:
-        logger.warning(f"[HV] Failed to compute daily HV for {stock.stock_symbol}: {e}")
-        return None
 
 
-def _compute_daily_hv_all():
-    """
-    Compute and cache daily HV for all stocks and indices.
-    Must be called while priceData still holds 1y daily bars (before the
-    intraday loop overwrites it with 5m data).
-    """
-    all_stocks = list(shared.app_ctx.stock_token_obj_dict.values()) + [
-        idx for idx in shared.app_ctx.index_token_obj_dict.values()
-        if idx.stock_symbol not in constant.INDEX_ANALYSIS_EXCLUDE
-    ]
-    computed = 0
-    for s in all_stocks:
-        hv = _compute_daily_hv(s)
-        s.daily_hv = hv
-        if hv is not None:
-            logger.debug(f"[HV] {s.stock_symbol} daily_hv={hv:.1f}%")
-            computed += 1
-        else:
-            logger.debug(f"[HV] {s.stock_symbol} daily_hv=None (insufficient data)")
-    logger.info(f"[HV] Daily HV cached for {computed}/{len(all_stocks)} symbols")
-
-
-def compute_morning_bias():
-    """
-    Run positional analysers on daily data loaded by create_stock_and_index_objects().
-    Emit results as POSITIONAL signals valid for the entire trading day.
-    Only runs in INTRADAY mode — positional (8 PM) doesn't need morning bias.
-    """
-    global _morning_bias_done
-    if _morning_bias_done:
-        return
-    _morning_bias_done = True
-
-    # Skip for positional mode — no need for morning bias in the evening run
-    if shared.app_ctx.mode and shared.app_ctx.mode.name == shared.Mode.POSITIONAL.name:
-        logger.info("Morning bias skipped — positional mode")
-        return
-
-    bus = shared.app_ctx.signal_bus
-    if not bus:
-        return
-
-    # Temporarily switch to POSITIONAL so analysers apply daily-data thresholds
-    shared.app_ctx.mode = shared.Mode.POSITIONAL
-    orchestrator.reset_all_constants()
-    signals_emitted = []
-
-    # Compute and cache daily HV for every stock and index while priceData
-    # still holds 1y daily bars (before it is overwritten with 5m data in
-    # the intraday loop). Stored on stock.daily_hv for use by IVAnalyser.
-    _compute_daily_hv_all()
-
-    # Read Sensibull data from Redis before running analysers.
-    # compute_morning_bias() bypasses monitor(), so without this load
-    # sensibull_ctx["current"]["stats"] stays None and IVAnalyser crashes.
-    # Data-gateway's initial load already published positional-mode Sensibull data.
-
-    try:
-        # Indices
-        for index in shared.app_ctx.index_token_obj_dict.values():
-            if index.stock_symbol in constant.INDEX_ANALYSIS_EXCLUDE:
-                continue
-            if not load_sensibull_from_redis(redis_proxy, index):
-                logger.warning(f"[MorningBias] No sensibull data in Redis for {index.stock_symbol}")
-            orchestrator.run_all_positional(index, index=True)
-            for sentiment in ("BULLISH", "BEARISH"):
-                for analysis_type in index.analysis.get(sentiment, {}):
-                    weight = constant.ANALYSIS_WEIGHTS.get(
-                        analysis_type, constant.ANALYSIS_WEIGHTS.get("DEFAULT", 10)
-                    )
-                    signals_emitted.append(Signal(
-                        symbol=index.stock_symbol,
-                        direction=Direction[sentiment],
-                        source=analysis_type.lower(),
-                        layer=Layer.POSITIONAL,
-                        strength=weight_to_strength(weight),
-                    ))
-            index.reset_analysis()
-
-        # Equities
-        for stock in shared.app_ctx.stock_token_obj_dict.values():
-            if not load_sensibull_from_redis(redis_proxy, stock):
-                logger.warning(f"[MorningBias] No sensibull data in Redis for {stock.stock_symbol}")
-            orchestrator.run_all_positional(stock, index=False)
-            for sentiment in ("BULLISH", "BEARISH"):
-                for analysis_type in stock.analysis.get(sentiment, {}):
-                    weight = constant.ANALYSIS_WEIGHTS.get(
-                        analysis_type, constant.ANALYSIS_WEIGHTS.get("DEFAULT", 10)
-                    )
-                    signals_emitted.append(Signal(
-                        symbol=stock.stock_symbol,
-                        direction=Direction[sentiment],
-                        source=analysis_type.lower(),
-                        layer=Layer.POSITIONAL,
-                        strength=weight_to_strength(weight),
-                    ))
-            stock.reset_analysis()
-    finally:
-        # Always restore INTRADAY mode
-        shared.app_ctx.mode = shared.Mode.INTRADAY
-
-    for sig in signals_emitted:
-        bus.emit(sig)
-    logger.info(f"Morning bias computed: {len(signals_emitted)} positional signals emitted to SignalBus")
 
 
 def update_morning_bias():
@@ -1327,9 +1180,6 @@ def update_morning_bias():
     BEARISH results as POSITIONAL layer signals → SignalBus. Zero HTTP, zero
     re-computation. ~0.5s for 213 stocks.
 
-    Slow path fallback: if analysis dict is empty (monolith restarted overnight),
-    fall back to compute_morning_bias() which re-reads Redis and re-runs
-    all positional analysers. ~120s with 43 HTTP calls.
     """
     bus = shared.app_ctx.signal_bus
     if not bus:
@@ -1365,9 +1215,6 @@ def update_morning_bias():
             bus.emit(sig)
         shared.app_ctx.mode = shared.Mode.INTRADAY
         logger.info(f"Morning bias (fast path): {len(signals_emitted)} signals from 8 PM analysis")
-    else:
-        logger.info("Morning bias (slow path): no 8 PM analysis found — recomputing from Redis")
-        compute_morning_bias()
 
 
 # ---------------------------------------------------------------------------
@@ -1499,7 +1346,6 @@ def positional_analysis():
     
     logger.info("EOD analysis Started")
     TELEGRAM_NOTIFICATIONS.send_notification("\U0001F4CA <b>EOD Analysis Started</b> \U0001F4CA", parse_mode="HTML")
-    orchestrator.reset_all_constants()
     stock_alerts = []
 
     shared.ticker_52_week_high_list.clear()
@@ -1567,7 +1413,6 @@ def positional_analysis():
 
 def init():
     load_dotenv()
-    global orchestrator
     global PRODUCTION
     global ENABLE_ZERODHA_DERIVATIVES
     global ENABLE_ZERODHA_API
@@ -1722,19 +1567,6 @@ def init():
 
     if ENABLE_ZERODHA_DERIVATIVES or LIVE_OPTIONS_ONLY:
         update_zerodha_option_chain(args.stock, args.index)
-    orchestrator = AnalyserOrchestrator()
-    if not LIVE_OPTIONS_ONLY:
-        orchestrator.register(VolumeAnalyser())
-        orchestrator.register(TechnicalAnalyser())
-        orchestrator.register(CandleStickAnalyser())
-        orchestrator.register(IVAnalyser())
-        orchestrator.register(FuturesAnalyser())
-        orchestrator.register(PCRAnalyser())
-        orchestrator.register(MaxPainAnalyser())
-        orchestrator.register(OIChainAnalyser())
-        orchestrator.register(GEXAnalyser())        # After OIChainAnalyser; before composite
-        orchestrator.register(PanicModeAnalyser())
-        orchestrator.register(OptionSellerCompositeAnalyser())  # MUST be last -- reads PANIC_EXHAUSTION
     if ENABLE_ZERODHA_API:
         logger.info("Zerodha API enabled")
         # Read enctoken from Redis (published by auth-service) first, fall back to .env
@@ -1828,7 +1660,6 @@ def _run_daily_loop():
     already passed are skipped (e.g. restarting at 16:00 skips pre-market and
     intraday, jumps straight to waiting for positional).
     """
-    global _morning_bias_done
 
     while True:
         try:
@@ -1912,8 +1743,6 @@ def _run_daily_loop():
             logger.info("=== Positional phase ===")
             positional_analysis()
 
-            # ── Done for today ──
-            _morning_bias_done = False
             logger.info("=== Daily cycle complete. Sleeping until midnight ===")
             _sleep_until_midnight()
 
@@ -1927,7 +1756,7 @@ def start_stock_analysis():
 
         if ENABLE_INTELLIGENCE:
             try:
-                compute_morning_bias()
+                update_morning_bias()
             except Exception as e:
                 logger.error(f"Morning bias computation failed: {e}")
 
