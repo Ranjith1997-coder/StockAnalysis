@@ -29,8 +29,8 @@ from pathlib import Path
 _REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_REPO))
 
-from fno.sensibull_feed import SensibullFeed          # noqa: E402
-from fno.sensibull_adapter import SensibullAdapter    # noqa: E402
+from services.market_data.sensibull_feed import SensibullFeed          # noqa: E402
+from lib.fno.sensibull_adapter import SensibullAdapter    # noqa: E402
 from zerodha.tick_store import TickStore              # noqa: E402
 
 
@@ -267,7 +267,7 @@ def phase3_ws_connectivity() -> bool:
     frames: list[dict] = []   # one entry per frame received: {idx, size, is_heartbeat}
 
     import websocket as _ws
-    from fno.sensibull_feed import _decode_frame
+    from services.market_data.sensibull_feed import _decode_frame
     _WS_HEADERS = [
         "User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",

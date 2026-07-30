@@ -59,8 +59,8 @@ from lib.zerodha.zerodha_analysis import ZerodhaTickerManager
 from lib.zerodha.zerodha_connect import KiteConnect
 from lib.zerodha.live_options_engine import LiveOptionsEngine
 from lib.zerodha.live_stock_engine import LiveStockEngine
-from fno.sensibull_feed import SensibullFeed
-from fno.sensibull_adapter import SensibullAdapter
+from .sensibull_feed import SensibullFeed
+from lib.fno.sensibull_adapter import SensibullAdapter
 from lib.notification.Notification import TELEGRAM_NOTIFICATIONS
 
 

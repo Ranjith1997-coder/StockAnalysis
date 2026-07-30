@@ -1,9 +1,10 @@
 {
     "include": [
+        "lib/fno",
         "services/analysis_engine/analyser",
         "backtest",
         "common",
-        "fno",
+        
         "intraday",
         "metaData",
         "lib/notification",
