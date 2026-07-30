@@ -65,7 +65,7 @@ def _do_refresh(redis: RedisProxy, reason: str = "scheduled") -> bool:
     Returns True on success, False on failure.
     """
     try:
-        from auth.auth_login import generate_enctoken
+        from .auth.auth_login import generate_enctoken
         success, session, enctoken = generate_enctoken()
         if not success or not enctoken:
             logger.error(f"[auth-service] TOTP login failed (reason={reason})")
