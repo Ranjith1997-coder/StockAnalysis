@@ -253,7 +253,7 @@ def example_6_candlestick():
     - DARK_CLOUD_MIN_PENETRATION: minimum penetration for dark cloud cover
     
     Note: Continuation patterns (2 Continuous Increase/Decrease) are now in a
-    separate method 'doubleCandleStickContinuationPattern' for independent testing.
+    separate method 'analyse_double_candle_continuation' for independent testing.
     
     IMPROVED SETTINGS:
     - Extended search space boundaries (see optimizer.py)
@@ -264,7 +264,7 @@ def example_6_candlestick():
 
     optimizer = ThresholdOptimizer(
         analyser_class_name="CandleStickAnalyser",
-        method_name="doubleCandleStickPattern",
+        method_name="analyse_double_candle_reversal",
         stock_symbols=STOCKS_DIVERSIFIED,
         train_start="2019-01-01",
         train_end="2023-12-31",
@@ -302,7 +302,7 @@ def example_6b_candlestick_continuation():
 
     optimizer = ThresholdOptimizer(
         analyser_class_name="CandleStickAnalyser",
-        method_name="doubleCandleStickContinuationPattern",
+        method_name="analyse_double_candle_continuation",
         stock_symbols=STOCKS_DIVERSIFIED,
         train_start="2019-01-01",
         train_end="2023-12-31",
@@ -339,7 +339,7 @@ def example_6c_single_candle_momentum():
 
     optimizer = ThresholdOptimizer(
         analyser_class_name="CandleStickAnalyser",
-        method_name="singleCandleStickPattern",
+        method_name="analyse_single_candle_momentum",
         stock_symbols=STOCKS_DIVERSIFIED,
         train_start="2019-01-01",
         train_end="2023-12-31",
@@ -378,7 +378,7 @@ def example_6d_single_candle_reversal():
 
     optimizer = ThresholdOptimizer(
         analyser_class_name="CandleStickAnalyser",
-        method_name="singleCandleReversalPattern",
+        method_name="analyse_single_candle_reversal",
         stock_symbols=STOCKS_DIVERSIFIED,
         train_start="2019-01-01",
         train_end="2023-12-31",
@@ -516,12 +516,12 @@ def example_9_all_candlestick_patterns():
     Example 9: Run optimization for ALL candlestick pattern methods.
     
     This runs optimization for all 6 candlestick pattern methods:
-    1. singleCandleStickPattern - Marubozu (momentum)
-    2. singleCandleReversalPattern - Hammer, Shooting Star (reversal with trend context)
-    3. doubleCandleStickPattern - Engulfing, Piercing, Dark Cloud (reversal with trend context)
-    4. doubleCandleStickContinuationPattern - 2 Cont. Inc/Dec (continuation)
-    5. tripleCandleStickReversalPattern - Morning/Evening Star (reversal with trend context)
-    6. tripleCandleStickContinuationPattern - 3 Cont. Inc/Dec (continuation)
+    1. analyse_single_candle_momentum - Marubozu (momentum)
+    2. analyse_single_candle_reversal - Hammer, Shooting Star (reversal with trend context)
+    3. analyse_double_candle_reversal - Engulfing, Piercing, Dark Cloud (reversal with trend context)
+    4. analyse_double_candle_continuation - 2 Cont. Inc/Dec (continuation)
+    5. analyse_triple_candle_reversal - Morning/Evening Star (reversal with trend context)
+    6. analyse_triple_candle_continuation - 3 Cont. Inc/Dec (continuation)
     
     NEW FEATURE: Trend Context for Reversal Patterns
     - Bullish reversal patterns (Hammer, Bullish Engulfing, Piercing, Morning Star)
@@ -576,13 +576,13 @@ def example_9_all_candlestick_patterns():
     print("\n\n>>> [1/6] Optimizing Single Candle MOMENTUM Patterns (Marubozu)...\n")
     
     optimizer1 = ThresholdOptimizer(
-        method_name="singleCandleStickPattern",
+        method_name="analyse_single_candle_momentum",
         **common_params
     )
     optimizer1.optimize()
     optimizer1.print_results()
     optimizer1.export_results("opt_single_candle_momentum.json")
-    results["singleCandleStickPattern"] = optimizer1
+    results["analyse_single_candle_momentum"] = optimizer1
     print("\n" + "-" * 80)
     
     # -------------------------------------------------------------------------
@@ -593,13 +593,13 @@ def example_9_all_candlestick_patterns():
     print("    NOTE: Now includes trend context filtering!\n")
     
     optimizer2 = ThresholdOptimizer(
-        method_name="singleCandleReversalPattern",
+        method_name="analyse_single_candle_reversal",
         **common_params
     )
     optimizer2.optimize()
     optimizer2.print_results()
     optimizer2.export_results("opt_single_candle_reversal.json")
-    results["singleCandleReversalPattern"] = optimizer2
+    results["analyse_single_candle_reversal"] = optimizer2
     print("\n" + "-" * 80)
     
     # -------------------------------------------------------------------------
@@ -610,13 +610,13 @@ def example_9_all_candlestick_patterns():
     print("    NOTE: Now includes trend context filtering!\n")
     
     optimizer3 = ThresholdOptimizer(
-        method_name="doubleCandleStickPattern",
+        method_name="analyse_double_candle_reversal",
         **common_params
     )
     optimizer3.optimize()
     optimizer3.print_results()
     optimizer3.export_results("opt_double_candle_reversal.json")
-    results["doubleCandleStickPattern"] = optimizer3
+    results["analyse_double_candle_reversal"] = optimizer3
     print("\n" + "-" * 80)
     
     # -------------------------------------------------------------------------
@@ -627,13 +627,13 @@ def example_9_all_candlestick_patterns():
     print("    WARNING: These patterns historically have negative expectancy!\n")
     
     optimizer4 = ThresholdOptimizer(
-        method_name="doubleCandleStickContinuationPattern",
+        method_name="analyse_double_candle_continuation",
         **common_params
     )
     optimizer4.optimize()
     optimizer4.print_results()
     optimizer4.export_results("opt_double_candle_continuation.json")
-    results["doubleCandleStickContinuationPattern"] = optimizer4
+    results["analyse_double_candle_continuation"] = optimizer4
     print("\n" + "-" * 80)
     
     # -------------------------------------------------------------------------
@@ -644,13 +644,13 @@ def example_9_all_candlestick_patterns():
     print("    NOTE: Morning/Evening Star now includes trend context filtering!\n")
     
     optimizer5 = ThresholdOptimizer(
-        method_name="tripleCandleStickReversalPattern",
+        method_name="analyse_triple_candle_reversal",
         **common_params
     )
     optimizer5.optimize()
     optimizer5.print_results()
     optimizer5.export_results("opt_triple_candle_reversal.json")
-    results["tripleCandleStickReversalPattern"] = optimizer5
+    results["analyse_triple_candle_reversal"] = optimizer5
     print("\n" + "-" * 80)
     
     # -------------------------------------------------------------------------
@@ -661,13 +661,13 @@ def example_9_all_candlestick_patterns():
     print("    WARNING: These patterns historically have negative expectancy!\n")
     
     optimizer6 = ThresholdOptimizer(
-        method_name="tripleCandleStickContinuationPattern",
+        method_name="analyse_triple_candle_continuation",
         **common_params
     )
     optimizer6.optimize()
     optimizer6.print_results()
     optimizer6.export_results("opt_triple_candle_continuation.json")
-    results["tripleCandleStickContinuationPattern"] = optimizer6
+    results["analyse_triple_candle_continuation"] = optimizer6
     print("\n" + "-" * 80)
     
     # -------------------------------------------------------------------------
@@ -705,8 +705,8 @@ def example_10_triple_candlestick_only():
     Example 10: Run optimization ONLY for triple candlestick patterns.
     
     This runs optimization for the 2 triple candlestick pattern methods:
-    1. tripleCandleStickReversalPattern - Morning/Evening Star (reversal with trend context)
-    2. tripleCandleStickContinuationPattern - 3 Cont. Inc/Dec (continuation)
+    1. analyse_triple_candle_reversal - Morning/Evening Star (reversal with trend context)
+    2. analyse_triple_candle_continuation - 3 Cont. Inc/Dec (continuation)
     
     The triple candlestick patterns have been split into separate reversal and
     continuation methods for independent optimization and testing.
@@ -757,13 +757,13 @@ def example_10_triple_candlestick_only():
     print("    NOTE: Morning/Evening Star includes trend context filtering!\n")
     
     optimizer1 = ThresholdOptimizer(
-        method_name="tripleCandleStickReversalPattern",
+        method_name="analyse_triple_candle_reversal",
         **common_params
     )
     optimizer1.optimize()
     optimizer1.print_results()
     optimizer1.export_results("opt_triple_candle_reversal.json")
-    results["tripleCandleStickReversalPattern"] = optimizer1
+    results["analyse_triple_candle_reversal"] = optimizer1
     print("\n" + "-" * 80)
     
     # -------------------------------------------------------------------------
@@ -774,13 +774,13 @@ def example_10_triple_candlestick_only():
     print("    WARNING: These patterns historically have negative expectancy!\n")
     
     optimizer2 = ThresholdOptimizer(
-        method_name="tripleCandleStickContinuationPattern",
+        method_name="analyse_triple_candle_continuation",
         **common_params
     )
     optimizer2.optimize()
     optimizer2.print_results()
     optimizer2.export_results("opt_triple_candle_continuation.json")
-    results["tripleCandleStickContinuationPattern"] = optimizer2
+    results["analyse_triple_candle_continuation"] = optimizer2
     print("\n" + "-" * 80)
     
     # -------------------------------------------------------------------------

@@ -1,4 +1,5 @@
-from common.logging_util import logger
+from services.common.logging import get_logger
+logger = get_logger("analyser")
 import common.constants as constant
 from common.scoring import (
     calculate_score, should_notify, format_score_message,
@@ -94,9 +95,14 @@ class AnalyserOrchestrator:
             raise TypeError("Analyser must inherit from BaseAnalyser")
         self.analysers.append(analyser)
     
-    def reset_all_constants(self, is_index = False):
+    def reset_all_constants(self, is_index=False):
+        import inspect
         for analyser in self.analysers:
-            analyser.reset_constants()
+            sig = inspect.signature(analyser.reset_constants)
+            if "is_index" in sig.parameters:
+                analyser.reset_constants(is_index=is_index)
+            else:
+                analyser.reset_constants()
 
     @staticmethod
     def _emit_signals(stock, layer: Layer):

@@ -41,7 +41,8 @@ import common.constants as constant
 import common.shared as shared
 from common.Stock import Stock
 from common.helperFunctions import get_stock_objects_from_json
-from common.logging_util import logger
+from services.common.logging import get_logger
+logger = get_logger("market-data")
 from common.token_registry import (
     TokenInfo,
     TokenType,

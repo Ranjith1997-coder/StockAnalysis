@@ -19,7 +19,8 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from notification.commands._guard import guard, debug_chat_only
-from common.logging_util import logger
+from services.common.logging import get_logger
+logger = get_logger("notification")
 from services.common.metrics import (
     get_system_stats,
     get_stock_stats,

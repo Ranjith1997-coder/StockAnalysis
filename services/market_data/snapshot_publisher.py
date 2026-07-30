@@ -23,7 +23,8 @@ if TYPE_CHECKING:
     from services.common.redis_proxy import RedisProxy
 
 import common.constants as constant
-from common.logging_util import logger
+from services.common.logging import get_logger
+logger = get_logger("market-data")
 from services.common.metrics import set_stock
 
 

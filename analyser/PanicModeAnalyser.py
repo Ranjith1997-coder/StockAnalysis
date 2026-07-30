@@ -24,7 +24,8 @@ from collections import namedtuple
 
 from analyser.Analyser import BaseAnalyzer
 from common.Stock import Stock
-from common.logging_util import logger
+from services.common.logging import get_logger
+logger = get_logger("analyser")
 import common.shared as shared
 
 

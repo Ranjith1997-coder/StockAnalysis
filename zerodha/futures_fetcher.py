@@ -22,7 +22,8 @@ from typing import TYPE_CHECKING, Tuple
 
 import pandas as pd
 
-from common.logging_util import logger
+from services.common.logging import get_logger
+logger = get_logger("zerodha")
 
 if TYPE_CHECKING:
     from common.Stock import Stock

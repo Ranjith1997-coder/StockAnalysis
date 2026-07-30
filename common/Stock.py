@@ -6,7 +6,8 @@ import pandas as pd
 import common.constants as constant
 from common.helperFunctions import percentageChange
 import common.shared as shared
-from common.logging_util import logger
+from services.common.logging import get_logger
+logger = get_logger("common")
 from zerodha.tick_store import TickStore
 import numpy as np
 import datetime

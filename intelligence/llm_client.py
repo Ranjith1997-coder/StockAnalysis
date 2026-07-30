@@ -13,7 +13,8 @@ from abc import ABC, abstractmethod
 from datetime import date
 from threading import Lock
 
-from common.logging_util import logger
+from services.common.logging import get_logger
+logger = get_logger("intelligence")
 
 
 class LLMClient(ABC):

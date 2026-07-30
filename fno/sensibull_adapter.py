@@ -28,7 +28,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from common.logging_util import logger
+from services.common.logging import get_logger
+logger = get_logger("fno")
 
 if TYPE_CHECKING:
     from common.Stock import Stock

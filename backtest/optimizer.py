@@ -46,7 +46,8 @@ from backtest.backtest import Backtester, BacktestResult
 from analyser.TechnicalAnalyser import TechnicalAnalyser
 from analyser.candleStickPatternAnalyser import CandleStickAnalyser
 from analyser.VolumeAnalyser import VolumeAnalyser
-from common.logging_util import logger
+from services.common.logging import get_logger
+logger = get_logger("backtest")
 import common.shared as shared
 
 # Suppress yfinance / optuna noise during optimisation
@@ -131,13 +132,13 @@ TECHNICAL_SEARCH_SPACES: Dict[str, Dict[str, dict]] = {
 
 CANDLESTICK_SEARCH_SPACES: Dict[str, Dict[str, dict]] = {
 
-    "singleCandleStickPattern": {
+    "analyse_single_candle_momentum": {
         # MOMENTUM patterns: Bullish/Bearish Marubozu
         "MARUBASU_THRESHOLD":     {"type": "float", "low": 0.5, "high": 5.0, "step": 0.5},
         "WICK_PERCENTAGE":        {"type": "float", "low": 0.1, "high": 0.5, "step": 0.1},
     },
 
-    "singleCandleReversalPattern": {
+    "analyse_single_candle_reversal": {
         # REVERSAL patterns: Hammer, Shooting Star (with trend context)
         "HAMMER_BODY_RATIO":      {"type": "float", "low": 0.2, "high": 0.45, "step": 0.05},
         "HAMMER_WICK_MULTIPLIER": {"type": "float", "low": 1.5, "high": 3.0, "step": 0.5},
@@ -148,7 +149,7 @@ CANDLESTICK_SEARCH_SPACES: Dict[str, Dict[str, dict]] = {
         "TREND_CONSISTENCY_RATIO": {"type": "float", "low": 0.5, "high": 0.8, "step": 0.1},
     },
 
-    "doubleCandleStickPattern": {
+    "analyse_double_candle_reversal": {
         # REVERSAL patterns only: Engulfing, Piercing Line, Dark Cloud Cover (with trend context)
         "ENGULFING_MIN_BODY_RATIO":      {"type": "float", "low": 0.5, "high": 3.0, "step": 0.25},
         "PIERCING_MIN_PENETRATION":      {"type": "float", "low": 0.1, "high": 0.8, "step": 0.1},
@@ -160,13 +161,13 @@ CANDLESTICK_SEARCH_SPACES: Dict[str, Dict[str, dict]] = {
         "TREND_CONSISTENCY_RATIO": {"type": "float", "low": 0.5, "high": 0.8, "step": 0.1},
     },
 
-    "doubleCandleStickContinuationPattern": {
+    "analyse_double_candle_continuation": {
         # CONTINUATION patterns only: 2 Continuous Increase/Decrease
         # WARNING: These patterns tend to have negative expectancy
         "TWO_CONT_INC_OR_DEC_THRESHOLD": {"type": "float", "low": 0.5, "high": 6.0, "step": 0.5},
     },
 
-    "tripleCandleStickReversalPattern": {
+    "analyse_triple_candle_reversal": {
         # REVERSAL patterns: Morning Star, Evening Star (with trend context)
         "STAR_MAX_BODY_RATIO":             {"type": "float", "low": 0.15, "high": 0.45, "step": 0.05},
         # Trend detection parameters for reversal patterns
@@ -176,7 +177,7 @@ CANDLESTICK_SEARCH_SPACES: Dict[str, Dict[str, dict]] = {
         "TREND_CONSISTENCY_RATIO": {"type": "float", "low": 0.5, "high": 0.8, "step": 0.1},
     },
 
-    "tripleCandleStickContinuationPattern": {
+    "analyse_triple_candle_continuation": {
         # CONTINUATION patterns only: 3 Continuous Increase/Decrease
         # WARNING: These patterns tend to have negative expectancy
         "THREE_CONT_INC_OR_DEC_THRESHOLD": {"type": "float", "low": 1.0, "high": 8.0, "step": 0.5},

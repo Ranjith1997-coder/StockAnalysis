@@ -14,7 +14,8 @@ Importers only need:
     from analyser.MessageFormatter import MessageFormatter
 """
 
-from common.logging_util import logger
+from services.common.logging import get_logger
+logger = get_logger("analyser")
 from typing import Callable
 
 

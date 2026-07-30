@@ -26,6 +26,12 @@ class RedisProxy:
     def hget(self, name: str, key: str) -> str | None:
         return self._client.hget(name, key)
 
+    def hdel(self, name: str, *keys: str) -> int:
+        return self._client.hdel(name, *keys)
+
+    def hlen(self, name: str) -> int:
+        return self._client.hlen(name)
+
     def set(self, name: str, value: str) -> bool:
         return self._client.set(name, value)
 

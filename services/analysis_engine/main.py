@@ -33,7 +33,8 @@ from services.common.redis_proxy import RedisProxy
 from services.common.version import BUILD_LABEL, GIT_COMMIT, GIT_DIRTY
 from services.market_data.signal_publisher import RedisSignalBus
 import common.shared as shared
-from common.logging_util import logger
+from services.common.logging import get_logger
+logger = get_logger("analysis-engine")
 
 
 _running = True

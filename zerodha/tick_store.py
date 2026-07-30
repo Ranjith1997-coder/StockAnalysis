@@ -17,7 +17,8 @@ import threading
 import time
 from typing import Optional
 
-from common.logging_util import logger
+from services.common.logging import get_logger
+logger = get_logger("zerodha")
 
 
 class TickStore:

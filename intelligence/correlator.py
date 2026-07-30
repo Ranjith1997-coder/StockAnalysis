@@ -19,7 +19,8 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 from intelligence.signal import Signal, Direction, Layer, SignalStrength
-from common.logging_util import logger
+from services.common.logging import get_logger
+logger = get_logger("intelligence")
 
 
 @dataclass

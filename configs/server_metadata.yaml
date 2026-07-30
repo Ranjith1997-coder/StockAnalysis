@@ -1,0 +1,96 @@
+# Production Server Metadata
+# ===========================
+# Reference config for the production host running StockAnalysis.
+# Sensitive values (EC2 instance ID, key path) are read from .env — do not hardcode them here.
+
+server:
+  hostname: "Hacker-computer"
+  ssh_host: "100.92.21.31"        # Tailscale VPN IP (not a public internet IP)
+  ssh_user: "hacker"
+  ssh_connection: "hacker@100.92.21.31"
+  app_dir: "/home/hacker/StockAnalysis"
+  app_disk_usage: "323 MB"
+  os: "Ubuntu 24.04.4 LTS (Noble Numbat)"
+  kernel: "6.17.0-29-generic"
+  python_system: "3.12.3"
+  python_venv: "3.12.3"
+  timezone: "Asia/Kolkata (IST, +0530)"
+  type: "physical_machine"        # NOT an EC2 instance — local machine via Tailscale
+
+hardware:
+  cpu:
+    model: "Intel Core i5-6200U"
+    base_clock_ghz: 2.30
+    max_clock_ghz: 2.80
+    physical_cores: 2
+    threads: 4          # Hyper-threading enabled (2 threads/core)
+    architecture: "x86_64"
+    cache:
+      l1_data: "64 KiB x2"
+      l1_instruction: "64 KiB x2"
+      l2: "512 KiB x2"
+      l3: "3 MiB"
+
+  memory:
+    total: "7.6 GiB"
+    swap: "4.0 GiB (file: /swap.img)"
+
+  storage:
+    root_partition: "/dev/sda7"
+    root_total: "144 GiB"
+    root_used: "14 GiB (10%)"
+    root_available: "123 GiB"
+    boot_efi: "/dev/sda2 — 96 MiB"
+
+  network:
+    tailscale:
+      interface: "tailscale0"
+      ip: "100.92.21.31/32"
+      purpose: "Remote SSH access (Tailscale VPN mesh)"
+    lan:
+      interface: "wlp2s0"        # WiFi
+      ip: "192.168.0.6/24"
+      purpose: "Local LAN / internet egress"
+
+aws:
+  region: "ap-south-1"
+  # EC2_INSTANCE_ID loaded from .env (used by deploy.py / service_stop.py for start/stop automation)
+  # SSH_KEY_PATH loaded from .env
+
+systemd_services:
+  auth:
+    unit: "stockanalysis-auth.service"
+    type: "oneshot"
+    purpose: "Automated TOTP login — refreshes ZERODHA_ENC_TOKEN in .env before market open"
+    trigger: "stockanalysis.timer (Mon–Fri 03:30 UTC / 09:00 IST)"
+
+  intraday:
+    unit: "stockanalysis.service"
+    purpose: "Intraday monitor — full analysis pipeline during market hours"
+    requires: "stockanalysis-auth.service"
+    trigger: "stockanalysis.timer (Mon–Fri 03:30 UTC / 09:00 IST)"
+
+  intraday_timer:
+    unit: "stockanalysis.timer"
+    schedule: "Mon–Fri 03:30 UTC (09:00 IST)"
+
+  positional:
+    unit: "stockanalysis-positional.service"
+    purpose: "EOD positional analysis pipeline"
+    requires: "stockanalysis-auth.service"
+    trigger: "stockanalysis-positional.timer (Mon–Fri 14:30 UTC / 20:00 IST)"
+
+  positional_timer:
+    unit: "stockanalysis-positional.timer"
+    schedule: "Mon–Fri 14:30 UTC (20:00 IST)"
+
+make_targets:
+  connect:        "make server-ssh"
+  logs:           "make server-logs"
+  logs_live:      "make server-logs-follow"
+  service_status: "make server-status"
+  restart:        "make server-restart"
+  git_pull:       "make server-pull"
+  disk_usage:     "make server-df"
+  deploy:         "make deploy"
+  update_token:   "make update-enctoken TOKEN=<enc_token>"
