@@ -18,7 +18,7 @@ from datetime import date, datetime, time as dtime
 import common.constants as constant
 from services.common.logging import get_logger
 logger = get_logger("paper-trading")
-from notification.Notification import TELEGRAM_NOTIFICATIONS
+from lib.notification.Notification import TELEGRAM_NOTIFICATIONS
 from services.common.redis_proxy import RedisProxy
 from services.common.version import BUILD_LABEL, GIT_COMMIT, GIT_DIRTY
 from services.paper_trading import engine

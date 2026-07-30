@@ -61,7 +61,7 @@ from lib.zerodha.live_options_engine import LiveOptionsEngine
 from lib.zerodha.live_stock_engine import LiveStockEngine
 from fno.sensibull_feed import SensibullFeed
 from fno.sensibull_adapter import SensibullAdapter
-from notification.Notification import TELEGRAM_NOTIFICATIONS
+from lib.notification.Notification import TELEGRAM_NOTIFICATIONS
 
 
 AUTH_HASH = "auth:zerodha"

@@ -9,7 +9,7 @@ Covers:
 """
 import pytest
 from unittest.mock import MagicMock, patch, call
-from notification.Notification import TELEGRAM_NOTIFICATIONS
+from lib.notification.Notification import TELEGRAM_NOTIFICATIONS
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────
@@ -37,7 +37,7 @@ def mock_redis_dispatch():
     dispatch succeeds and the HTTP fallback (which these tests exercise) is
     never reached.
     """
-    with patch("notification.Notification._notify_via_redis", return_value=False):
+    with patch("lib.notification.Notification._notify_via_redis", return_value=False):
         yield
 
 
@@ -50,7 +50,7 @@ class TestSendNotification:
     def test_no_op_when_not_in_production(self):
         """Returns None immediately without making any HTTP call."""
         _set_production(0)
-        with patch("notification.Notification.requests.post") as mock_post:
+        with patch("lib.notification.Notification.requests.post") as mock_post:
             result = TELEGRAM_NOTIFICATIONS.send_notification("hello")
         mock_post.assert_not_called()
         assert result is None
@@ -59,7 +59,7 @@ class TestSendNotification:
         _set_production(1)
         mock_resp = MagicMock()
         mock_resp.status_code = 200
-        with patch("notification.Notification.requests.post", return_value=mock_resp):
+        with patch("lib.notification.Notification.requests.post", return_value=mock_resp):
             result = TELEGRAM_NOTIFICATIONS.send_notification("hello")
         assert result is True
 
@@ -73,8 +73,8 @@ class TestSendNotification:
         ok_resp = MagicMock()
         ok_resp.status_code = 200
 
-        with patch("notification.Notification.NOTIFICATION_CHANNEL", "telegram"), \
-             patch("notification.Notification.requests.post",
+        with patch("lib.notification.Notification.NOTIFICATION_CHANNEL", "telegram"), \
+             patch("lib.notification.Notification.requests.post",
                    side_effect=[fail_resp, ok_resp]) as mock_post, \
              patch("time.sleep"):
             result = TELEGRAM_NOTIFICATIONS.send_notification("hello")
@@ -89,8 +89,8 @@ class TestSendNotification:
         fail_resp.status_code = 500
         fail_resp.text = "Server Error"
 
-        with patch("notification.Notification.NOTIFICATION_CHANNEL", "telegram"), \
-             patch("notification.Notification.requests.post",
+        with patch("lib.notification.Notification.NOTIFICATION_CHANNEL", "telegram"), \
+             patch("lib.notification.Notification.requests.post",
                    return_value=fail_resp), \
              patch("time.sleep"):
             result = TELEGRAM_NOTIFICATIONS.send_notification("hello")
@@ -104,8 +104,8 @@ class TestSendNotification:
         ok_resp = MagicMock()
         ok_resp.status_code = 200
 
-        with patch("notification.Notification.NOTIFICATION_CHANNEL", "telegram"), \
-             patch("notification.Notification.requests.post",
+        with patch("lib.notification.Notification.NOTIFICATION_CHANNEL", "telegram"), \
+             patch("lib.notification.Notification.requests.post",
                    side_effect=[
                        req_lib.Timeout,
                        req_lib.Timeout,
@@ -120,8 +120,8 @@ class TestSendNotification:
         import requests as req_lib
         _set_production(1)
 
-        with patch("notification.Notification.NOTIFICATION_CHANNEL", "telegram"), \
-             patch("notification.Notification.requests.post",
+        with patch("lib.notification.Notification.NOTIFICATION_CHANNEL", "telegram"), \
+             patch("lib.notification.Notification.requests.post",
                    side_effect=req_lib.ConnectionError), \
              patch("time.sleep"):
             result = TELEGRAM_NOTIFICATIONS.send_notification("hello")
@@ -134,8 +134,8 @@ class TestSendNotification:
         ok_resp = MagicMock()
         ok_resp.status_code = 200
 
-        with patch("notification.Notification.NOTIFICATION_CHANNEL", "telegram"), \
-             patch("notification.Notification.requests.post",
+        with patch("lib.notification.Notification.NOTIFICATION_CHANNEL", "telegram"), \
+             patch("lib.notification.Notification.requests.post",
                    return_value=ok_resp) as mock_post:
             TELEGRAM_NOTIFICATIONS.send_notification("bold text", parse_mode="HTML")
 
@@ -149,8 +149,8 @@ class TestSendNotification:
         ok_resp = MagicMock()
         ok_resp.status_code = 200
 
-        with patch("notification.Notification.NOTIFICATION_CHANNEL", "telegram"), \
-             patch("notification.Notification.requests.post",
+        with patch("lib.notification.Notification.NOTIFICATION_CHANNEL", "telegram"), \
+             patch("lib.notification.Notification.requests.post",
                    return_value=ok_resp) as mock_post:
             TELEGRAM_NOTIFICATIONS.send_notification("plain text")
 
@@ -167,7 +167,7 @@ class TestSendLiveOptionsNotification:
 
     def test_no_op_when_not_in_production(self):
         _set_production(0)
-        with patch("notification.Notification.requests.post") as mock_post:
+        with patch("lib.notification.Notification.requests.post") as mock_post:
             result = TELEGRAM_NOTIFICATIONS.send_live_options_notification("alert")
         mock_post.assert_not_called()
         assert result is None
@@ -175,9 +175,9 @@ class TestSendLiveOptionsNotification:
     def test_no_op_when_token_not_configured(self):
         """If TELEGRAM_LIVE_OPTIONS_TOKEN is empty, skip silently."""
         _set_production(1)
-        with patch("notification.Notification.TELEGRAM_LIVE_OPTIONS_TOKEN", ""), \
-             patch("notification.Notification.TELEGRAM_LIVE_OPTIONS_CHAT_ID", ""), \
-             patch("notification.Notification.requests.post") as mock_post:
+        with patch("lib.notification.Notification.TELEGRAM_LIVE_OPTIONS_TOKEN", ""), \
+             patch("lib.notification.Notification.TELEGRAM_LIVE_OPTIONS_CHAT_ID", ""), \
+             patch("lib.notification.Notification.requests.post") as mock_post:
             result = TELEGRAM_NOTIFICATIONS.send_live_options_notification("alert")
         mock_post.assert_not_called()
         assert result is False
@@ -187,9 +187,9 @@ class TestSendLiveOptionsNotification:
         ok_resp = MagicMock()
         ok_resp.status_code = 200
 
-        with patch("notification.Notification.TELEGRAM_LIVE_OPTIONS_TOKEN", "token123"), \
-             patch("notification.Notification.TELEGRAM_LIVE_OPTIONS_CHAT_ID", "chat123"), \
-             patch("notification.Notification.requests.post", return_value=ok_resp):
+        with patch("lib.notification.Notification.TELEGRAM_LIVE_OPTIONS_TOKEN", "token123"), \
+             patch("lib.notification.Notification.TELEGRAM_LIVE_OPTIONS_CHAT_ID", "chat123"), \
+             patch("lib.notification.Notification.requests.post", return_value=ok_resp):
             result = TELEGRAM_NOTIFICATIONS.send_live_options_notification("alert")
 
         assert result is True
@@ -200,18 +200,18 @@ class TestSendLiveOptionsNotification:
         err_resp.status_code = 400
         err_resp.text = "Bad Request"
 
-        with patch("notification.Notification.TELEGRAM_LIVE_OPTIONS_TOKEN", "token123"), \
-             patch("notification.Notification.TELEGRAM_LIVE_OPTIONS_CHAT_ID", "chat123"), \
-             patch("notification.Notification.requests.post", return_value=err_resp):
+        with patch("lib.notification.Notification.TELEGRAM_LIVE_OPTIONS_TOKEN", "token123"), \
+             patch("lib.notification.Notification.TELEGRAM_LIVE_OPTIONS_CHAT_ID", "chat123"), \
+             patch("lib.notification.Notification.requests.post", return_value=err_resp):
             result = TELEGRAM_NOTIFICATIONS.send_live_options_notification("alert")
 
         assert result is False
 
     def test_returns_false_on_exception(self):
         _set_production(1)
-        with patch("notification.Notification.TELEGRAM_LIVE_OPTIONS_TOKEN", "token123"), \
-             patch("notification.Notification.TELEGRAM_LIVE_OPTIONS_CHAT_ID", "chat123"), \
-             patch("notification.Notification.requests.post",
+        with patch("lib.notification.Notification.TELEGRAM_LIVE_OPTIONS_TOKEN", "token123"), \
+             patch("lib.notification.Notification.TELEGRAM_LIVE_OPTIONS_CHAT_ID", "chat123"), \
+             patch("lib.notification.Notification.requests.post",
                    side_effect=Exception("network down")):
             result = TELEGRAM_NOTIFICATIONS.send_live_options_notification("alert")
 

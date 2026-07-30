@@ -12,7 +12,7 @@ from __future__ import annotations
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from notification.commands._guard import guard, debug_chat_only
+from ._guard import guard, debug_chat_only
 from services.common.logging import set_runtime_level, reset_runtime_level
 
 ALL_SERVICES = [
@@ -28,7 +28,7 @@ ALL_SERVICES = [
 async def _handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not debug_chat_only(update):
         return
-    from notification.commands._helpers import get_redis
+    from ._helpers import get_redis
 
     redis = get_redis()
     args = context.args or []

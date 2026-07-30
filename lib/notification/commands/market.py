@@ -10,8 +10,8 @@ from telegram.ext import ContextTypes
 import common.shared as shared
 from services.common.logging import get_logger
 logger = get_logger("notification")
-from notification.commands._guard import guard
-from notification.commands._helpers import find_stock_by_symbol, build_gainers_losers, refresh_stock_from_redis
+from ._guard import guard
+from ._helpers import find_stock_by_symbol, build_gainers_losers, refresh_stock_from_redis
 
 # Supported symbols for options commands
 _OPTIONS_SYMBOLS = {"NIFTY", "BANKNIFTY"}
@@ -202,7 +202,7 @@ async def cmd_watchlist(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     ws2_subs = 0
     # Read WS status from market-data service registry (WS moved to separate service)
     try:
-        from notification.commands._helpers import _get_redis
+        from ._helpers import _get_redis
         _r = _get_redis()
         if _r is not None:
             _md = _r.hgetall("service:registry:market-data")
@@ -267,7 +267,7 @@ async def cmd_watchlist(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         if zctx and zctx.get("futures_mdata", {}).get("current"):
             # Read futures live data from Redis (market-data service snapshot)
             try:
-                from notification.commands._helpers import _get_redis
+                from ._helpers import _get_redis
                 _r = _get_redis()
                 if _r is not None:
                     _fl = _r.hgetall(f"data:futures_live:{stock.stock_symbol}")

@@ -33,7 +33,7 @@ from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from services.common.logging import get_logger
 logger = get_logger("premarket")
-from notification.Notification import TELEGRAM_NOTIFICATIONS
+from lib.notification.Notification import TELEGRAM_NOTIFICATIONS
 from nse.nse_utils import nse_urlfetch
 
 

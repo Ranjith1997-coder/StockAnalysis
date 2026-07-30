@@ -10,7 +10,7 @@ from telegram.ext import ContextTypes
 import common.shared as shared
 from services.common.logging import get_logger
 logger = get_logger("notification")
-from notification.commands._guard import guard
+from ._guard import guard
 
 
 def _is_urlencoded(s: str) -> bool:

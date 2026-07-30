@@ -10,7 +10,7 @@ import os
 import time
 
 import common.shared as shared
-from notification.commands._helpers import find_stock_by_symbol
+from ._helpers import find_stock_by_symbol
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -50,7 +50,7 @@ def _fmt_age(ts) -> str:
 def _read_market_data_registry() -> dict:
     """Read market-data service stats from Redis service registry."""
     try:
-        from notification.commands._helpers import _get_redis
+        from ._helpers import _get_redis
         _r = _get_redis()
         if _r is None:
             return {}
@@ -186,7 +186,7 @@ def inspect_stock(symbol: str) -> dict:
         return {"error": f"Symbol {symbol} not found in tracked instruments"}
 
     # Refresh live tick data from Redis (market-data service snapshots)
-    from notification.commands._helpers import refresh_stock_from_redis
+    from ._helpers import refresh_stock_from_redis
     refresh_stock_from_redis(symbol)
 
     pd_data = stock.priceData

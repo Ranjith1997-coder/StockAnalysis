@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from telegram.ext import Application, CommandHandler
 
-from notification.commands import account, debug, loglevel, market, stats, sysstats, system
+from . import account, debug, loglevel, market, stats, sysstats, system
 
 
 def register_all(application: Application) -> None:

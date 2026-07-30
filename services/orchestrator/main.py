@@ -6,7 +6,7 @@ import traceback
 import html
 import argparse
 import uuid
-from notification.Notification import TELEGRAM_NOTIFICATIONS
+from lib.notification.Notification import TELEGRAM_NOTIFICATIONS
 from datetime import datetime, time, timedelta
 import common.constants as constant
 import common.shared as shared
@@ -19,7 +19,7 @@ from services.common.logging import get_logger
 logger = get_logger("orchestrator")
 from typing import List, Tuple, Optional
 from dotenv import load_dotenv
-from notification.bot_listener import init_telegram_bot
+from lib.notification.bot_listener import init_telegram_bot
 import threading
 from lib.zerodha.zerodha_connect import KiteConnect
 from .post_market_analysis.runner import run_and_summarize
@@ -1776,7 +1776,7 @@ def start_stock_analysis():
         _shutdown_background_services()
         # Stop the Telegram bot in dev mode too so the process exits cleanly
         if ENABLE_TELEGRAM_BOT:
-            from notification.bot_listener import stop_telegram_bot
+            from lib.notification.bot_listener import stop_telegram_bot
             stop_telegram_bot()
 
 def _wait_for_cycle_ready(timeout: float = 120.0) -> bool:

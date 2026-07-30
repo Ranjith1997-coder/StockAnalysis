@@ -164,10 +164,10 @@ class TestVersionCommand:
     @pytest.mark.asyncio
     async def test_version_redis_unavailable(self, mock_update, mock_context):
         """When Redis is unavailable, should send error message."""
-        with patch("notification.commands._guard.chat_allowed", return_value=True), \
-             patch("notification.commands.system.debug_chat_only", return_value=True), \
-             patch("notification.commands._helpers._get_redis", return_value=None):
-            from notification.commands.system import cmd_version
+        with patch("lib.notification.commands._guard.chat_allowed", return_value=True), \
+             patch("lib.notification.commands.system.debug_chat_only", return_value=True), \
+             patch("lib.notification.commands._helpers._get_redis", return_value=None):
+            from lib.notification.commands.system import cmd_version
             await cmd_version(mock_update, mock_context)
 
         mock_context.bot.send_message.assert_called_once()
@@ -177,9 +177,9 @@ class TestVersionCommand:
     @pytest.mark.asyncio
     async def test_version_debug_chat_restricted(self, mock_update, mock_context):
         """When not in debug chat, should silently drop."""
-        with patch("notification.commands._guard.chat_allowed", return_value=True), \
-             patch("notification.commands.system.debug_chat_only", return_value=False):
-            from notification.commands.system import cmd_version
+        with patch("lib.notification.commands._guard.chat_allowed", return_value=True), \
+             patch("lib.notification.commands.system.debug_chat_only", return_value=False):
+            from lib.notification.commands.system import cmd_version
             await cmd_version(mock_update, mock_context)
 
         mock_context.bot.send_message.assert_not_called()
@@ -196,10 +196,10 @@ class TestVersionCommand:
             "last_heartbeat": str(time.time()),
         }
 
-        with patch("notification.commands._guard.chat_allowed", return_value=True), \
-             patch("notification.commands.system.debug_chat_only", return_value=True), \
-             patch("notification.commands._helpers._get_redis", return_value=mock_redis):
-            from notification.commands.system import cmd_version
+        with patch("lib.notification.commands._guard.chat_allowed", return_value=True), \
+             patch("lib.notification.commands.system.debug_chat_only", return_value=True), \
+             patch("lib.notification.commands._helpers._get_redis", return_value=mock_redis):
+            from lib.notification.commands.system import cmd_version
             await cmd_version(mock_update, mock_context)
 
         mock_context.bot.send_message.assert_called_once()
@@ -219,10 +219,10 @@ class TestVersionCommand:
             "last_heartbeat": str(time.time() - 300),
         }
 
-        with patch("notification.commands._guard.chat_allowed", return_value=True), \
-             patch("notification.commands.system.debug_chat_only", return_value=True), \
-             patch("notification.commands._helpers._get_redis", return_value=mock_redis):
-            from notification.commands.system import cmd_version
+        with patch("lib.notification.commands._guard.chat_allowed", return_value=True), \
+             patch("lib.notification.commands.system.debug_chat_only", return_value=True), \
+             patch("lib.notification.commands._helpers._get_redis", return_value=mock_redis):
+            from lib.notification.commands.system import cmd_version
             await cmd_version(mock_update, mock_context)
 
         text = mock_context.bot.send_message.call_args.kwargs.get("text", "")
@@ -240,10 +240,10 @@ class TestVersionCommand:
             "last_heartbeat": str(time.time()),
         }
 
-        with patch("notification.commands._guard.chat_allowed", return_value=True), \
-             patch("notification.commands.system.debug_chat_only", return_value=True), \
-             patch("notification.commands._helpers._get_redis", return_value=mock_redis):
-            from notification.commands.system import cmd_version
+        with patch("lib.notification.commands._guard.chat_allowed", return_value=True), \
+             patch("lib.notification.commands.system.debug_chat_only", return_value=True), \
+             patch("lib.notification.commands._helpers._get_redis", return_value=mock_redis):
+            from lib.notification.commands.system import cmd_version
             await cmd_version(mock_update, mock_context)
 
         text = mock_context.bot.send_message.call_args.kwargs.get("text", "")
@@ -255,10 +255,10 @@ class TestVersionCommand:
         mock_redis = MagicMock()
         mock_redis.hgetall.return_value = {}
 
-        with patch("notification.commands._guard.chat_allowed", return_value=True), \
-             patch("notification.commands.system.debug_chat_only", return_value=True), \
-             patch("notification.commands._helpers._get_redis", return_value=mock_redis):
-            from notification.commands.system import cmd_version
+        with patch("lib.notification.commands._guard.chat_allowed", return_value=True), \
+             patch("lib.notification.commands.system.debug_chat_only", return_value=True), \
+             patch("lib.notification.commands._helpers._get_redis", return_value=mock_redis):
+            from lib.notification.commands.system import cmd_version
             await cmd_version(mock_update, mock_context)
 
         text = mock_context.bot.send_message.call_args.kwargs.get("text", "")
@@ -270,10 +270,10 @@ class TestVersionCommand:
         mock_redis = MagicMock()
         mock_redis.hgetall.return_value = {}
 
-        with patch("notification.commands._guard.chat_allowed", return_value=True), \
-             patch("notification.commands.system.debug_chat_only", return_value=True), \
-             patch("notification.commands._helpers._get_redis", return_value=mock_redis):
-            from notification.commands.system import cmd_version
+        with patch("lib.notification.commands._guard.chat_allowed", return_value=True), \
+             patch("lib.notification.commands.system.debug_chat_only", return_value=True), \
+             patch("lib.notification.commands._helpers._get_redis", return_value=mock_redis):
+            from lib.notification.commands.system import cmd_version
             await cmd_version(mock_update, mock_context)
 
         text = mock_context.bot.send_message.call_args.kwargs.get("text", "")

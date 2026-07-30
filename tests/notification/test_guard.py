@@ -3,7 +3,7 @@ import os
 import pytest
 from unittest.mock import MagicMock
 
-from notification.commands._guard import (
+from lib.notification.commands._guard import (
     init_guard,
     chat_allowed,
     debug_chat_only,
