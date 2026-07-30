@@ -20,7 +20,6 @@ __pycache__/
 !.env.template
 
 # Generated test/debug artifacts
-ws_decoded.json
 
 # Distribution / packaging
 dist/
