@@ -3,8 +3,8 @@
 import json
 from unittest.mock import MagicMock, patch
 
-from intelligence.signal import Signal, Direction, Layer, SignalStrength
-from intelligence.correlator import SignalCorrelator, Confluence
+from lib.intelligence.signal import Signal, Direction, Layer, SignalStrength
+from lib.intelligence.correlator import SignalCorrelator, Confluence
 from services.signal_intelligence.worker import (
     reconstruct_signal,
     format_confluence_alert,

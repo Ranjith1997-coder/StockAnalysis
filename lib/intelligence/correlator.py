@@ -18,7 +18,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Callable
 
-from intelligence.signal import Signal, Direction, Layer, SignalStrength
+from .signal import Signal, Direction, Layer, SignalStrength
 from services.common.logging import get_logger
 logger = get_logger("intelligence")
 

@@ -26,8 +26,8 @@ from .post_market_analysis.runner import run_and_summarize
 from .premarket.premarket_report import run_global_cues_report, run_preopen_report
 from urllib.parse import quote
 from common.token_registry import TokenRegistry, TokenInfo, TokenType
-from intelligence.correlator import Confluence
-from intelligence.signal import Signal, Direction, Layer, weight_to_strength
+from lib.intelligence.correlator import Confluence
+from lib.intelligence.signal import Signal, Direction, Layer, weight_to_strength
 from services.common.redis_proxy import RedisProxy
 from services.market_data.signal_publisher import RedisSignalBus
 from services.common.stock_loader import (
@@ -1546,9 +1546,9 @@ def init():
 
         # Initialize LLM narrator (requires ENABLE_NARRATOR=1 + GEMINI_API_KEY)
         if os.getenv(constant.ENV_ENABLE_NARRATOR, "0") == "1":
-            from intelligence.llm_client import GeminiClient
-            from intelligence.context_builder import ContextBuilder
-            from intelligence.narrator import MarketNarrator
+            from lib.intelligence.llm_client import GeminiClient
+            from lib.intelligence.context_builder import ContextBuilder
+            from lib.intelligence.narrator import MarketNarrator
 
             gemini = GeminiClient()
             if gemini.available:

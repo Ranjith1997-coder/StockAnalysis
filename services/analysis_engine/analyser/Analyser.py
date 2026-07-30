@@ -6,7 +6,7 @@ from common.scoring import (
     NotificationPriority, ScoreResult
 )
 from .MessageFormatter import MessageFormatter
-from intelligence.signal import Signal, Direction, Layer, SignalStrength, weight_to_strength
+from lib.intelligence.signal import Signal, Direction, Layer, SignalStrength, weight_to_strength
 
 class BaseAnalyzer():
     def __init__(self) -> None:

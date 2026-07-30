@@ -6,9 +6,9 @@ if TYPE_CHECKING:
     from lib.zerodha.zerodha_connect import KiteConnect
     from lib.zerodha.zerodha_analysis import ZerodhaTickerManager
     from common.token_registry import TokenRegistry
-    from intelligence.signal_bus import SignalBus
-    from intelligence.correlator import SignalCorrelator
-    from intelligence.narrator import MarketNarrator
+    from lib.intelligence.signal_bus import SignalBus
+    from lib.intelligence.correlator import SignalCorrelator
+    from lib.intelligence.narrator import MarketNarrator
 
 class Mode (Enum):
     INTRADAY = 1

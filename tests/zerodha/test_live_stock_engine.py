@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 from datetime import datetime, time as dtime
 
 from lib.zerodha.live_stock_engine import LiveStockEngine
-from intelligence.signal import Direction, SignalStrength
+from lib.intelligence.signal import Direction, SignalStrength
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

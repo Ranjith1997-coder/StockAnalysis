@@ -3,8 +3,8 @@
 import json
 from unittest.mock import MagicMock
 
-from intelligence.correlator import Confluence
-from intelligence.signal import Direction, Layer, Signal, SignalStrength
+from lib.intelligence.correlator import Confluence
+from lib.intelligence.signal import Direction, Layer, Signal, SignalStrength
 from services.paper_trading.models import PaperAccount, PaperPosition, OptionLeg
 from services.paper_trading.signal_router import (
     EntrySignal,

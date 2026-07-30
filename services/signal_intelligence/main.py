@@ -20,7 +20,7 @@ import time
 
 import common.constants as constant
 import common.shared as shared
-from intelligence.correlator import SignalCorrelator
+from lib.intelligence.correlator import SignalCorrelator
 from services.common.redis_proxy import RedisProxy
 from services.common.version import BUILD_LABEL, GIT_COMMIT, GIT_DIRTY
 from services.signal_intelligence.worker import reconstruct_signal, make_on_confluence

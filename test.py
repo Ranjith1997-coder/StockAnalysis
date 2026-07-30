@@ -731,9 +731,9 @@ def run_intelligence_test():
       python test.py --intelligence
     """
     import time as _time
-    from intelligence.signal import Signal, Direction, Layer, SignalStrength, weight_to_strength
-    from intelligence.signal_bus import SignalBus
-    from intelligence.correlator import SignalCorrelator, Confluence
+    from lib.intelligence.signal import Signal, Direction, Layer, SignalStrength, weight_to_strength
+    from lib.intelligence.signal_bus import SignalBus
+    from lib.intelligence.correlator import SignalCorrelator, Confluence
 
     SEP = "─" * 60
     passed = 0
@@ -1000,8 +1000,8 @@ def run_narrator_test(eod_file: str = "intraday/EOD_analysis"):
       python test.py --narrator --eod-file path/to/file
     """
     import re
-    from intelligence.llm_client import GeminiClient
-    from intelligence.narrator import POSITIONAL_SYSTEM_PROMPT, POSITIONAL_PROMPT_TEMPLATE
+    from lib.intelligence.llm_client import GeminiClient
+    from lib.intelligence.narrator import POSITIONAL_SYSTEM_PROMPT, POSITIONAL_PROMPT_TEMPLATE
 
     # ── 1. Check Gemini API key ──
     gemini = GeminiClient()

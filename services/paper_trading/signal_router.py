@@ -19,8 +19,8 @@ from typing import Optional
 from common.constants import LIVE_OPTIONS_INDICES
 from services.common.logging import get_logger
 logger = get_logger("paper-trading")
-from intelligence.correlator import Confluence
-from intelligence.signal import Direction
+from lib.intelligence.correlator import Confluence
+from lib.intelligence.signal import Direction
 from services.paper_trading.models import POSITIONS_OPEN_KEY, PaperAccount, PaperPosition, cooldown_key
 
 MAX_POSITIONS = 8

@@ -17,8 +17,8 @@ import threading
 from collections import defaultdict
 from datetime import datetime, time as dtime
 
-from intelligence.signal import Signal, Direction, Layer, SignalStrength
-from intelligence.signal_bus import SignalBus
+from lib.intelligence.signal import Signal, Direction, Layer, SignalStrength
+from lib.intelligence.signal_bus import SignalBus
 from services.common.logging import get_logger
 logger = get_logger("zerodha")
 

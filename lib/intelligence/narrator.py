@@ -12,9 +12,9 @@ from __future__ import annotations
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from intelligence.correlator import Confluence
-from intelligence.context_builder import ContextBuilder, MarketContext
-from intelligence.llm_client import LLMClient
+from .correlator import Confluence
+from .context_builder import ContextBuilder, MarketContext
+from .llm_client import LLMClient
 from lib.notification.Notification import TELEGRAM_NOTIFICATIONS
 from services.common.metrics import incr_stock
 from services.common.logging import get_logger
