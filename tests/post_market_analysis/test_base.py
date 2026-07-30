@@ -1,7 +1,7 @@
 """Tests for post_market_analysis.base — PostMarketSource abstract base class."""
 import pytest
 import pandas as pd
-from post_market_analysis.base import PostMarketSource
+from services.orchestrator.post_market_analysis.base import PostMarketSource
 
 
 # ── Concrete stub for testing ─────────────────────────────────────────────────

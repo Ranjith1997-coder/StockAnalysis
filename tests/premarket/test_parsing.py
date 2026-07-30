@@ -5,7 +5,7 @@ Strategy: create a real PreMarketReport instance and monkeypatch
 _get_close_prices so no network call is made.
 """
 import pytest
-from premarket.premarket_report import (
+from services.orchestrator.premarket.premarket_report import (
     PreMarketReport,
     GLOBAL_INDICES,
     BOND_YIELD_TICKERS,

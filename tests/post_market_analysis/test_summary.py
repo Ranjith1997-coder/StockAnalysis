@@ -1,6 +1,6 @@
 """Tests for post_market_analysis.summary — formatters and PostMarketSummaryBuilder."""
 import pytest
-from post_market_analysis.summary import (
+from services.orchestrator.post_market_analysis.summary import (
     _val_dot,
     FiiDiiSummaryFormatter,
     SectorSummaryFormatter,
@@ -8,7 +8,7 @@ from post_market_analysis.summary import (
     IndexReturnsSummaryFormatter,
     PostMarketSummaryBuilder,
 )
-from post_market_analysis.analysis import PostMarketAnalyzer
+from services.orchestrator.post_market_analysis.analysis import PostMarketAnalyzer
 
 
 # ── _val_dot helper ───────────────────────────────────────────────────────────

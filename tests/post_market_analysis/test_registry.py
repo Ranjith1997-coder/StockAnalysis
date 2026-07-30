@@ -1,7 +1,7 @@
 """Tests for post_market_analysis.registry — load_sources()."""
 import pytest
-from post_market_analysis.registry import load_sources, SOURCE_CLASSES
-from post_market_analysis.base import PostMarketSource
+from services.orchestrator.post_market_analysis.registry import load_sources, SOURCE_CLASSES
+from services.orchestrator.post_market_analysis.base import PostMarketSource
 
 
 class TestRegistry:

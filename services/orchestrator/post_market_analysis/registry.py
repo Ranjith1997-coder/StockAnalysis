@@ -1,6 +1,6 @@
 from .fii_dii import FiiDiiActivitySource
 from .sector_performance import SectorPerformanceSource
-from post_market_analysis.fo_participant_oi import FoParticipantOISource
+from .fo_participant_oi import FoParticipantOISource
 from .index_returns import IndexReturnsSource
 
 SOURCE_CLASSES = [SectorPerformanceSource, 

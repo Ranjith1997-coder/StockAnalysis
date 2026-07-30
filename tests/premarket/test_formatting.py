@@ -2,7 +2,7 @@
 import datetime
 import pytest
 from unittest.mock import patch
-from premarket.premarket_report import PreMarketReport
+from services.orchestrator.premarket.premarket_report import PreMarketReport
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
