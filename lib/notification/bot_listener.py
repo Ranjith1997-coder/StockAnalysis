@@ -57,11 +57,11 @@ def _retry_run_polling() -> None:
             _application.run_polling()
             return  # clean exit (stop_running() was called)
         except (NetworkError, TimedOut) as e:
-            logger.error(f"[bot] Telegram polling network error: {e} — retrying in {delay}s")
+            logger.error("[bot] Telegram polling network error: %s — retrying in %ds", e, delay)
             time.sleep(delay)
             delay = min(delay * 2, 300)  # cap at 5 minutes
         except Exception as e:
-            logger.error(f"[bot] Telegram polling fatal error: {e} — not retrying")
+            logger.error("[bot] Telegram polling fatal error: %s — not retrying", e, exc_info=True)
             return
 
 

@@ -230,11 +230,11 @@ class MarketNarrator:
             msg = self._format_telegram(confluence, response)
             TELEGRAM_NOTIFICATIONS.send_live_options_notification(msg, parse_mode="HTML", symbol=confluence.symbol)
             incr_stock(confluence.symbol, "alerts_narrative")
-            logger.info(f"[Narrator] Sent narrative for {confluence.symbol} "
-                        f"{confluence.direction.value} {confluence.level}")
+            logger.info("[Narrator] Sent narrative for %s %s %s",
+                        confluence.symbol, confluence.direction.value, confluence.level)
 
         except Exception as e:
-            logger.error(f"[Narrator] Failed to generate narrative: {e}")
+            logger.error("[Narrator] Failed to generate narrative: %s", e, exc_info=True)
 
     def _build_prompt(self, confluence: Confluence, ctx: MarketContext,
                       template: str) -> str:
@@ -298,7 +298,7 @@ class MarketNarrator:
             logger.info("[Narrator] Sent positional EOD narrative")
 
         except Exception as e:
-            logger.error(f"[Narrator] Positional narrative failed: {e}")
+            logger.error("[Narrator] Positional narrative failed: %s", e, exc_info=True)
 
     def _build_positional_prompt(self, data: dict[str, str]) -> str:
         from datetime import datetime

@@ -210,6 +210,9 @@ def calculate_score(analysis: Dict) -> ScoreResult:
     
     priority = determine_priority(total_score)
     
+    logger.debug("[calculate_score] total=%.2f base=%.2f bonus=%.2f priority=%s sentiment=%s alignment=%s",
+                 total_score, base_score, alignment_bonus, priority.value, dominant_sentiment, alignment_type)
+    
     return ScoreResult(
         total_score=round(total_score, 2),
         base_score=round(base_score, 2),

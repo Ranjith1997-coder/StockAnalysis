@@ -8,6 +8,9 @@ if TYPE_CHECKING:
     from common.Stock import Stock
     from services.common.redis_proxy import RedisProxy
 
+from lib.logging_util import get_logger
+logger = get_logger("common")
+
 from services.common.serialization import (
     dataframe_from_json,
     safe_json_loads,
@@ -31,29 +34,29 @@ def load_stock_from_redis(redis: RedisProxy, symbol: str, is_index: bool = False
     if prev_day_raw:
         try:
             stock.prevDayOHLCV = json.loads(prev_day_raw)
-        except (json.JSONDecodeError, TypeError):
-            pass
+        except (json.JSONDecodeError, TypeError) as e:
+            logger.debug("[stock_loader] prevDayOHLCV JSON parse for %s: %s", symbol, e)
 
     ltp_str = price_raw.get("ltp", "")
     if ltp_str:
         try:
             stock.ltp = float(ltp_str)
-        except (ValueError, TypeError):
-            pass
+        except (ValueError, TypeError) as e:
+            logger.debug("[stock_loader] ltp float conversion for %s: %s", symbol, e)
 
     change_str = price_raw.get("ltp_change_perc", "")
     if change_str:
         try:
             stock.ltp_change_perc = float(change_str)
-        except (ValueError, TypeError):
-            pass
+        except (ValueError, TypeError) as e:
+            logger.debug("[stock_loader] ltp_change float conversion for %s: %s", symbol, e)
 
     hv_str = price_raw.get("daily_hv", "")
     if hv_str:
         try:
             stock.daily_hv = float(hv_str)
-        except (ValueError, TypeError):
-            pass
+        except (ValueError, TypeError) as e:
+            logger.debug("[stock_loader] daily_hv float conversion for %s: %s", symbol, e)
 
     return stock
 
@@ -110,29 +113,29 @@ def _apply_price_raw(stock: Stock, price_raw: dict[str, str]):
     if prev_day_raw:
         try:
             stock.prevDayOHLCV = json.loads(prev_day_raw)
-        except (json.JSONDecodeError, TypeError):
-            pass
+        except (json.JSONDecodeError, TypeError) as e:
+            logger.debug("[stock_loader] prevDayOHLCV parse in _apply_price_raw: %s", e)
 
     ltp_str = price_raw.get("ltp", "")
     if ltp_str:
         try:
             stock.ltp = float(ltp_str)
-        except (ValueError, TypeError):
-            pass
+        except (ValueError, TypeError) as e:
+            logger.debug("[stock_loader] ltp float in _apply_price_raw: %s", e)
 
     change_str = price_raw.get("ltp_change_perc", "")
     if change_str:
         try:
             stock.ltp_change_perc = float(change_str)
-        except (ValueError, TypeError):
-            pass
+        except (ValueError, TypeError) as e:
+            logger.debug("[stock_loader] change float in _apply_price_raw: %s", e)
 
     hv_str = price_raw.get("daily_hv", "")
     if hv_str:
         try:
             stock.daily_hv = float(hv_str)
-        except (ValueError, TypeError):
-            pass
+        except (ValueError, TypeError) as e:
+            logger.debug("[stock_loader] hv float in _apply_price_raw: %s", e)
 
 
 def load_sensibull_from_redis(redis: RedisProxy, stock: Stock) -> bool:
@@ -147,8 +150,8 @@ def load_sensibull_from_redis(redis: RedisProxy, stock: Stock) -> bool:
     if current_json != "{}":
         try:
             ctx["current"] = json.loads(current_json)
-        except (json.JSONDecodeError, TypeError):
-            pass
+        except (json.JSONDecodeError, TypeError) as e:
+            logger.debug("[stock_loader] sensibull current_json parse for %s: %s", stock.stock_symbol, e)
 
     ctx["historical_data"] = dataframe_from_json(
         sensibull_raw.get("historical_data_json", "{}")
@@ -162,8 +165,8 @@ def load_sensibull_from_redis(redis: RedisProxy, stock: Stock) -> bool:
     if hist_list_raw and hist_list_raw != "[]":
         try:
             ctx["oi_chain_history"] = json.loads(hist_list_raw)
-        except (json.JSONDecodeError, TypeError):
-            pass
+        except (json.JSONDecodeError, TypeError) as e:
+            logger.debug("[stock_loader] oi_chain_history parse for %s: %s", stock.stock_symbol, e)
 
     ctx["iv_chart_history"] = dataframe_from_json(
         sensibull_raw.get("iv_chart_history_json", "{}")
@@ -197,8 +200,8 @@ def load_zerodha_from_redis(redis: RedisProxy, stock: Stock) -> bool:
             if isinstance(loaded, dict):
                 ctx["futures_mdata"]["current"] = _dict_to_df(loaded.get("current"))
                 ctx["futures_mdata"]["next"] = _dict_to_df(loaded.get("next"))
-        except (json.JSONDecodeError, TypeError):
-            pass
+        except (json.JSONDecodeError, TypeError) as e:
+            logger.debug("[stock_loader] futures_mdata parse: %s", e)
 
     return True
 

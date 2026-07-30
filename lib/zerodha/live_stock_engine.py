@@ -96,6 +96,8 @@ class LiveStockEngine:
         if not self._cooldown_ok(symbol, signal_type):
             return
         self._last_signal[(symbol, signal_type)] = time.time()
+        logger.debug("[LiveStock] %s %s: dir=%s strength=%s ctx=%s",
+                     symbol, signal_type, direction.name, strength.name, context)
         self._bus.emit(Signal(
             symbol=symbol,
             direction=direction,

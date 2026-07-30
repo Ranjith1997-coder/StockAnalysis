@@ -15,6 +15,8 @@ from datetime import datetime, time
 from typing import Tuple
 
 import common.shared as shared
+from lib.logging_util import get_logger
+logger = get_logger("intelligence")
 
 
 @dataclass
@@ -349,8 +351,8 @@ class ContextBuilder:
             from intraday.intraday_monitor import redis_proxy
             from services.common.stock_loader import load_tick_from_redis
             load_tick_from_redis(redis_proxy, stock)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("[ContextBuilder] _refresh_from_redis failed for %s: %s", stock.stock_symbol, e)
 
     def _get_vix(self) -> float | None:
         for obj in shared.app_ctx.index_token_obj_dict.values():
@@ -364,8 +366,8 @@ class ContextBuilder:
             stats = stock.sensibull_ctx.get("current", {}).get("stats")
             if stats and "max_pain" in stats:
                 return stats["max_pain"]
-        except (AttributeError, TypeError):
-            pass
+        except (AttributeError, TypeError) as e:
+            logger.debug("[ContextBuilder] _get_max_pain failed for %s: %s", stock.stock_symbol, e)
         return None
 
     def _get_expiry(self, stock) -> str | None:
@@ -373,8 +375,8 @@ class ContextBuilder:
             chain = stock.zerodha_ctx.get("option_chain", {}).get("current")
             if chain is not None and not chain.empty and "expiry" in chain.columns:
                 return str(chain["expiry"].iloc[0])
-        except (AttributeError, TypeError):
-            pass
+        except (AttributeError, TypeError) as e:
+            logger.debug("[ContextBuilder] _get_expiry failed for %s: %s", stock.stock_symbol, e)
         return None
 
     def _minutes_to_close(self) -> int:
@@ -396,7 +398,8 @@ class ContextBuilder:
             # Use the nearest expiry (first key when sorted)
             nearest = sorted(per_expiry.keys())[0]
             return per_expiry[nearest].get("atm_iv_percentile")
-        except (AttributeError, TypeError, IndexError):
+        except (AttributeError, TypeError, IndexError) as e:
+            logger.debug("[ContextBuilder] _get_atm_iv_percentile failed for %s: %s", stock.stock_symbol, e)
             return None
 
     def _get_sensibull_stat(self, stock, key: str):
@@ -404,7 +407,8 @@ class ContextBuilder:
         try:
             stats = stock.sensibull_ctx.get("current", {}).get("stats", {})
             return stats.get("underlying_base_stats", {}).get(key)
-        except (AttributeError, TypeError):
+        except (AttributeError, TypeError) as e:
+            logger.debug("[ContextBuilder] _get_sensibull_stat failed for %s key=%s: %s", stock.stock_symbol, key, e)
             return None
 
     def _get_top_oi_strikes(self, stock, side: str, n: int = 3) -> list:
@@ -426,8 +430,8 @@ class ContextBuilder:
                 ]
                 pairs.sort(key=lambda x: x[1], reverse=True)
                 return pairs[:n]
-        except (AttributeError, TypeError):
-            pass
+        except (AttributeError, TypeError) as e:
+            logger.debug("[ContextBuilder] _get_top_oi_strikes sensibull failed for %s: %s", stock.stock_symbol, e)
 
         # Fallback: options_live (live WebSocket data)
         try:
@@ -440,14 +444,16 @@ class ContextBuilder:
             ]
             pairs.sort(key=lambda x: x[1], reverse=True)
             return pairs[:n]
-        except (AttributeError, TypeError):
+        except (AttributeError, TypeError) as e:
+            logger.debug("[ContextBuilder] _get_top_oi_strikes options_live failed for %s: %s", stock.stock_symbol, e)
             return []
 
     def _get_futures_field(self, stock, key: str):
         """Read a field from futures_live['current']."""
         try:
             return stock.futures_live.get("current", {}).get(key) or None
-        except (AttributeError, TypeError):
+        except (AttributeError, TypeError) as e:
+            logger.debug("[ContextBuilder] _get_futures_field failed for %s key=%s: %s", stock.stock_symbol, key, e)
             return None
 
     def _get_futures_change_pct(self, stock) -> float | None:
@@ -458,6 +464,6 @@ class ContextBuilder:
             prev_close = fut.get("close")  # 'close' in futures_live = prev day close
             if ltp and prev_close and prev_close > 0:
                 return ((ltp - prev_close) / prev_close) * 100
-        except (AttributeError, TypeError):
-            pass
+        except (AttributeError, TypeError) as e:
+            logger.debug("[ContextBuilder] _get_futures_change_pct failed for %s: %s", stock.stock_symbol, e)
         return None

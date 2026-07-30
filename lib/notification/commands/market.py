@@ -210,8 +210,8 @@ async def cmd_watchlist(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 ws_connected = _md.get("ws1_connected", "False") == "True"
                 ws1_subs = int(_md.get("ws1_subs", 0))
                 ws2_subs = int(_md.get("ws2_subs", 0))
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("[watchlist] Redis market-data registry read failed: %s", e)
     # Fallback: check monolith's own tm (still set in dev or if WS not yet moved)
     if not ws_connected:
         tm = ctx.zd_ticker_manager
@@ -281,8 +281,8 @@ async def cmd_watchlist(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                             info += f" OI: <code>{oi_val:,.0f}</code>"
                         futures_symbols.append(info)
                         continue
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("[watchlist] futures_live Redis read failed for %s: %s", stock.stock_symbol, e)
             # Fallback: in-memory futures_live
             live = getattr(stock, "futures_live", {})
             cur = live.get("current", {})

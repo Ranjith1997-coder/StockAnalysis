@@ -1,5 +1,7 @@
 import requests, time, datetime, pandas as pd
 from .base import PostMarketSource
+from lib.logging_util import get_logger
+logger = get_logger("post-market-analysis")
 
 class FiiDiiActivitySource(PostMarketSource):
     source_name = "fii_dii_activity"

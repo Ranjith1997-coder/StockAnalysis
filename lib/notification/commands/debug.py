@@ -10,6 +10,9 @@ from datetime import datetime
 from telegram import Update
 from telegram.ext import ContextTypes
 
+from lib.logging_util import get_logger
+logger = get_logger("notification")
+
 from ._guard import guard, debug_chat_only
 from .debug_inspect import (
     inspect_overview,
