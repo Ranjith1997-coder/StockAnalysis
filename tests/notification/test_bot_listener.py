@@ -23,7 +23,7 @@ from unittest.mock import AsyncMock, MagicMock, patch, mock_open
 from tests.conftest import make_update, FakeStock, FakeAppCtx
 
 import common.shared as shared
-import notification.bot_listener as bl
+import lib.notification.bot_listener as bl
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -382,7 +382,7 @@ async def test_cmd_holidays_shows_upcoming(clean_ctx):
     import datetime
     holiday = datetime.date(2026, 4, 14)
     update, context = make_update()
-    with patch("notification.commands.market.datetime") as mock_dt, \
+    with patch("lib.notification.commands.market.datetime") as mock_dt, \
          patch("common.market_calendar.is_trading_day", return_value=True), \
          patch("common.market_calendar.get_upcoming_holidays",
                return_value=[holiday]):

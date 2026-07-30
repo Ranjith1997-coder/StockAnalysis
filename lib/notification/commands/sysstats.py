@@ -21,7 +21,7 @@ from datetime import datetime, timedelta
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from notification.commands._guard import guard, debug_chat_only
+from ._guard import guard, debug_chat_only
 from services.common.logging import get_logger
 logger = get_logger("notification")
 

@@ -14,7 +14,7 @@ from telegram.ext import ContextTypes
 import common.shared as shared
 from services.common.logging import get_logger
 logger = get_logger("notification")
-from notification.commands._guard import guard, debug_chat_only
+from ._guard import guard, debug_chat_only
 
 # ─── Thresholds ──────────────────────────────────────────────────────────────
 
@@ -49,7 +49,7 @@ def _feed_health_lines() -> list[str]:
     # Read equity tick time from market-data service registry (fallback to monolith)
     last_equity_tick = 0.0
     try:
-        from notification.commands._helpers import _get_redis
+        from ._helpers import _get_redis
         _r = _get_redis()
         if _r is not None:
             _md = _r.hgetall("service:registry:market-data")
@@ -75,7 +75,7 @@ def _feed_health_lines() -> list[str]:
     # Options aggregate lag — read from Redis hashes (market-data service snapshots)
     opt_lags = []
     try:
-        from notification.commands._helpers import _get_redis
+        from ._helpers import _get_redis
         _r = _get_redis()
         if _r is not None:
             for _, index_obj in ctx.index_token_obj_dict.items():
@@ -313,7 +313,7 @@ async def job_llm_budget_alert(context: ContextTypes.DEFAULT_TYPE) -> None:
         client._budget_alert_callback = _reset_on_new_day
 
     try:
-        from notification.Notification import TELEGRAM_NOTIFICATIONS
+        from .Notification import TELEGRAM_NOTIFICATIONS
         TELEGRAM_NOTIFICATIONS.send_notification(
             f"⚠️ LLM Budget Alert\n"
             f"Gemini Flash daily budget: {pct:.1f}% used ({used:,} / {limit:,} tokens).\n"
@@ -342,7 +342,7 @@ async def cmd_version(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         logger.debug(f"[version] Ignored from non-debug chat {update.effective_chat.id}")
         return
 
-    from notification.commands._helpers import _get_redis
+    from ._helpers import _get_redis
     rc = _get_redis()
     if rc is None:
         await context.bot.send_message(

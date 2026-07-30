@@ -19,7 +19,7 @@ from intelligence.correlator import Confluence
 from common.constants import CONFLUENCE_STREAM
 from services.common.logging import get_logger
 logger = get_logger("signal-intelligence")
-from notification.Notification import TELEGRAM_NOTIFICATIONS
+from lib.notification.Notification import TELEGRAM_NOTIFICATIONS
 from services.common.metrics import incr_stock, incr_system, incr_daily
 
 

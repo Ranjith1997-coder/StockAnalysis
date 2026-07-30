@@ -10,8 +10,8 @@ from datetime import datetime
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from notification.commands._guard import guard, debug_chat_only
-from notification.commands.debug_inspect import (
+from ._guard import guard, debug_chat_only
+from .debug_inspect import (
     inspect_overview,
     inspect_stock,
     inspect_signals,

@@ -10,7 +10,7 @@ from common.token_registry import (
 import threading
 import queue
 from collections import defaultdict
-from notification.Notification import TELEGRAM_NOTIFICATIONS
+from lib.notification.Notification import TELEGRAM_NOTIFICATIONS
 import requests
 
 
@@ -405,7 +405,7 @@ class ZerodhaTickerManager:
         from common.constants import LIVE_OPTIONS_INDICES
         from services.common.logging import get_logger
         logger = get_logger("zerodha")
-        from notification.Notification import TELEGRAM_NOTIFICATIONS
+        from lib.notification.Notification import TELEGRAM_NOTIFICATIONS
 
         registry = shared.app_ctx.token_registry
         if registry is None:

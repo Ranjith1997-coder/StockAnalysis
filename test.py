@@ -20,7 +20,7 @@ import argparse
 from dotenv import load_dotenv
 load_dotenv()
 
-from notification.Notification import TELEGRAM_NOTIFICATIONS
+from lib.notification.Notification import TELEGRAM_NOTIFICATIONS
 from premarket.premarket_report import run_global_cues_report, run_preopen_report
 
 # Enable sending (production flag must be on)

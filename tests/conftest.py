@@ -112,7 +112,7 @@ def make_update(chat_id: int = 12345):
     import os
     os.environ["TELEGRAM_ALLOWED_CHAT_IDS"] = str(chat_id)
     os.environ["TELEGRAM_DEBUG_CHAT_ID"] = ""
-    from notification.commands._guard import init_guard
+    from lib.notification.commands._guard import init_guard
     init_guard()
 
     update = MagicMock()

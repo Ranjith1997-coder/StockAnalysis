@@ -15,7 +15,7 @@ from concurrent.futures import ThreadPoolExecutor
 from intelligence.correlator import Confluence
 from intelligence.context_builder import ContextBuilder, MarketContext
 from intelligence.llm_client import LLMClient
-from notification.Notification import TELEGRAM_NOTIFICATIONS
+from lib.notification.Notification import TELEGRAM_NOTIFICATIONS
 from services.common.metrics import incr_stock
 from services.common.logging import get_logger
 logger = get_logger("intelligence")

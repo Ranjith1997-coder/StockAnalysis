@@ -348,13 +348,13 @@ class TestSparkline:
     """Test sparkline rendering."""
 
     def test_flat_values(self):
-        from notification.commands.sysstats import _sparkline
+        from lib.notification.commands.sysstats import _sparkline
         result = _sparkline([5.0, 5.0, 5.0])
         assert len(result) == 3
         assert all(c == result[0] for c in result)
 
     def test_ascending_values(self):
-        from notification.commands.sysstats import _sparkline
+        from lib.notification.commands.sysstats import _sparkline
         result = _sparkline([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0])
         assert len(result) == 8
         # Should be monotonically non-decreasing
@@ -363,7 +363,7 @@ class TestSparkline:
         assert indices == sorted(indices)
 
     def test_empty_values(self):
-        from notification.commands.sysstats import _sparkline
+        from lib.notification.commands.sysstats import _sparkline
         assert _sparkline([]) == ""
 
 
@@ -371,7 +371,7 @@ class TestSysstatsLive:
     """Test the live dashboard view."""
 
     def test_shows_monitor_not_running_when_no_data(self):
-        from notification.commands.sysstats import _build_live_text
+        from lib.notification.commands.sysstats import _build_live_text
 
         rc = MagicMock()
         rc.hgetall.return_value = {}
@@ -380,7 +380,7 @@ class TestSysstatsLive:
         assert "not running" in text
 
     def test_shows_system_metrics(self):
-        from notification.commands.sysstats import _build_live_text
+        from lib.notification.commands.sysstats import _build_live_text
 
         rc = MagicMock()
 
@@ -426,7 +426,7 @@ class TestSysstatsHistory:
     """Test the history view."""
 
     def test_shows_no_data_when_empty(self):
-        from notification.commands.sysstats import _build_history_text
+        from lib.notification.commands.sysstats import _build_history_text
 
         rc = MagicMock()
         rc.zrangebyscore.return_value = []
@@ -438,7 +438,7 @@ class TestSysstatsHistory:
         assert "7-Day Summary" in text
 
     def test_shows_sparkline_when_data_exists(self):
-        from notification.commands.sysstats import _build_history_text
+        from lib.notification.commands.sysstats import _build_history_text
 
         rc = MagicMock()
 
@@ -464,7 +464,7 @@ class TestSysstatsRedis:
     """Test the Redis deep dive view."""
 
     def test_shows_no_data_when_empty(self):
-        from notification.commands.sysstats import _build_redis_text
+        from lib.notification.commands.sysstats import _build_redis_text
 
         rc = MagicMock()
         rc.hgetall.return_value = {}
@@ -473,7 +473,7 @@ class TestSysstatsRedis:
         assert "No Redis metrics" in text
 
     def test_shows_redis_details(self):
-        from notification.commands.sysstats import _build_redis_text
+        from lib.notification.commands.sysstats import _build_redis_text
 
         rc = MagicMock()
         rc.hgetall.return_value = {

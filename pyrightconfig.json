@@ -6,7 +6,7 @@
         "fno",
         "intraday",
         "metaData",
-        "notification",
+        "lib/notification",
         "nse",
         "post_market_analysis",
         "scripts",
