@@ -1,0 +1,21 @@
+[Unit]
+Description=StockAnalysis Orchestrator (scheduler + dispatcher + reporter)
+After=redis-server.service stockanalysis-notification.service stockanalysis-data-gateway.service stockanalysis-market-data.service stockanalysis-analysis-engine.service
+Wants=network-online.target
+Requires=redis-server.service stockanalysis-notification.service stockanalysis-data-gateway.service stockanalysis-market-data.service stockanalysis-analysis-engine.service
+
+[Service]
+Type=simple
+User=hacker
+WorkingDirectory=/home/hacker/StockAnalysis
+EnvironmentFile=/home/hacker/StockAnalysis/.env
+Environment=PYTHONPATH=/home/hacker/StockAnalysis
+Environment=REDIS_URL=redis://localhost:6379
+ExecStart=/home/hacker/StockAnalysis/.venv/bin/python -m services.orchestrator.main
+Restart=always
+RestartSec=10
+CPUQuota=15%
+MemoryMax=200M
+
+[Install]
+WantedBy=multi-user.target
