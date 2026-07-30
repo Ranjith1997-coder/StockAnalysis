@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from unittest.mock import patch, MagicMock
 
 import common.shared as shared
-from analyser.MaxPainAnalyser import MaxPainAnalyser
+from services.analysis_engine.analyser.MaxPainAnalyser import MaxPainAnalyser
 from tests.analyser.conftest import make_stock, make_sensibull_ctx
 
 # Dynamically computed future expiry dates so the tests are not date-sensitive

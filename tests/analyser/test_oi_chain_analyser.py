@@ -3,7 +3,7 @@ import pytest
 from unittest.mock import patch, MagicMock
 
 import common.shared as shared
-from analyser.OIChainAnalyser import OIChainAnalyser
+from services.analysis_engine.analyser.OIChainAnalyser import OIChainAnalyser
 from tests.analyser.conftest import make_stock, make_oi_chain, make_sensibull_ctx, make_oi_history
 
 

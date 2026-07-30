@@ -4,7 +4,7 @@ from collections import namedtuple
 from unittest.mock import patch, MagicMock
 
 import common.shared as shared
-from analyser.PanicModeAnalyser import PanicModeAnalyser
+from services.analysis_engine.analyser.PanicModeAnalyser import PanicModeAnalyser
 from tests.analyser.conftest import make_stock, make_sensibull_ctx
 
 

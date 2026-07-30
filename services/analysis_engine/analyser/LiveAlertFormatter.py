@@ -9,7 +9,7 @@ Every alert gets:
   • A signal line         →  → Action text
 
 Usage:
-    from analyser.LiveAlertFormatter import F
+    from .LiveAlertFormatter import F
 
     msg = F.build(
         F.header("NIFTY", "PCR Crossover → BULLISH", "📈"),

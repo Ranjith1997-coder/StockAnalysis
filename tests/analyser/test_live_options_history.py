@@ -1,7 +1,7 @@
 """Tests for analyser/LiveOptionsHistory.py."""
 import time
 import pytest
-from analyser.LiveOptionsHistory import LiveOptionsHistory, OptionsSnapshot
+from services.analysis_engine.analyser.LiveOptionsHistory import LiveOptionsHistory, OptionsSnapshot
 
 
 def _make_agg(pcr=1.0, ce_oi=100_000, pe_oi=100_000, straddle=200.0,

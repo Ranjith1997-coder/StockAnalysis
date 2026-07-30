@@ -14,9 +14,9 @@ import threading
 from services.common.logging import get_logger
 logger = get_logger("zerodha")
 from common.Stock import Stock
-from analyser.LiveOIAnalyser import LiveOIAnalyser
-from analyser.LiveStraddleAnalyser import LiveStraddleAnalyser
-from analyser.LiveOptionsHistory import LiveOptionsHistory
+from services.analysis_engine.analyser.LiveOIAnalyser import LiveOIAnalyser
+from services.analysis_engine.analyser.LiveStraddleAnalyser import LiveStraddleAnalyser
+from services.analysis_engine.analyser.LiveOptionsHistory import LiveOptionsHistory
 from notification.Notification import TELEGRAM_NOTIFICATIONS
 from services.common.metrics import incr_stock
 from common.constants import LIVE_OPTIONS_INDICES

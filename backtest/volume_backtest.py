@@ -15,7 +15,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from backtest.backtest import Backtester
-from analyser.VolumeAnalyser import VolumeAnalyser
+from services.analysis_engine.analyser.VolumeAnalyser import VolumeAnalyser
 import common.shared as shared
 
 

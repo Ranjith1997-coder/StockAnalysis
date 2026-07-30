@@ -13,7 +13,7 @@ import json
 from common.Stock import Stock
 from services.common.logging import get_logger
 logger = get_logger("backtest")
-from analyser.Analyser import BaseAnalyzer
+from services.analysis_engine.analyser.Analyser import BaseAnalyzer
 import common.shared as shared
 from common.helperFunctions import percentageChange
 

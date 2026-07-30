@@ -13,8 +13,8 @@ import time
 
 import common.constants as constant
 import common.shared as shared
-from analyser.Analyser import AnalyserOrchestrator
-from analyser.GEXAnalyser import GEXAnalyser
+from .analyser.Analyser import AnalyserOrchestrator
+from .analyser.GEXAnalyser import GEXAnalyser
 from services.common.redis_proxy import RedisProxy
 from services.common.stock_loader import (
     load_stock_from_redis,

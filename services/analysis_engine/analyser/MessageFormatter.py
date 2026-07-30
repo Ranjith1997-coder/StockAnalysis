@@ -11,7 +11,7 @@ no alert is ever silently dropped.
 
 Registration happens at module import time via @MessageFormatter.register().
 Importers only need:
-    from analyser.MessageFormatter import MessageFormatter
+    from .MessageFormatter import MessageFormatter
 """
 
 from services.common.logging import get_logger

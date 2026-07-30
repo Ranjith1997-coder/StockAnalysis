@@ -1,6 +1,6 @@
 import traceback
 import numpy as np
-from analyser.Analyser import BaseAnalyzer
+from .Analyser import BaseAnalyzer
 from common.Stock import Stock
 from services.common.logging import get_logger
 logger = get_logger("analyser")
