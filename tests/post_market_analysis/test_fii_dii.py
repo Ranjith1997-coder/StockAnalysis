@@ -2,7 +2,7 @@
 import pytest
 import datetime
 from unittest.mock import patch, MagicMock, call
-from post_market_analysis.fii_dii import FiiDiiActivitySource
+from services.orchestrator.post_market_analysis.fii_dii import FiiDiiActivitySource
 from tests.post_market_analysis.conftest import mock_response
 
 

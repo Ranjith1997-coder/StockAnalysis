@@ -2,7 +2,7 @@
 import pytest
 import math
 import pandas as pd
-from premarket.premarket_report import _safe_float, _chg, _extract_ticker_data
+from services.orchestrator.premarket.premarket_report import _safe_float, _chg, _extract_ticker_data
 
 
 # ── _safe_float ───────────────────────────────────────────────────────────────

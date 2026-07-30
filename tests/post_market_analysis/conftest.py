@@ -118,7 +118,7 @@ def sample_fii_dii_raw():
 @pytest.fixture
 def sample_fii_dii_df(sample_fii_dii_raw):
     """Normalized FII/DII DataFrame (via FiiDiiActivitySource.normalize)."""
-    from post_market_analysis.fii_dii import FiiDiiActivitySource
+    from services.orchestrator.post_market_analysis.fii_dii import FiiDiiActivitySource
     src = FiiDiiActivitySource()
     return src.normalize(sample_fii_dii_raw)
 
@@ -142,7 +142,7 @@ def sample_sector_raw():
 
 @pytest.fixture
 def sample_sector_df(sample_sector_raw):
-    from post_market_analysis.sector_performance import SectorPerformanceSource
+    from services.orchestrator.post_market_analysis.sector_performance import SectorPerformanceSource
     src = SectorPerformanceSource()
     return src.normalize(sample_sector_raw)
 
@@ -172,7 +172,7 @@ def sample_fo_participant_raw():
 
 @pytest.fixture
 def sample_fo_participant_df(sample_fo_participant_raw):
-    from post_market_analysis.fo_participant_oi import FoParticipantOISource
+    from services.orchestrator.post_market_analysis.fo_participant_oi import FoParticipantOISource
     src = FoParticipantOISource()
     return src.normalize(sample_fo_participant_raw)
 
@@ -206,6 +206,6 @@ def sample_index_returns_raw():
 
 @pytest.fixture
 def sample_index_returns_df(sample_index_returns_raw):
-    from post_market_analysis.index_returns import IndexReturnsSource
+    from services.orchestrator.post_market_analysis.index_returns import IndexReturnsSource
     src = IndexReturnsSource()
     return src.normalize(sample_index_returns_raw)

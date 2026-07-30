@@ -2,12 +2,12 @@
 import pytest
 import pandas as pd
 from unittest.mock import patch, MagicMock
-from post_market_analysis.runner import (
+from services.orchestrator.post_market_analysis.runner import (
     run_post_market_pipeline,
     build_summary,
     run_and_summarize,
 )
-from post_market_analysis.base import PostMarketSource
+from services.orchestrator.post_market_analysis.base import PostMarketSource
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -52,10 +52,10 @@ class TestRunPostMarketPipeline:
         from contextlib import ExitStack
         stack = ExitStack()
         stack.enter_context(
-            patch("post_market_analysis.runner.load_sources", return_value=sources)
+            patch("services.orchestrator.post_market_analysis.runner.load_sources", return_value=sources)
         )
         mock_analyzer_cls = stack.enter_context(
-            patch("post_market_analysis.runner.PostMarketAnalyzer")
+            patch("services.orchestrator.post_market_analysis.runner.PostMarketAnalyzer")
         )
         mock_analyzer_cls.return_value.dispatch.return_value = {}
         return stack
@@ -148,11 +148,11 @@ class TestRunAndSummarize:
         mock_analyzer = MagicMock()
 
         with patch(
-            "post_market_analysis.runner.run_post_market_pipeline",
+            "services.orchestrator.post_market_analysis.runner.run_post_market_pipeline",
             return_value=(mock_outputs, mock_analyzer)
         ):
             with patch(
-                "post_market_analysis.runner.build_summary",
+                "services.orchestrator.post_market_analysis.runner.build_summary",
                 return_value=["msg1", "msg2"]
             ) as mock_build:
                 result = run_and_summarize()
@@ -162,7 +162,7 @@ class TestRunAndSummarize:
 
     def test_run_and_summarize_returns_none_when_no_outputs(self):
         with patch(
-            "post_market_analysis.runner.run_post_market_pipeline",
+            "services.orchestrator.post_market_analysis.runner.run_post_market_pipeline",
             return_value=([], MagicMock())
         ):
             result = run_and_summarize()

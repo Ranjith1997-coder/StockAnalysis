@@ -3,7 +3,7 @@ import pytest
 import datetime
 import pandas as pd
 from unittest.mock import patch
-from post_market_analysis.fo_participant_oi import FoParticipantOISource
+from services.orchestrator.post_market_analysis.fo_participant_oi import FoParticipantOISource
 from tests.post_market_analysis.conftest import mock_response
 
 

@@ -2,7 +2,7 @@
 import pytest
 import pandas as pd
 import datetime
-from post_market_analysis.analysis import PostMarketAnalyzer
+from services.orchestrator.post_market_analysis.analysis import PostMarketAnalyzer
 
 
 @pytest.fixture

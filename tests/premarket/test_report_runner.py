@@ -4,15 +4,15 @@ run_preopen_report.
 import os
 import pytest
 from unittest.mock import patch, MagicMock, call
-from premarket.premarket_report import (
+from services.orchestrator.premarket.premarket_report import (
     _send_report,
     run_global_cues_report,
     run_preopen_report,
 )
 
-_TELEGRAM = "premarket.premarket_report.TELEGRAM_NOTIFICATIONS.send_notification"
+_TELEGRAM = "services.orchestrator.premarket.premarket_report.TELEGRAM_NOTIFICATIONS.send_notification"
 _IS_TRADING = "common.market_calendar.is_trading_day"
-_SYS_EXIT = "premarket.premarket_report.sys.exit"
+_SYS_EXIT = "services.orchestrator.premarket.premarket_report.sys.exit"
 
 
 # ── TestSendReport ─────────────────────────────────────────────────────────────
@@ -83,7 +83,7 @@ class TestRunGlobalCuesReport:
 
     def test_non_production_mode_does_not_check_trading_day(self):
         with patch.dict(os.environ, {"PRODUCTION": "0"}):
-            with patch("premarket.premarket_report.PreMarketReport",
+            with patch("services.orchestrator.premarket.premarket_report.PreMarketReport",
                        return_value=self._mock_report()):
                 with patch(_TELEGRAM):
                     with patch(_IS_TRADING) as mock_is_trading:
@@ -101,7 +101,7 @@ class TestRunGlobalCuesReport:
         with patch.dict(os.environ, {"PRODUCTION": "1"}):
             with patch(_IS_TRADING, return_value=True):
                 mock_rpt = self._mock_report()
-                with patch("premarket.premarket_report.PreMarketReport",
+                with patch("services.orchestrator.premarket.premarket_report.PreMarketReport",
                            return_value=mock_rpt):
                     with patch(_TELEGRAM):
                         run_global_cues_report()
@@ -109,7 +109,7 @@ class TestRunGlobalCuesReport:
 
     def test_returns_report_string_on_success(self):
         with patch.dict(os.environ, {"PRODUCTION": "0"}):
-            with patch("premarket.premarket_report.PreMarketReport",
+            with patch("services.orchestrator.premarket.premarket_report.PreMarketReport",
                        return_value=self._mock_report()):
                 with patch(_TELEGRAM):
                     result = run_global_cues_report()
@@ -119,14 +119,14 @@ class TestRunGlobalCuesReport:
         mock_rpt = MagicMock()
         mock_rpt.generate_global_report.side_effect = RuntimeError("network error")
         with patch.dict(os.environ, {"PRODUCTION": "0"}):
-            with patch("premarket.premarket_report.PreMarketReport",
+            with patch("services.orchestrator.premarket.premarket_report.PreMarketReport",
                        return_value=mock_rpt):
                 result = run_global_cues_report()
         assert result is None
 
     def test_send_report_called_with_generated_report(self):
         with patch.dict(os.environ, {"PRODUCTION": "0"}):
-            with patch("premarket.premarket_report.PreMarketReport",
+            with patch("services.orchestrator.premarket.premarket_report.PreMarketReport",
                        return_value=self._mock_report()):
                 with patch(_TELEGRAM) as mock_send:
                     run_global_cues_report()
@@ -142,7 +142,7 @@ class TestRunPreopenReport:
         return mock
 
     def test_returns_report_string_on_success(self):
-        with patch("premarket.premarket_report.PreMarketReport",
+        with patch("services.orchestrator.premarket.premarket_report.PreMarketReport",
                    return_value=self._mock_report()):
             with patch(_TELEGRAM):
                 result = run_preopen_report()
@@ -150,14 +150,14 @@ class TestRunPreopenReport:
 
     def test_generate_preopen_report_called(self):
         mock_rpt = self._mock_report()
-        with patch("premarket.premarket_report.PreMarketReport",
+        with patch("services.orchestrator.premarket.premarket_report.PreMarketReport",
                    return_value=mock_rpt):
             with patch(_TELEGRAM):
                 run_preopen_report()
         mock_rpt.generate_preopen_report.assert_called_once()
 
     def test_send_report_called_with_generated_report(self):
-        with patch("premarket.premarket_report.PreMarketReport",
+        with patch("services.orchestrator.premarket.premarket_report.PreMarketReport",
                    return_value=self._mock_report()):
             with patch(_TELEGRAM) as mock_send:
                 run_preopen_report()
@@ -166,7 +166,7 @@ class TestRunPreopenReport:
     def test_exception_in_generate_returns_none(self):
         mock_rpt = MagicMock()
         mock_rpt.generate_preopen_report.side_effect = RuntimeError("api down")
-        with patch("premarket.premarket_report.PreMarketReport",
+        with patch("services.orchestrator.premarket.premarket_report.PreMarketReport",
                    return_value=mock_rpt):
             result = run_preopen_report()
         assert result is None
@@ -174,7 +174,7 @@ class TestRunPreopenReport:
     def test_exception_does_not_propagate(self):
         mock_rpt = MagicMock()
         mock_rpt.generate_preopen_report.side_effect = RuntimeError("crash")
-        with patch("premarket.premarket_report.PreMarketReport",
+        with patch("services.orchestrator.premarket.premarket_report.PreMarketReport",
                    return_value=mock_rpt):
             # Should not raise
             run_preopen_report()

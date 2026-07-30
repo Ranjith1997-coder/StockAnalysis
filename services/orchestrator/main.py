@@ -22,8 +22,8 @@ from dotenv import load_dotenv
 from notification.bot_listener import init_telegram_bot
 import threading
 from zerodha.zerodha_connect import KiteConnect
-from post_market_analysis.runner import run_and_summarize
-from premarket.premarket_report import run_global_cues_report, run_preopen_report
+from .post_market_analysis.runner import run_and_summarize
+from .premarket.premarket_report import run_global_cues_report, run_preopen_report
 from urllib.parse import quote
 from common.token_registry import TokenRegistry, TokenInfo, TokenType
 from intelligence.correlator import Confluence

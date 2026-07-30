@@ -2,7 +2,7 @@
 import pytest
 import pandas as pd
 from unittest.mock import patch, call
-from post_market_analysis.index_returns import IndexReturnsSource
+from services.orchestrator.post_market_analysis.index_returns import IndexReturnsSource
 from tests.post_market_analysis.conftest import mock_response
 
 
