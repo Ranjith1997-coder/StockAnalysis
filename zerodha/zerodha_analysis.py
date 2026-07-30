@@ -404,7 +404,7 @@ class ZerodhaTickerManager:
         from common.token_registry import TokenType
         from common.constants import LIVE_OPTIONS_INDICES
         from services.common.logging import get_logger
-logger = get_logger("zerodha")
+        logger = get_logger("zerodha")
         from notification.Notification import TELEGRAM_NOTIFICATIONS
 
         registry = shared.app_ctx.token_registry
