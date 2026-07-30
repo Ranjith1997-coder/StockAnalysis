@@ -13,7 +13,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from notification.commands._guard import guard, debug_chat_only
-from services.common.logging import set_runtime_level, reset_runtime_level, _RUNTIME_LEVEL_OVERRIDES
+from services.common.logging import set_runtime_level, reset_runtime_level
 
 ALL_SERVICES = [
     "analyser", "zerodha", "intelligence", "fno", "notification", "common",
@@ -24,7 +24,10 @@ ALL_SERVICES = [
 ]
 
 
+@guard
 async def _handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not debug_chat_only(update):
+        return
     from notification.commands._helpers import get_redis
 
     redis = get_redis()
@@ -33,11 +36,15 @@ async def _handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not args:
         lines = [f"<b>Log Levels</b>"]
         for svc in sorted(ALL_SERVICES):
-            override = _RUNTIME_LEVEL_OVERRIDES.get(svc, "")
-            if override:
-                lines.append(f"  {svc}: <b>{override}</b> (runtime)")
-            else:
-                lines.append(f"  {svc}: <i>default</i>")
+            try:
+                val = redis.get(f"service:log_level:{svc}")
+                if val:
+                    level = val.decode() if isinstance(val, bytes) else val
+                    lines.append(f"  {svc}: <b>{level}</b>")
+                else:
+                    lines.append(f"  {svc}: <i>default</i>")
+            except Exception:
+                lines.append(f"  {svc}: <i>N/A</i>")
         lines.append("")
         lines.append("Use /loglevel &lt;service&gt; &lt;level&gt; to change")
         await context.bot.send_message(
@@ -87,5 +94,5 @@ async def _handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 HANDLERS = [
-    ("loglevel", guard(debug_chat_only(_handler))),
+    ("loglevel", _handler),
 ]
