@@ -164,14 +164,14 @@ class TestTryLoadInstruments:
         redis.hget.return_value = None
         assert pt_main.try_load_instruments(redis) is None
 
-    @patch("zerodha.zerodha_connect.KiteConnect")
+    @patch("lib.zerodha.zerodha_connect.KiteConnect")
     def test_returns_none_on_fetch_exception(self, mock_kite_cls):
         redis = MagicMock()
         redis.hget.return_value = "some-enctoken"
         mock_kite_cls.return_value.instruments.side_effect = Exception("network error")
         assert pt_main.try_load_instruments(redis) is None
 
-    @patch("zerodha.zerodha_connect.KiteConnect")
+    @patch("lib.zerodha.zerodha_connect.KiteConnect")
     def test_builds_and_saves_cache_on_success(self, mock_kite_cls):
         redis = MagicMock()
         redis.hget.return_value = "some-enctoken"

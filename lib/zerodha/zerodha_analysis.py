@@ -1,4 +1,4 @@
-from zerodha.zerodha_ticker import KiteTicker
+from .zerodha_ticker import KiteTicker
 import common.shared as shared
 import time
 from common.Stock import Stock

@@ -4,7 +4,7 @@ import pytest
 from unittest.mock import MagicMock, patch
 from datetime import datetime, time as dtime
 
-from zerodha.live_stock_engine import LiveStockEngine
+from lib.zerodha.live_stock_engine import LiveStockEngine
 from intelligence.signal import Direction, SignalStrength
 
 
@@ -36,11 +36,11 @@ class TestTickThrottle:
     def test_second_call_within_interval_is_skipped(self):
         engine, bus = _engine()
         s = _stock()
-        with patch("zerodha.live_stock_engine.time.time", return_value=1000.0):
+        with patch("lib.zerodha.live_stock_engine.time.time", return_value=1000.0):
             engine.on_tick(s)
         first_call_count = bus.emit.call_count
         # Same second — must be below TICK_INTERVAL
-        with patch("zerodha.live_stock_engine.time.time", return_value=1000.1):
+        with patch("lib.zerodha.live_stock_engine.time.time", return_value=1000.1):
             engine.on_tick(s)
         assert bus.emit.call_count == first_call_count  # no new emit
 
@@ -48,11 +48,11 @@ class TestTickThrottle:
         engine, bus = _engine()
         # Build VWAP side so a cross fires on second call
         s = _stock(last_price=2900.0, vwap=2950.0)   # price < vwap → "below"
-        with patch("zerodha.live_stock_engine.time.time", return_value=1000.0):
+        with patch("lib.zerodha.live_stock_engine.time.time", return_value=1000.0):
             engine.on_tick(s)
         # Beyond TICK_INTERVAL (5 s) and beyond SIGNAL_COOLDOWN (300 s)
         s2 = _stock(last_price=3000.0, vwap=2950.0)   # price > vwap → cross to "above"
-        with patch("zerodha.live_stock_engine.time.time", return_value=1310.0):
+        with patch("lib.zerodha.live_stock_engine.time.time", return_value=1310.0):
             engine.on_tick(s2)
         assert bus.emit.call_count >= 1
 
@@ -78,7 +78,7 @@ class TestOnTickGuards:
 class TestVwapCross:
     def _run(self, engine, symbol, price, vwap, t=0.0):
         s = _stock(symbol=symbol, last_price=price, vwap=vwap)
-        with patch("zerodha.live_stock_engine.time.time", return_value=t):
+        with patch("lib.zerodha.live_stock_engine.time.time", return_value=t):
             engine._check_vwap_cross(symbol, price, s.zerodha_data)
 
     def test_first_call_no_previous_side_no_emit(self):
@@ -119,7 +119,7 @@ class TestVwapCross:
 class TestBidAskImbalance:
     def _run(self, engine, symbol, buy_q, sell_q, t=400.0):
         data = {"total_buy_quantity": buy_q, "total_sell_quantity": sell_q}
-        with patch("zerodha.live_stock_engine.time.time", return_value=t):
+        with patch("lib.zerodha.live_stock_engine.time.time", return_value=t):
             engine._check_bid_ask_imbalance(symbol, 100.0, data)
 
     def test_high_ratio_emits_bullish(self):
@@ -156,14 +156,14 @@ class TestORBBuild:
     def test_during_opening_range_no_emit(self):
         engine, bus = _engine()
         mock_time = dtime(9, 20)
-        with patch("zerodha.live_stock_engine.datetime") as mock_dt:
+        with patch("lib.zerodha.live_stock_engine.datetime") as mock_dt:
             mock_dt.now.return_value.time.return_value = mock_time
             engine._check_orb("X", 100.0, {})
         bus.emit.assert_not_called()
 
     def test_orb_high_tracked(self):
         engine, bus = _engine()
-        with patch("zerodha.live_stock_engine.datetime") as mock_dt:
+        with patch("lib.zerodha.live_stock_engine.datetime") as mock_dt:
             mock_dt.now.return_value.time.return_value = dtime(9, 20)
             engine._check_orb("X", 105.0, {})
             engine._check_orb("X", 110.0, {})
@@ -171,7 +171,7 @@ class TestORBBuild:
 
     def test_orb_low_tracked(self):
         engine, bus = _engine()
-        with patch("zerodha.live_stock_engine.datetime") as mock_dt:
+        with patch("lib.zerodha.live_stock_engine.datetime") as mock_dt:
             mock_dt.now.return_value.time.return_value = dtime(9, 20)
             engine._check_orb("X", 105.0, {})
             engine._check_orb("X", 100.0, {})
@@ -185,9 +185,9 @@ class TestORBBreakout:
         engine._orb[symbol] = {"high": high, "low": low}
 
     def _run_post930(self, engine, symbol, price, t=400.0):
-        with patch("zerodha.live_stock_engine.datetime") as mock_dt:
+        with patch("lib.zerodha.live_stock_engine.datetime") as mock_dt:
             mock_dt.now.return_value.time.return_value = dtime(9, 35)
-            with patch("zerodha.live_stock_engine.time.time", return_value=t):
+            with patch("lib.zerodha.live_stock_engine.time.time", return_value=t):
                 engine._check_orb(symbol, price, {})
 
     def test_breakout_above_high_emits_bullish_strong(self):
@@ -226,9 +226,9 @@ class TestORBBreakout:
 class TestDayHighLow:
     def _run(self, engine, symbol, price, high, low, t_time, t_ts=0.0):
         data = {"high": high, "low": low}
-        with patch("zerodha.live_stock_engine.datetime") as mock_dt:
+        with patch("lib.zerodha.live_stock_engine.datetime") as mock_dt:
             mock_dt.now.return_value.time.return_value = t_time
-            with patch("zerodha.live_stock_engine.time.time", return_value=t_ts):
+            with patch("lib.zerodha.live_stock_engine.time.time", return_value=t_ts):
                 engine._check_day_high_low(symbol, price, data)
 
     def test_new_day_high_after_945_emits_bullish(self):
@@ -264,7 +264,7 @@ class TestDayHighLow:
 
     def test_missing_high_low_data_no_emit(self):
         engine, bus = _engine()
-        with patch("zerodha.live_stock_engine.datetime") as mock_dt:
+        with patch("lib.zerodha.live_stock_engine.datetime") as mock_dt:
             mock_dt.now.return_value.time.return_value = dtime(10, 0)
             engine._check_day_high_low("X", 100.0, {})
         bus.emit.assert_not_called()
@@ -279,20 +279,20 @@ class TestSignalCooldown:
     def test_second_signal_within_cooldown_not_emitted(self):
         engine, bus = _engine()
         # First emit: _BASE - 0.0_default = 1M >= 300 → fires
-        with patch("zerodha.live_stock_engine.time.time", return_value=self._BASE):
+        with patch("lib.zerodha.live_stock_engine.time.time", return_value=self._BASE):
             engine._emit("X", "vwap_cross", Direction.BULLISH, SignalStrength.MODERATE, {})
         first = bus.emit.call_count   # 1
         # Second attempt 100s later — within 300s cooldown → blocked
-        with patch("zerodha.live_stock_engine.time.time", return_value=self._BASE + 100.0):
+        with patch("lib.zerodha.live_stock_engine.time.time", return_value=self._BASE + 100.0):
             engine._emit("X", "vwap_cross", Direction.BULLISH, SignalStrength.MODERATE, {})
         assert bus.emit.call_count == first
 
     def test_signal_emitted_after_cooldown_expires(self):
         engine, bus = _engine()
-        with patch("zerodha.live_stock_engine.time.time", return_value=self._BASE):
+        with patch("lib.zerodha.live_stock_engine.time.time", return_value=self._BASE):
             engine._emit("X", "vwap_cross", Direction.BULLISH, SignalStrength.MODERATE, {})
         # 400s later — beyond 300s cooldown → fires again
-        with patch("zerodha.live_stock_engine.time.time", return_value=self._BASE + 400.0):
+        with patch("lib.zerodha.live_stock_engine.time.time", return_value=self._BASE + 400.0):
             engine._emit("X", "vwap_cross", Direction.BULLISH, SignalStrength.MODERATE, {})
         assert bus.emit.call_count == 2
 

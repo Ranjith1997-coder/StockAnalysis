@@ -189,7 +189,7 @@ def try_load_instruments(redis) -> "dict | None":
     if not enctoken:
         return None
     try:
-        from zerodha.zerodha_connect import KiteConnect
+        from lib.zerodha.zerodha_connect import KiteConnect
         kc = KiteConnect(constant.DUMMY_API_KEY_ZERODHA, enctoken=enctoken)
         raw_instruments = kc.instruments()
     except Exception as e:

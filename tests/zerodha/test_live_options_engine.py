@@ -3,14 +3,14 @@ import time
 import pytest
 from unittest.mock import MagicMock, patch, call
 
-from zerodha.live_options_engine import LiveOptionsEngine
+from lib.zerodha.live_options_engine import LiveOptionsEngine
 from common.constants import LIVE_OPTIONS_INDICES
 from intelligence.signal import Direction
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-_TELEGRAM = "zerodha.live_options_engine.TELEGRAM_NOTIFICATIONS"
+_TELEGRAM = "lib.zerodha.live_options_engine.TELEGRAM_NOTIFICATIONS"
 _APP_CTX  = "common.shared.app_ctx"
 
 

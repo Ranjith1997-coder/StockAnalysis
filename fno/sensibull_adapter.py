@@ -33,7 +33,7 @@ logger = get_logger("fno")
 
 if TYPE_CHECKING:
     from common.Stock import Stock
-    from zerodha.live_options_engine import LiveOptionsEngine
+    from lib.zerodha.live_options_engine import LiveOptionsEngine
 
 # Sensibull key → internal side key
 _SIDE_MAP = {"call": "CE", "put": "PE"}
