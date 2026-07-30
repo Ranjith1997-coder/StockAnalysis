@@ -15,7 +15,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from datetime import datetime, timedelta
-from backtest.backtest import Backtester
+from tools.backtest.backtest import Backtester
 from services.analysis_engine.analyser.TechnicalAnalyser import TechnicalAnalyser
 from services.analysis_engine.analyser.VolumeAnalyser import VolumeAnalyser
 from services.analysis_engine.analyser.candleStickPatternAnalyser import CandleStickAnalyser

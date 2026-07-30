@@ -24,7 +24,7 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from backtest.optimizer import ThresholdOptimizer, BulkOptimizer, SEARCH_SPACES
+from tools.backtest.optimizer import ThresholdOptimizer, BulkOptimizer, SEARCH_SPACES
 import common.shared as shared
 
 
@@ -468,7 +468,7 @@ def example_8_apply_and_backtest():
     """
     print("\n=== Example 8: Optimise → Apply → Backtest ===\n")
 
-    from backtest.backtest import Backtester
+    from tools.backtest.backtest import Backtester
     from services.analysis_engine.analyser.TechnicalAnalyser import TechnicalAnalyser
 
     # Step 1: Optimise on a large, diverse stock pool
