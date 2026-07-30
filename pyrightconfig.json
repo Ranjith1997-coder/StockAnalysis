@@ -11,7 +11,7 @@
         "nse",
         "post_market_analysis",
         "scripts",
-        "sentiment",
+        "tools/sentiment",
         "lib/zerodha",
         "*.py"
     ],
