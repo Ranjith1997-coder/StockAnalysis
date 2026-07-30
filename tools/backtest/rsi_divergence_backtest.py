@@ -1,28 +1,26 @@
 """
-Simple backtest for Bollinger Band momentum strategy with existing parameters.
+Backtest for RSI Divergence strategy.
 
-This script tests the current BB strategy implementation with default parameters:
-- BB_WINDOW = 20
-- BB_NUM_STD = 2.0
+RSI Divergence Logic:
+- Bullish Divergence: Price makes lower low, but RSI makes higher low → BULLISH
+- Bearish Divergence: Price makes higher high, but RSI makes lower high → BEARISH
 
-Momentum Strategy Logic:
-- Price > Upper Band → BULLISH (momentum breakout)
-- Price < Lower Band → BEARISH (momentum breakdown)
+This is a stronger reversal signal than simple overbought/oversold.
 
 Usage:
-    python backtest/bb_backtest_simple.py
+    python backtest/rsi_divergence_backtest.py
 """
 
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from backtest.backtest import Backtester
+from tools.backtest.backtest import Backtester
 from services.analysis_engine.analyser.TechnicalAnalyser import TechnicalAnalyser
 import common.shared as shared
 
 
-# Initialize the shared context for positional mode (same as optimizer does)
+# Initialize the shared context for positional mode
 shared.app_ctx.mode = shared.Mode.POSITIONAL  # type: ignore[assignment]
 
 
@@ -37,22 +35,23 @@ START_DATE = "2024-01-01"
 END_DATE = "2026-02-14"
 
 
-def run_bb_backtest():
+def run_rsi_divergence_backtest():
     """
-    Run backtest for Bollinger Band momentum strategy with existing parameters.
+    Run backtest for RSI Divergence strategy.
     """
     print("\n" + "="*70)
-    print("BOLLINGER BAND MOMENTUM STRATEGY BACKTEST")
+    print("RSI DIVERGENCE STRATEGY BACKTEST")
     print("="*70)
     
     # Show current parameters
     print(f"\nCurrent Parameters:")
-    print(f"  BB_WINDOW = {TechnicalAnalyser.BB_WINDOW}")
-    print(f"  BB_NUM_STD = {TechnicalAnalyser.BB_NUM_STD}")
+    print(f"  RSI_DIVERGENCE_LOOKBACK = {TechnicalAnalyser.RSI_DIVERGENCE_LOOKBACK}")
+    print(f"  RSI_DIVERGENCE_SWING_ORDER = {TechnicalAnalyser.RSI_DIVERGENCE_SWING_ORDER}")
+    print(f"  RSI_LOOKUP_PERIOD = {TechnicalAnalyser.RSI_LOOKUP_PERIOD}")
     
-    print(f"\nStrategy Logic (Momentum):")
-    print(f"  Price > Upper Band → BULLISH (momentum continuation)")
-    print(f"  Price < Lower Band → BEARISH (momentum breakdown)")
+    print(f"\nStrategy Logic:")
+    print(f"  Bullish Divergence: Price LL + RSI HL → BULLISH")
+    print(f"  Bearish Divergence: Price HH + RSI LH → BEARISH")
     
     print(f"\nTest Stocks: {TEST_STOCKS}")
     print(f"Period: {START_DATE} to {END_DATE}")
@@ -60,9 +59,9 @@ def run_bb_backtest():
     # Initialize analyser
     analyser = TechnicalAnalyser()
     
-    def bb_analyzer(stock):
+    def rsi_divergence_analyzer(stock):
         """Analyzer method for backtester."""
-        return analyser.analyse_Bolinger_band(stock)
+        return analyser.analyse_rsi_divergence(stock)
     
     print("\n" + "-"*70)
     print("Running backtest...")
@@ -78,14 +77,14 @@ def run_bb_backtest():
         try:
             backtester = Backtester(
                 stock_symbols=symbol,
-                analyzer_methods=bb_analyzer,
+                analyzer_methods=rsi_divergence_analyzer,
                 start_date=START_DATE,
                 end_date=END_DATE,
                 interval="day",
                 initial_capital=100000,
                 position_size=20000,
-                stop_loss_pct=3.0,
-                target_pct=5.0,
+                stop_loss_pct=1.0,  # 1% stop loss
+                target_pct=3.0,  # 3% target (3:1 reward/risk)
                 allow_short=True,
             )
             
@@ -125,44 +124,30 @@ def run_bb_backtest():
     print(f"Average Win: ₹{avg_win:.2f}")
     print(f"Average Loss: ₹{avg_loss:.2f}")
     
-    if total_losses > 0 and avg_loss != 0:
-        profit_factor = abs(total_wins * avg_win / (total_losses * avg_loss)) if avg_loss != 0 else 0
-        print(f"Profit Factor: {profit_factor:.2f}")
+    # Calculate profit factor
+    gross_profit = sum(t.pnl for t in [t for r in all_results for t in r.trades if t.pnl > 0])
+    gross_loss = abs(sum(t.pnl for t in [t for r in all_results for t in r.trades if t.pnl < 0]))
+    profit_factor = gross_profit / gross_loss if gross_loss > 0 else float('inf')
+    print(f"Profit Factor: {profit_factor:.2f}")
     
-    # Print detailed trades for first stock
-    if all_results and len(all_results[0].trades) > 0:
+    # Show sample trades
+    if all_results and all_results[0].trades:
         print("\n" + "-"*70)
         print(f"Sample Trades (First Stock: {TEST_STOCKS[0]}):")
         print("-"*70)
-        for i, trade in enumerate(all_results[0].trades[:10]):  # Show first 10 trades
+        for i, trade in enumerate(all_results[0].trades[:10]):
             print(f"  {i+1}. {trade.signal_type}: Entry ₹{trade.entry_price:.2f} → Exit ₹{trade.exit_price:.2f} "
                   f"(PnL: ₹{trade.pnl:.2f}, {trade.exit_reason})")
-    
-    return all_results
-
-
-def main():
-    """Main entry point."""
-    print("\n" + "="*70)
-    print("BOLLINGER BAND STRATEGY BACKTEST")
-    print("="*70)
-    print("\nThis backtest uses the MOMENTUM approach:")
-    print("  - Price > Upper Band → BULLISH")
-    print("  - Price < Lower Band → BEARISH")
-    print("\nParameters: BB_WINDOW=20, BB_NUM_STD=2.0")
-    
-    results = run_bb_backtest()
     
     print("\n" + "="*70)
     print("NEXT STEPS")
     print("="*70)
-    print("\n1. If profit factor > 1.0, the momentum strategy is working")
-    print("2. Run optimizer to find better parameters:")
-    print("   python backtest/bb_momentum_backtest.py")
-    print("3. Compare with mean reversion approach if needed")
+    print("\n1. Compare with RSI overbought/oversold backtest")
+    print("2. If profit factor > 1.0, divergence is working")
+    print("3. Consider combining RSI overbought/oversold + divergence for stronger signals")
     
-    return results
+    return all_results
 
 
 if __name__ == "__main__":
-    main()
+    run_rsi_divergence_backtest()

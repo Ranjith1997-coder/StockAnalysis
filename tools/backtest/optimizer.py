@@ -14,7 +14,7 @@ Features:
   - Human-readable report + JSON export of best parameters.
 
 Usage:
-    from backtest.optimizer import ThresholdOptimizer, SEARCH_SPACES
+    from tools.backtest.optimizer import ThresholdOptimizer, SEARCH_SPACES
     opt = ThresholdOptimizer(...)
     best = opt.optimize()
 """
@@ -42,7 +42,7 @@ except ImportError:
         "  pip install optuna"
     )
 
-from backtest.backtest import Backtester, BacktestResult
+from tools.backtest.backtest import Backtester, BacktestResult
 from services.analysis_engine.analyser.TechnicalAnalyser import TechnicalAnalyser
 from services.analysis_engine.analyser.candleStickPatternAnalyser import CandleStickAnalyser
 from services.analysis_engine.analyser.VolumeAnalyser import VolumeAnalyser
@@ -499,7 +499,7 @@ class ThresholdOptimizer:
                     open_positions.remove(p)
 
             # Open new positions
-            from backtest.backtest import Trade
+            from tools.backtest.backtest import Trade
 
             if len(open_positions) < bt.max_positions:
                 qty = int(bt.calculate_position_quantity(current_price, available_capital))

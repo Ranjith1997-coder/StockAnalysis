@@ -1,24 +1,19 @@
 """
-Simple backtest for RSI strategy with existing parameters.
+Backtest for Stochastic Oscillator strategy.
 
-This script tests the current RSI strategy implementation with default parameters:
-- RSI_UPPER_THRESHOLD = 85 (positional) / 80 (intraday)
-- RSI_LOWER_THRESHOLD = 30 (positional) / 20 (intraday)
-- RSI_LOOKUP_PERIOD = 14
-
-RSI Strategy Logic:
-- RSI > Upper Threshold → BEARISH (overbought)
-- RSI < Lower Threshold → BULLISH (oversold)
+Stochastic Strategy Logic:
+- BULLISH: %K crosses above %D while in oversold zone (<=20)
+- BEARISH: %K crosses below %D while in overbought zone (>=80)
 
 Usage:
-    python backtest/rsi_backtest_simple.py
+    python backtest/stochastic_backtest.py
 """
 
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from backtest.backtest import Backtester
+from tools.backtest.backtest import Backtester
 from services.analysis_engine.analyser.TechnicalAnalyser import TechnicalAnalyser
 import common.shared as shared
 
@@ -38,34 +33,35 @@ START_DATE = "2024-01-01"
 END_DATE = "2026-02-14"
 
 
-def run_rsi_backtest():
+def run_stochastic_backtest():
     """
-    Run backtest for RSI strategy with existing parameters.
+    Run backtest for Stochastic Oscillator strategy.
     """
     print("\n" + "="*70)
-    print("RSI STRATEGY BACKTEST")
+    print("STOCHASTIC OSCILLATOR STRATEGY BACKTEST")
     print("="*70)
     
     # Show current parameters
     print(f"\nCurrent Parameters:")
-    print(f"  RSI_UPPER_THRESHOLD = {TechnicalAnalyser.RSI_UPPER_THRESHOLD}")
-    print(f"  RSI_LOWER_THRESHOLD = {TechnicalAnalyser.RSI_LOWER_THRESHOLD}")
-    print(f"  RSI_LOOKUP_PERIOD = {TechnicalAnalyser.RSI_LOOKUP_PERIOD}")
-    print(f"  RSI_TREND_PERIODS = {TechnicalAnalyser.RSI_TREND_PERIODS}")
+    print(f"  STOCHASTIC_K_PERIOD = {TechnicalAnalyser.STOCHASTIC_K_PERIOD}")
+    print(f"  STOCHASTIC_D_PERIOD = {TechnicalAnalyser.STOCHASTIC_D_PERIOD}")
+    print(f"  STOCHASTIC_UPPER = {TechnicalAnalyser.STOCHASTIC_UPPER}")
+    print(f"  STOCHASTIC_LOWER = {TechnicalAnalyser.STOCHASTIC_LOWER}")
     
     print(f"\nStrategy Logic:")
-    print(f"  RSI > {TechnicalAnalyser.RSI_UPPER_THRESHOLD} → BEARISH (overbought)")
-    print(f"  RSI < {TechnicalAnalyser.RSI_LOWER_THRESHOLD} → BULLISH (oversold)")
+    print(f"  BULLISH: %K crosses above %D while %K <= {TechnicalAnalyser.STOCHASTIC_LOWER}")
+    print(f"  BEARISH: %K crosses below %D while %K >= {TechnicalAnalyser.STOCHASTIC_UPPER}")
     
     print(f"\nTest Stocks: {TEST_STOCKS}")
     print(f"Period: {START_DATE} to {END_DATE}")
+    print(f"Risk/Reward: 3:1 (3% target, 1% stop loss)")
     
     # Initialize analyser
     analyser = TechnicalAnalyser()
     
-    def rsi_analyzer(stock):
+    def stochastic_analyzer(stock):
         """Analyzer method for backtester."""
-        return analyser.analyse_rsi(stock)
+        return analyser.analyse_stochastic(stock)
     
     print("\n" + "-"*70)
     print("Running backtest...")
@@ -81,14 +77,14 @@ def run_rsi_backtest():
         try:
             backtester = Backtester(
                 stock_symbols=symbol,
-                analyzer_methods=rsi_analyzer,
+                analyzer_methods=stochastic_analyzer,
                 start_date=START_DATE,
                 end_date=END_DATE,
                 interval="day",
                 initial_capital=100000,
                 position_size=20000,
-                stop_loss_pct=2.0,  # 1% stop loss
-                target_pct=3.0,  # 5% target (5:1 reward/risk)
+                stop_loss_pct=1.0,
+                target_pct=3.0,
                 allow_short=True,
             )
             
@@ -117,54 +113,47 @@ def run_rsi_backtest():
     print("="*70)
     
     win_rate = (total_wins / total_trades * 100) if total_trades > 0 else 0
-    avg_win = total_pnl / total_wins if total_wins > 0 else 0
-    avg_loss = total_pnl / total_losses if total_losses > 0 else 0
     
     print(f"\nTotal Trades: {total_trades}")
     print(f"Winning Trades: {total_wins}")
     print(f"Losing Trades: {total_losses}")
     print(f"Win Rate: {win_rate:.1f}%")
     print(f"Total PnL: ₹{total_pnl:.2f}")
-    print(f"Average Win: ₹{avg_win:.2f}")
-    print(f"Average Loss: ₹{avg_loss:.2f}")
     
-    if total_losses > 0 and avg_loss != 0:
-        profit_factor = abs(total_wins * avg_win / (total_losses * avg_loss)) if avg_loss != 0 else 0
-        print(f"Profit Factor: {profit_factor:.2f}")
+    # Calculate profit factor
+    gross_profit = sum(t.pnl for t in [t for r in all_results for t in r.trades if t.pnl > 0])
+    gross_loss = abs(sum(t.pnl for t in [t for r in all_results for t in r.trades if t.pnl < 0]))
+    profit_factor = gross_profit / gross_loss if gross_loss > 0 else float('inf')
+    print(f"Profit Factor: {profit_factor:.2f}")
     
-    # Print detailed trades for first stock
-    if all_results and len(all_results[0].trades) > 0:
+    # Show sample trades
+    if all_results and all_results[0].trades:
         print("\n" + "-"*70)
         print(f"Sample Trades (First Stock: {TEST_STOCKS[0]}):")
         print("-"*70)
-        for i, trade in enumerate(all_results[0].trades[:10]):  # Show first 10 trades
+        for i, trade in enumerate(all_results[0].trades[:10]):
             print(f"  {i+1}. {trade.signal_type}: Entry ₹{trade.entry_price:.2f} → Exit ₹{trade.exit_price:.2f} "
                   f"(PnL: ₹{trade.pnl:.2f}, {trade.exit_reason})")
+    
+    print("\n" + "="*70)
+    print("ANALYSIS")
+    print("="*70)
+    
+    if profit_factor > 1.2:
+        print("\n✅ Strategy is PROFITABLE (PF > 1.2)")
+    elif profit_factor > 1.0:
+        print("\n⚠️ Strategy is MARGINAL (PF ~ 1.0)")
+    else:
+        print("\n❌ Strategy is NOT PROFITABLE (PF < 1.0)")
+    
+    print("\nPossible Improvements:")
+    print("1. Add trend filter (only signal reversals against trend)")
+    print("2. Add confirmation filter (require 2+ candles in zone)")
+    print("3. Add divergence detection")
+    print("4. Adjust thresholds (tighter zones)")
     
     return all_results
 
 
-def main():
-    """Main entry point."""
-    print("\n" + "="*70)
-    print("RSI STRATEGY BACKTEST")
-    print("="*70)
-    print("\nThis backtest tests the RSI overbought/oversold strategy:")
-    print("  - RSI > Upper Threshold → BEARISH (expect reversal)")
-    print("  - RSI < Lower Threshold → BULLISH (expect reversal)")
-    
-    results = run_rsi_backtest()
-    
-    print("\n" + "="*70)
-    print("NEXT STEPS")
-    print("="*70)
-    print("\n1. If profit factor > 1.0, the RSI strategy is working")
-    print("2. Run optimizer to find better parameters:")
-    print("   python backtest/optimizer.py")
-    print("3. Consider adding divergence detection for better signals")
-    
-    return results
-
-
 if __name__ == "__main__":
-    main()
+    run_stochastic_backtest()

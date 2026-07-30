@@ -18,7 +18,7 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from backtest.backtest import Backtester
+from tools.backtest.backtest import Backtester
 from services.analysis_engine.analyser.TechnicalAnalyser import TechnicalAnalyser
 import common.shared as shared
 

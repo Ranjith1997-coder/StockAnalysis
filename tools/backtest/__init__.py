@@ -2,8 +2,8 @@
 Backtesting infrastructure for stock trading strategies
 """
 
-from backtest.backtest import Backtester, BacktestResult, Trade
-from backtest.optimizer import ThresholdOptimizer, BulkOptimizer, SEARCH_SPACES
+from tools.backtest.backtest import Backtester, BacktestResult, Trade
+from tools.backtest.optimizer import ThresholdOptimizer, BulkOptimizer, SEARCH_SPACES
 
 __all__ = [
     'Backtester', 'BacktestResult', 'Trade',

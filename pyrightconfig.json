@@ -2,7 +2,7 @@
     "include": [
         "lib/fno",
         "services/analysis_engine/analyser",
-        "backtest",
+        "tools/backtest",
         "common",
         
         "intraday",
