@@ -319,7 +319,7 @@ class Backtester:
             return data
             
         except Exception as e:
-            logger.error(f"Error loading data for {stock_symbol}: {e}")
+            logger.error(f"Error loading data for {stock_symbol}: {e}", exc_info=True)
             raise
     
     def create_stock_object(self, stock_symbol: str, price_data: pd.DataFrame) -> Stock:
@@ -360,7 +360,7 @@ class Backtester:
             try:
                 analyzer_method(stock)
             except Exception as e:
-                logger.error(f"Error running analyzer {analyzer_method.__name__}: {e}")
+                logger.error(f"Error running analyzer {analyzer_method.__name__}: {e}", exc_info=True)
         
         return stock.analysis
     
@@ -500,7 +500,7 @@ class Backtester:
                 result = self.run_backtest(stock_symbol)
                 self.results[stock_symbol] = result
             except Exception as e:
-                logger.error(f"Error backtesting {stock_symbol}: {e}")
+                logger.error(f"Error backtesting {stock_symbol}: {e}", exc_info=True)
         
         return self.results
     

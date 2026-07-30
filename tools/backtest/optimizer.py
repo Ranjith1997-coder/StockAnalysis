@@ -360,7 +360,7 @@ class ThresholdOptimizer:
                 if test_start and test_end:
                     self._test_data[sym] = _data_cache.get(sym, test_start, test_end)
             except Exception as e:
-                logger.error(f"Failed to load data for {sym}: {e}")
+                logger.error(f"Failed to load data for {sym}: {e}", exc_info=True)
 
         # Results storage
         self.study: Optional[optuna.Study] = None
@@ -676,7 +676,7 @@ class ThresholdOptimizer:
         self._init_app_context()
 
         if not self.search_space:
-            logger.error("No search space defined — nothing to optimize.")
+            logger.error("No search space defined — nothing to optimize.", exc_info=True)
             return {"best_params": {}, "train_metric": 0, "test_metric": None}
 
         n_params = 1
@@ -1072,7 +1072,7 @@ class BulkOptimizer:
                 json.dump(export, f, indent=2, default=str)
             logger.info(f"Results for {key} saved to {self.output_file}")
         except IOError as e:
-            logger.error(f"Failed to write results to {self.output_file}: {e}")
+            logger.error(f"Failed to write results to {self.output_file}: {e}", exc_info=True)
 
     # ------------------------------------------------------------------
     def optimize_all(self) -> Dict[str, Dict[str, Any]]:
@@ -1125,7 +1125,7 @@ class BulkOptimizer:
                     self.optimizers[key] = opt
                     self.results[key] = result
                 except Exception as e:
-                    logger.error(f"Optimisation failed for {key}: {e}")
+                    logger.error(f"Optimisation failed for {key}: {e}", exc_info=True)
                     self.results[key] = {"error": str(e)}
 
                 # Persist after every method (success or failure)

@@ -11,6 +11,10 @@ Usage:
     engineer = FeatureEngineer(config)
     features_df = engineer.generate_features(ohlcv_df, index_data)
 """
+from lib.logging_util import get_logger
+logger = get_logger("ml-pipeline")
+
+
 
 from typing import Dict, List, Optional, Tuple, Union
 import pandas as pd

@@ -14,6 +14,10 @@ Usage:
     preprocessor = DataPreprocessor(config)
     X_train, X_test, y_train, y_test = preprocessor.prepare_data(df)
 """
+from lib.logging_util import get_logger
+logger = get_logger("ml-pipeline")
+
+
 
 from typing import Dict, List, Optional, Tuple, Union
 import pandas as pd
