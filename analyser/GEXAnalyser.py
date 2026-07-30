@@ -35,7 +35,8 @@ from statistics import mean, stdev
 
 from analyser.Analyser import BaseAnalyzer
 from common.Stock import Stock
-from common.logging_util import logger
+from services.common.logging import get_logger
+logger = get_logger("analyser")
 import common.constants as constant
 import common.shared as shared
 

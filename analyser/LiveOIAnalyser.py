@@ -1,5 +1,6 @@
 from collections import deque
-from common.logging_util import logger
+from services.common.logging import get_logger
+logger = get_logger("analyser")
 from analyser.LiveAlertFormatter import F
 
 from typing import TYPE_CHECKING

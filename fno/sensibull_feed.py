@@ -27,7 +27,8 @@ from typing import Callable
 
 import websocket
 
-from common.logging_util import logger
+from services.common.logging import get_logger
+logger = get_logger("fno")
 
 
 WS_URL = "wss://wsrelay.sensibull.com/broker/1?consumerType=platform_no_plan"

@@ -18,7 +18,8 @@ from typing import Optional
 
 import pandas as pd
 
-from common.logging_util import logger
+from services.common.logging import get_logger
+logger = get_logger("data-gateway")
 from zerodha.zerodha_connect import KiteConnect
 from common import constants as constant
 from services.common.rate_limiter import get_zerodha_limiter

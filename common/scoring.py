@@ -6,7 +6,8 @@ based on the strength and alignment of various analysis signals.
 """
 
 import common.constants as constants
-from common.logging_util import logger
+from services.common.logging import get_logger
+logger = get_logger("common")
 from enum import Enum
 from typing import Dict, Tuple, Optional
 from dataclasses import dataclass

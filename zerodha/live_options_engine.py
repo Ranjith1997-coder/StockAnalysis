@@ -11,7 +11,8 @@ and dispatches to the dedicated live-options Telegram channel.
 import time
 import threading
 
-from common.logging_util import logger
+from services.common.logging import get_logger
+logger = get_logger("zerodha")
 from common.Stock import Stock
 from analyser.LiveOIAnalyser import LiveOIAnalyser
 from analyser.LiveStraddleAnalyser import LiveStraddleAnalyser

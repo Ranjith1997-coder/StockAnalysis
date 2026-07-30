@@ -24,7 +24,8 @@ from services.common.stock_loader import (
 )
 from services.common.serialization import safe_json_dumps, safe_json_loads
 from services.common.metrics import incr_stock, set_stock, incr_system, incr_daily
-from common.logging_util import logger
+from services.common.logging import get_logger
+logger = get_logger("analysis-engine")
 
 
 def _result_dict(
@@ -41,6 +42,7 @@ def _result_dict(
     is_52w_low: bool,
     error: str,
     duration_ms: int,
+    mode_str: str = "intraday",
 ) -> dict:
     return {
         "job_id": job_id,
@@ -56,6 +58,7 @@ def _result_dict(
         "is_52w_low": str(is_52w_low).lower(),
         "error": error,
         "duration_ms": str(duration_ms),
+        "mode": mode_str,
         "timestamp": str(time.time()),
     }
 
@@ -150,6 +153,7 @@ def process_job(
             "NO_DATA", False, "", "{}", "{}",
             False, False, "",
             int((time.time() - start) * 1000),
+            mode_str,
         )
 
     min_rows = 3 if mode == shared.Mode.INTRADAY else 2
@@ -161,6 +165,7 @@ def process_job(
             "NO_DATA", False, "", "{}", "{}",
             False, False, "",
             int((time.time() - start) * 1000),
+            mode_str,
         )
 
     stock.reset_analysis()
@@ -176,6 +181,7 @@ def process_job(
                 "SUCCESS", False, "", "{}", "{}",
                 False, False, "",
                 int((time.time() - start) * 1000),
+                mode_str,
             )
 
     if symbol in constant.INDEX_ANALYSIS_EXCLUDE:
@@ -185,6 +191,7 @@ def process_job(
             "SUCCESS", False, "", "{}", "{}",
             False, False, "",
             int((time.time() - start) * 1000),
+            mode_str,
         )
 
     sensibull_ok = load_sensibull_from_redis(redis, stock)
@@ -196,6 +203,7 @@ def process_job(
             "NO_DATA", False, "", "{}", "{}",
             False, False, "",
             int((time.time() - start) * 1000),
+            mode_str,
         )
 
     load_zerodha_from_redis(redis, stock)
@@ -227,6 +235,7 @@ def process_job(
             "ERROR", False, "", "{}", "{}",
             False, False, str(e),
             int((time.time() - start) * 1000),
+            mode_str,
         )
 
     message = ""
@@ -259,4 +268,5 @@ def process_job(
         analysis_json, score_result_json,
         is_52w_high, is_52w_low, "",
         duration_ms,
+        mode_str,
     )

@@ -109,6 +109,7 @@ class TestProcessJob:
         score = json.loads(result["score_result_json"])
         assert score["total_score"] == 150
         assert score["priority"] == "HIGH"
+        assert result["mode"] == "intraday"
 
         orchestrator.run_all_intraday.assert_called_once()
         orchestrator.generate_analysis_message.assert_called_once()
@@ -196,6 +197,7 @@ class TestProcessJob:
 
         assert result["result"] == "SUCCESS"
         assert result["trend_found"] == "false"
+        assert result["mode"] == "positional"
         orchestrator.run_all_intraday.assert_not_called()
         orchestrator.run_all_positional.assert_not_called()
 

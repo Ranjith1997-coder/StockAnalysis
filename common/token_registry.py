@@ -1,7 +1,8 @@
 from enum import Enum
 from dataclasses import dataclass, field
 from typing import Optional, Dict, List, Set, Tuple
-from common.logging_util import logger
+from services.common.logging import get_logger
+logger = get_logger("common")
 import threading
 import math
 

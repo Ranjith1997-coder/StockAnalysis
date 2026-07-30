@@ -2,7 +2,8 @@ import time
 from telegram.ext import ApplicationBuilder
 from telegram.error import NetworkError, TimedOut
 from common.constants import TELEGRAM_INTRADAY_TOKEN
-from common.logging_util import logger
+from services.common.logging import get_logger
+logger = get_logger("notification")
 from notification.commands import register_all
 from notification.commands._guard import init_guard
 from notification.commands.system import job_llm_budget_alert

@@ -19,7 +19,8 @@ from datetime import datetime, time as dtime
 
 from intelligence.signal import Signal, Direction, Layer, SignalStrength
 from intelligence.signal_bus import SignalBus
-from common.logging_util import logger
+from services.common.logging import get_logger
+logger = get_logger("zerodha")
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:

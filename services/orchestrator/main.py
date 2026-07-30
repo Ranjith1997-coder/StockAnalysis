@@ -15,7 +15,8 @@ from common.helperFunctions import *
 from common.market_calendar import is_trading_day
 from enum import Enum
 from time import sleep
-from common.logging_util import logger
+from services.common.logging import get_logger
+logger = get_logger("orchestrator")
 from typing import List, Tuple, Optional
 from dotenv import load_dotenv
 from notification.bot_listener import init_telegram_bot

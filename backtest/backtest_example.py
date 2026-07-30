@@ -198,8 +198,8 @@ def    example_5_candlestick_patterns():
     
     # Test all candlestick patterns
     analyzer_methods = [
-        candle_analyzer.singleCandleStickPattern,
-        candle_analyzer.doubleCandleStickPattern,
+        candle_analyzer.analyse_single_candle_momentum,
+        candle_analyzer.analyse_double_candle_reversal,
         candle_analyzer.tripleCandleStickPattern
     ]
     

@@ -46,7 +46,7 @@ class TestSingleCandlestickPattern:
         row = {"Open": 100.0, "High": 102.0, "Low": 100.0, "Close": 102.0, "Volume": 100_000}
         rows = [row] * 3
         s = self._make_stock_with_positional_candles(rows)
-        result = analyser.singleCandleStickPattern(s)
+        result = analyser.analyse_single_candle_momentum(s)
         assert result is True
         assert "BULLISH" in s.analysis
         assert "Single_candle_stick_pattern" in s.analysis["BULLISH"]
@@ -57,7 +57,7 @@ class TestSingleCandlestickPattern:
         row = {"Open": 102.0, "High": 102.0, "Low": 100.0, "Close": 100.0, "Volume": 100_000}
         rows = [row] * 3
         s = self._make_stock_with_positional_candles(rows)
-        result = analyser.singleCandleStickPattern(s)
+        result = analyser.analyse_single_candle_momentum(s)
         assert result is True
         assert "Single_candle_stick_pattern" in s.analysis["BEARISH"]
 
@@ -67,7 +67,7 @@ class TestSingleCandlestickPattern:
         row = {"Open": 100.0, "High": 100.5, "Low": 100.0, "Close": 100.5, "Volume": 100_000}
         rows = [row] * 3
         s = self._make_stock_with_positional_candles(rows)
-        assert analyser.singleCandleStickPattern(s) is False
+        assert analyser.analyse_single_candle_momentum(s) is False
 
     def test_candle_with_wick_returns_false(self):
         analyser = CandleStickAnalyser()
@@ -75,7 +75,7 @@ class TestSingleCandlestickPattern:
         row = {"Open": 100.0, "High": 104.0, "Low": 99.5, "Close": 101.5, "Volume": 100_000}
         rows = [row] * 3
         s = self._make_stock_with_positional_candles(rows)
-        assert analyser.singleCandleStickPattern(s) is False
+        assert analyser.analyse_single_candle_momentum(s) is False
 
 
 class TestDoubleCandlestickContinuationPattern:
@@ -108,21 +108,21 @@ class TestDoubleCandlestickContinuationPattern:
         analyser = CandleStickAnalyser()
         # prev: +0.5%, curr: +5% — total 2-day move >>4%
         s = self._make_stock_3rows(100.0, 100.5, 105.5)
-        result = analyser.doubleCandleStickContinuationPattern(s)
+        result = analyser.analyse_double_candle_continuation(s)
         assert result is True
         assert "Double_candle_continuation_pattern" in s.analysis.get("BULLISH", {})
 
     def test_two_falling_bearish(self):
         analyser = CandleStickAnalyser()
         s = self._make_stock_3rows(100.0, 99.5, 94.5, trend="down")
-        result = analyser.doubleCandleStickContinuationPattern(s)
+        result = analyser.analyse_double_candle_continuation(s)
         assert result is True
         assert "Double_candle_continuation_pattern" in s.analysis.get("BEARISH", {})
 
     def test_mixed_directions_returns_false(self):
         analyser = CandleStickAnalyser()
         s = self._make_stock_3rows(100.0, 103.0, 99.0)  # up then down
-        assert analyser.doubleCandleStickContinuationPattern(s) is False
+        assert analyser.analyse_double_candle_continuation(s) is False
 
 
 class TestTripleCandlestickContinuationPattern:
@@ -144,7 +144,7 @@ class TestTripleCandlestickContinuationPattern:
         analyser = CandleStickAnalyser()
         # prevprev.Open = 100*0.998=99.8, curr.Close=108.0 → change=(108-99.8)/99.8≈8.2% ≥ 5%
         s = self._make_stock_5rows([98.0, 99.0, 100.0, 103.0, 108.0], trend="up")
-        result = analyser.tripleCandleStickContinuationPattern(s)
+        result = analyser.analyse_triple_candle_continuation(s)
         assert result is True
         assert "Triple_candle_continuation_pattern" in s.analysis.get("BULLISH", {})
 
@@ -152,14 +152,14 @@ class TestTripleCandlestickContinuationPattern:
         analyser = CandleStickAnalyser()
         # prevprev.Open = 100*1.002=100.2, curr.Close=93.0 → |change|=(100.2-93)/100.2≈7.2% ≥ 5%
         s = self._make_stock_5rows([102.0, 101.0, 100.0, 97.0, 93.0], trend="down")
-        result = analyser.tripleCandleStickContinuationPattern(s)
+        result = analyser.analyse_triple_candle_continuation(s)
         assert result is True
         assert "Triple_candle_continuation_pattern" in s.analysis.get("BEARISH", {})
 
     def test_two_up_one_down_returns_false(self):
         analyser = CandleStickAnalyser()
         s = self._make_stock_5rows([100.0, 102.0, 104.0, 106.0, 103.0], trend="up")
-        assert analyser.tripleCandleStickContinuationPattern(s) is False
+        assert analyser.analyse_triple_candle_continuation(s) is False
 
 
 class TestResetConstants:

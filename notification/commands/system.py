@@ -12,7 +12,8 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 import common.shared as shared
-from common.logging_util import logger
+from services.common.logging import get_logger
+logger = get_logger("notification")
 from notification.commands._guard import guard, debug_chat_only
 
 # ─── Thresholds ──────────────────────────────────────────────────────────────

@@ -1,6 +1,7 @@
 import pandas as pd
 from datetime import date
-from common.logging_util import logger
+from services.common.logging import get_logger
+logger = get_logger("post-market-analysis")
 
 class PostMarketAnalyzer:
     def analyse_fii_dii_activity(self, df: pd.DataFrame):

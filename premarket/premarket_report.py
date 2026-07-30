@@ -31,7 +31,8 @@ import traceback
 import time as time_module
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from common.logging_util import logger
+from services.common.logging import get_logger
+logger = get_logger("premarket")
 from notification.Notification import TELEGRAM_NOTIFICATIONS
 from nse.nse_utils import nse_urlfetch
 
