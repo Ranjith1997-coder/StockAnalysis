@@ -17,6 +17,10 @@ These features help understand:
 - Stock sensitivity to market movements
 - Relative performance vs benchmark
 """
+from lib.logging_util import get_logger
+logger = get_logger("ml-pipeline")
+
+
 
 from typing import Dict, List, Optional, Tuple
 import pandas as pd

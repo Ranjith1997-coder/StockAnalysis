@@ -24,6 +24,9 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from lib.logging_util import get_logger
+logger = get_logger("backtest")
+
 from tools.backtest.optimizer import ThresholdOptimizer, BulkOptimizer, SEARCH_SPACES
 import common.shared as shared
 

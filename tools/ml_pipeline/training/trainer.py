@@ -15,6 +15,10 @@ Usage:
     results = trainer.train(X, y)
     trainer.save_model('model.pkl')
 """
+from lib.logging_util import get_logger
+logger = get_logger("ml-pipeline")
+
+
 
 from typing import Dict, List, Optional, Tuple, Union, Any
 import pandas as pd

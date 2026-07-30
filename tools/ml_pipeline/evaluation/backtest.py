@@ -4,6 +4,10 @@ Backtesting engine for stock movement prediction models.
 This module provides a comprehensive backtesting framework that simulates
 trading based on model predictions and calculates performance metrics.
 """
+from lib.logging_util import get_logger
+logger = get_logger("ml-pipeline")
+
+
 
 from typing import Any, Dict, List, Optional, Tuple, Union
 from dataclasses import dataclass, field

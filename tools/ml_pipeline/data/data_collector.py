@@ -346,7 +346,7 @@ class DataStorage:
             return True
             
         except Exception as e:
-            logger.error(f"Error saving data for {symbol}: {e}")
+            logger.error(f"Error saving data for {symbol}: {e}", exc_info=True)
             return False
     
     def load_stock_data(
@@ -388,7 +388,7 @@ class DataStorage:
             return df
             
         except Exception as e:
-            logger.error(f"Error loading data for {symbol}: {e}")
+            logger.error(f"Error loading data for {symbol}: {e}", exc_info=True)
             return None
     
     def get_available_stocks(self) -> List[str]:
@@ -442,7 +442,7 @@ class DataStorage:
                 logger.info(f"Deleted data file for {symbol}")
                 return True
             except Exception as e:
-                logger.error(f"Error deleting data for {symbol}: {e}")
+                logger.error(f"Error deleting data for {symbol}: {e}", exc_info=True)
                 return False
         
         return False
@@ -714,7 +714,7 @@ class DataCollector:
                 if attempt < self.MAX_RETRIES - 1:
                     time.sleep(self.RETRY_DELAY * (attempt + 1))
         
-        logger.error(f"All retries failed for {symbol}")
+        logger.error(f"All retries failed for {symbol}", exc_info=True)
         return None
     
     def fetch_stock(

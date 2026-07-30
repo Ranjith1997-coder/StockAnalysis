@@ -4,6 +4,10 @@ Ensemble model implementation for stock movement prediction.
 This module provides an ensemble model that combines predictions from
 XGBoost, Random Forest, and LightGBM using soft voting (weighted probability averaging).
 """
+from lib.logging_util import get_logger
+logger = get_logger("ml-pipeline")
+
+
 
 from typing import Any, Dict, List, Optional, Tuple
 from dataclasses import dataclass
