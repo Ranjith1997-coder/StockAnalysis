@@ -1,0 +1,22 @@
+[Unit]
+Description=StockAnalysis Paper Trading Service
+After=redis-server.service network-online.target
+Wants=network-online.target
+Requires=redis-server.service
+
+[Service]
+Type=simple
+User=hacker
+WorkingDirectory=/home/hacker/StockAnalysis
+Environment=PYTHONPATH=/home/hacker/StockAnalysis
+Environment=REDIS_URL=redis://localhost:6379
+ExecStart=/home/hacker/StockAnalysis/.venv/bin/python services/paper_trading/main.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+CPUQuota=30%
+MemoryMax=200M
+
+[Install]
+WantedBy=multi-user.target
