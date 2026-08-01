@@ -446,13 +446,34 @@ def main():
 
     _update_heartbeat(redis)
 
-    # Check if enctoken already exists in Redis (from a previous run)
+    # Check if enctoken already exists in Redis (RDB restore or previous run)
     existing = redis.hget(AUTH_HASH, "enctoken")
     if existing:
-        logger.info(
-            f"[auth-service] Existing enctoken found in Redis "
-            f"(len={len(existing)}) — waiting for next scheduled refresh"
-        )
+        issued_raw = redis.hget(AUTH_HASH, "issued_at")
+        if issued_raw:
+            try:
+                age_hours = (time.time() - float(issued_raw)) / 3600
+                if age_hours > 5.5:
+                    logger.warning(
+                        "[auth-service] RDB-restored enctoken is %.1fh old — refreshing",
+                        age_hours,
+                    )
+                    _last_refresh_ts = time.time()
+                    _do_refresh(redis, reason="stale_rdb_token")
+                else:
+                    logger.info(
+                        "[auth-service] Existing enctoken (%.1fh old, len=%d) — valid",
+                        age_hours, len(existing),
+                    )
+            except (ValueError, TypeError):
+                logger.warning("[auth-service] Unparseable issued_at — refreshing enctoken")
+                _last_refresh_ts = time.time()
+                _do_refresh(redis, reason="unparseable_issued_at")
+        else:
+            logger.info(
+                "[auth-service] Existing enctoken found (len=%d) — no issued_at, waiting for scheduled refresh",
+                len(existing),
+            )
     else:
         # No enctoken in Redis — refresh immediately regardless of time.
         # This handles post-reboot scenarios where Redis has no persistence

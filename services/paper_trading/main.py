@@ -21,7 +21,7 @@ logger = get_logger("paper-trading")
 from lib.notification.Notification import TELEGRAM_NOTIFICATIONS
 from services.common.redis_proxy import RedisProxy
 from services.common.version import BUILD_LABEL, GIT_COMMIT, GIT_DIRTY
-from services.paper_trading import engine
+from services.paper_trading import engine, ledger
 from services.paper_trading.models import (
     ACCOUNT_KEY,
     CONFIG_KEY,
@@ -65,7 +65,7 @@ exit_queue: "queue.Queue" = queue.Queue()
 
 def signal_handler(signum, frame):
     global _running
-    logger.info(f"[paper-trading] Received signal {signum}, shutting down...")
+    logger.info("[paper-trading] Received signal %s, shutting down...", signum)
     _running = False
 
 
@@ -90,7 +90,7 @@ def load_open_positions(redis) -> list[PaperPosition]:
         try:
             positions.append(PaperPosition.from_json(raw))
         except Exception as e:
-            logger.error(f"[paper-trading] Malformed position in {POSITIONS_OPEN_KEY}: {e}")
+            logger.error("[paper-trading] Malformed position in %s: %s", POSITIONS_OPEN_KEY, e, exc_info=True)
     return positions
 
 
@@ -106,8 +106,8 @@ def persist_new_position(redis, position: PaperPosition) -> None:
     TELEGRAM_NOTIFICATIONS.send_live_options_notification(
         format_entry_notification(position), parse_mode="HTML", symbol=position.symbol
     )
-    logger.info(f"[paper-trading] Opened {position.symbol} {position.strategy} "
-                f"credit=₹{position.entry_credit:.0f} margin=₹{position.margin_blocked:.0f}")
+    logger.info("[paper-trading] Opened %s %s credit=₹%.0f margin=₹%.0f",
+                position.symbol, position.strategy, position.entry_credit, position.margin_blocked)
 
 
 def persist_closed_position(redis, position: PaperPosition) -> None:
@@ -148,11 +148,13 @@ def persist_closed_position(redis, position: PaperPosition) -> None:
         "losses": str(account.daily_losses),
     })
 
+    ledger.insert_trade(position)
+
     TELEGRAM_NOTIFICATIONS.send_live_options_notification(
         format_exit_notification(position), parse_mode="HTML", symbol=position.symbol
     )
-    logger.info(f"[paper-trading] Closed {position.symbol} {position.strategy} "
-                f"reason={position.exit_reason} pnl=₹{pnl:.0f}")
+    logger.info("[paper-trading] Closed %s %s reason=%s pnl=₹%.0f",
+                position.symbol, position.strategy, position.exit_reason, pnl)
 
 
 def format_entry_notification(position: PaperPosition) -> str:
@@ -193,7 +195,7 @@ def try_load_instruments(redis) -> "dict | None":
         kc = KiteConnect(constant.DUMMY_API_KEY_ZERODHA, enctoken=enctoken)
         raw_instruments = kc.instruments()
     except Exception as e:
-        logger.error(f"[paper-trading] Instruments fetch failed: {e}")
+        logger.error("[paper-trading] Instruments fetch failed: %s", e, exc_info=True)
         return None
 
     cache = build_instruments_cache(raw_instruments, symbols=constant.LIVE_OPTIONS_INDICES)
@@ -220,8 +222,8 @@ def wait_for_instruments(redis, retry_seconds: int = 30) -> dict:
 def analysis_consumer(redis):
     try:
         redis.xgroup_create(ANALYSIS_GROUP, constant.ANALYSIS_RESULTS_STREAM, mkstream=True)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("[paper-trading] xgroup_create %s: %s", ANALYSIS_GROUP, e)
 
     while _running:
         try:
@@ -230,7 +232,7 @@ def analysis_consumer(redis):
                 {constant.ANALYSIS_RESULTS_STREAM: ">"}, count=10, block=5000,
             )
         except Exception as e:
-            logger.error(f"[paper-trading] analysis consumer error: {e}")
+            logger.error("[paper-trading] analysis consumer error: %s", e, exc_info=True)
             time.sleep(2)
             continue
         if not messages:
@@ -244,19 +246,19 @@ def analysis_consumer(redis):
                 for x in new_exits:
                     exit_queue.put(x)
             except Exception as e:
-                logger.exception(f"[paper-trading] Error parsing analysis result {msg_id}: {e}")
+                logger.exception("[paper-trading] Error parsing analysis result %s: %s", msg_id, e)
             finally:
                 try:
                     redis.xack(constant.ANALYSIS_RESULTS_STREAM, ANALYSIS_GROUP, msg_id)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("[paper-trading] xack analysis %s: %s", msg_id, e)
 
 
 def confluence_consumer(redis):
     try:
         redis.xgroup_create(CONFLUENCE_GROUP, constant.CONFLUENCE_STREAM, mkstream=True)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("[paper-trading] xgroup_create %s: %s", CONFLUENCE_GROUP, e)
 
     while _running:
         try:
@@ -265,7 +267,7 @@ def confluence_consumer(redis):
                 {constant.CONFLUENCE_STREAM: ">"}, count=10, block=5000,
             )
         except Exception as e:
-            logger.error(f"[paper-trading] confluence consumer error: {e}")
+            logger.error("[paper-trading] confluence consumer error: %s", e, exc_info=True)
             time.sleep(2)
             continue
         if not messages:
@@ -277,12 +279,12 @@ def confluence_consumer(redis):
                 if signal:
                     entry_queue.put(signal)
             except Exception as e:
-                logger.exception(f"[paper-trading] Error parsing confluence {msg_id}: {e}")
+                logger.exception("[paper-trading] Error parsing confluence %s: %s", msg_id, e)
             finally:
                 try:
                     redis.xack(constant.CONFLUENCE_STREAM, CONFLUENCE_GROUP, msg_id)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("[paper-trading] xack confluence %s: %s", msg_id, e)
 
 
 def _handle_exit_signal(redis, signal) -> None:
@@ -305,7 +307,7 @@ def _handle_entry_signal(redis, span_calculator: SpanCalculator, signal) -> None
 
     passed, reason = check_entry_filters(signal, redis, account, open_positions)
     if not passed:
-        logger.debug(f"[paper-trading] Entry rejected for {signal.symbol}/{signal.strategy}: {reason}")
+        logger.debug("[paper-trading] Entry rejected for %s/%s: %s", signal.symbol, signal.strategy, reason)
         return
 
     # signal.mode comes straight from the analysis:results message for
@@ -378,8 +380,8 @@ def mtm_engine(redis):
 def command_listener(redis):
     try:
         redis.xgroup_create(COMMANDS_GROUP, COMMANDS_STREAM, mkstream=True)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("[paper-trading] xgroup_create %s: %s", COMMANDS_GROUP, e)
 
     while _running:
         try:
@@ -388,7 +390,7 @@ def command_listener(redis):
                 {COMMANDS_STREAM: ">"}, count=10, block=5000,
             )
         except Exception as e:
-            logger.error(f"[paper-trading] command listener error: {e}")
+            logger.error("[paper-trading] command listener error: %s", e, exc_info=True)
             time.sleep(2)
             continue
         if not messages:
@@ -398,12 +400,12 @@ def command_listener(redis):
             try:
                 _handle_command(redis, fields)
             except Exception as e:
-                logger.exception(f"[paper-trading] Error handling command {msg_id}: {e}")
+                logger.exception("[paper-trading] Error handling command %s: %s", msg_id, e)
             finally:
                 try:
                     redis.xack(COMMANDS_STREAM, COMMANDS_GROUP, msg_id)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("[paper-trading] xack command %s: %s", msg_id, e)
 
 
 def _handle_command(redis, fields: dict) -> None:
@@ -453,14 +455,16 @@ def main():
     redis = RedisProxy(redis_url)
     try:
         redis.get("ping")
-        logger.info(f"[paper-trading] Connected to Redis at {redis_url}")
-        logger.info(f"[paper-trading] v{BUILD_LABEL} starting")
+        logger.info("[paper-trading] Connected to Redis at %s", redis_url)
+        logger.info("[paper-trading] v%s starting", BUILD_LABEL)
     except Exception as e:
-        logger.error(f"[paper-trading] Cannot connect to Redis at {redis_url}: {e}")
+        logger.error("[paper-trading] Cannot connect to Redis at %s: %s", redis_url, e, exc_info=True)
         sys.exit(1)
 
     from services.common.crash_handler import install_crash_handler
     install_crash_handler("paper-trading")
+
+    ledger.init_db()
 
     TELEGRAM_NOTIFICATIONS.is_production = os.getenv(constant.ENV_PRODUCTION, "0") == "1"
     TELEGRAM_NOTIFICATIONS.is_intraday = True
@@ -483,9 +487,12 @@ def main():
 
     logger.info("[paper-trading] Started, 5 worker threads running")
 
+    from lib.logging_util import refresh_level_from_redis
+
     heartbeat_counter = 0
     while _running:
         update_heartbeat(redis)
+        refresh_level_from_redis(redis, "paper-trading")
         time.sleep(30)
         heartbeat_counter += 1
         if heartbeat_counter % 10 == 0:

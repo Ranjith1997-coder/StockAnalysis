@@ -182,13 +182,30 @@ def _refresh_group_prev_day(redis_proxy, obj_list, group_name) -> list[str]:
     return nan_symbols
 
 
+FRESH_GRACE_SECONDS = 3600.0  # 1 hour — skip re-fetch if data is fresher than this
+
+
+def _is_price_data_fresh(redis_proxy, name: str) -> bool:
+    """True if data:price:{name} was updated within FRESH_GRACE_SECONDS."""
+    try:
+        raw = redis_proxy.hget(f"data:price:{name}", "last_price_update")
+        if not raw:
+            return False
+        ts = raw.decode() if isinstance(raw, bytes) else raw
+        return (time.time() - pd.Timestamp(ts).timestamp()) < FRESH_GRACE_SECONDS
+    except Exception:
+        return False
+
+
 def _fetch_index_initial(redis_proxy, index_list, is_intraday):
+    index_list = [idx for idx in index_list if not _is_price_data_fresh(redis_proxy, idx["tradingsymbol"])]
     symbols = [idx["yfinancetradingsymbol"] for idx in index_list]
     if not symbols:
+        logger.info("[yfinance] All indices have fresh price data — skipping initial fetch")
         return
 
     period = "1y" if is_intraday else "5D"
-    logger.info(f"[yfinance] Fetching initial daily data for {len(symbols)} indices ({period})")
+    logger.info("[yfinance] Fetching initial daily data for %d indices (%s)", len(symbols), period)
 
     try:
         data = yf.download(symbols, period=period, interval="1d", group_by="ticker", auto_adjust=True, progress=False)
@@ -244,12 +261,14 @@ def _fetch_index_initial(redis_proxy, index_list, is_intraday):
 
 
 def _fetch_stock_initial(redis_proxy, stock_list, is_intraday):
+    stock_list = [stk for stk in stock_list if not _is_price_data_fresh(redis_proxy, stk["tradingsymbol"])]
     symbols = [stk["tradingsymbol"] + ".NS" for stk in stock_list]
     if not symbols:
+        logger.info("[yfinance] All stocks have fresh price data — skipping initial fetch")
         return
 
     period = "1y" if is_intraday else "5D"
-    logger.info(f"[yfinance] Fetching initial daily data for {len(symbols)} stocks ({period})")
+    logger.info("[yfinance] Fetching initial daily data for %d stocks (%s)", len(symbols), period)
 
     try:
         data = yf.download(symbols, period=period, interval="1d", group_by="ticker", auto_adjust=True, progress=False)
