@@ -1,7 +1,10 @@
-"""Paper trading commands: /paper_positions, /paper_pnl, /paper_trades, /paper_close, /paper_config, /paper_reset."""
+"""Paper trading commands: /paper_positions, /paper_pnl, /paper_trades, /paper_close, /paper_config, /paper_reset, /paper_export."""
 from __future__ import annotations
 
+import csv
+import io
 import json
+import os
 import time
 from datetime import date
 
@@ -16,6 +19,16 @@ from ._helpers import _get_redis
 COMMANDS_STREAM = "paper:commands"
 ACCOUNT_KEY = "paper:account"
 POSITIONS_OPEN_KEY = "paper:positions:open"
+SQLITE_DB_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "..", "data", "paper_trades.db")
+
+
+def _get_ledger():
+    try:
+        from services.paper_trading import ledger
+        return ledger
+    except Exception as e:
+        logger.debug("[paper_cmds] ledger import failed: %s", e)
+        return None
 
 
 # ─── /paper_positions ──────────────────────────────────────────────────────
@@ -158,52 +171,38 @@ async def cmd_paper_pnl(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 @guard
 async def cmd_paper_trades(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Show recent closed trades."""
-    rc = _get_redis()
-    if rc is None:
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text="⚠️ Redis unavailable.",
-        )
-        return
-
+    """Show recent closed trades from the persistent SQLite ledger."""
     args = context.args or []
     limit = min(int(args[0]) if args else 10, 50)
 
-    try:
-        entries = rc.xrevrange("paper:trades", "+", "-", limit)
-    except Exception as e:
+    ledger = _get_ledger()
+    if ledger is None:
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text=f"⚠️ Cannot read trade stream: {e}",
+            text="⚠️ Ledger unavailable — paper-trading service not running.",
         )
         return
 
-    if not entries:
+    trades = ledger.get_recent_trades(limit)
+    if not trades:
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text="📊 No closed trades yet.",
         )
         return
 
-    lines = [f"📊 <b>Recent Trades</b> (last {limit})", ""]
-    for msg_id, fields in entries:
-        symbol = _decode_field(fields, "symbol", "?")
-        strategy = _decode_field(fields, "strategy", "?")
-        pnl_str = _decode_field(fields, "pnl", "0")
-        exit_reason = _decode_field(fields, "exit_reason", "?")
-        ts = _decode_field(fields, "timestamp", "0")
+    lines = [f"📊 <b>Recent Trades</b> (last {len(trades)})", ""]
+    for t in trades:
+        symbol = t.get("symbol", "?")
+        strategy = t.get("strategy", "?")
+        pnl = t.get("pnl") or 0
+        exit_reason = t.get("exit_reason", "?")
+        ts = time.strftime("%d %b %H:%M", time.localtime(t["exit_ts"])) if t.get("exit_ts") else "?"
 
-        try:
-            pnl = float(pnl_str)
-        except (ValueError, TypeError):
-            pnl = 0.0
         icon = "✅" if pnl >= 0 else "❌"
-        ts_str = _format_ts(ts)
-
         lines.append(
             f"{icon} <b>{symbol}</b>  {strategy}  |  P&L: ₹{pnl:+,.0f}  |  {exit_reason}\n"
-            f"   <i>{ts_str}</i>"
+            f"   <i>{ts}</i>"
         )
 
     text = "\n".join(lines)
@@ -215,18 +214,45 @@ async def cmd_paper_trades(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     )
 
 
-def _decode_field(fields: dict, key: str, default: str = "") -> str:
-    val = fields.get(key.encode() if isinstance(next(iter(fields), b""), bytes) else key, b"")
-    if isinstance(val, bytes):
-        val = val.decode()
-    return val if val else default
+# ─── /paper_export ─────────────────────────────────────────────────────────
 
+@guard
+async def cmd_paper_export(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Export all trades as a CSV file."""
+    ledger = _get_ledger()
+    if ledger is None:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="⚠️ Ledger unavailable — paper-trading service not running.",
+        )
+        return
 
-def _format_ts(ts: str) -> str:
-    try:
-        return time.strftime("%d %b %H:%M", time.localtime(float(ts)))
-    except (ValueError, TypeError):
-        return ts[:19] if ts else "?"
+    args = context.args or []
+    symbol = args[0].upper() if args else None
+
+    trades = ledger.get_all_trades(symbol=symbol)
+    if not trades:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="📊 No trades to export.",
+        )
+        return
+
+    output = io.StringIO()
+    if trades:
+        writer = csv.DictWriter(output, fieldnames=trades[0].keys())
+        writer.writeheader()
+        writer.writerows(trades)
+
+    csv_bytes = output.getvalue().encode("utf-8")
+    filename = f"paper_trades_{symbol or 'all'}_{date.today().isoformat()}.csv"
+
+    await context.bot.send_document(
+        chat_id=update.effective_chat.id,
+        document=csv_bytes,
+        filename=filename,
+        caption=f"📊 {len(trades)} trades exported" + (f" for {symbol}" if symbol else ""),
+    )
 
 
 # ─── /paper_close ──────────────────────────────────────────────────────────
@@ -393,6 +419,7 @@ HANDLERS = [
     ("paper_positions", cmd_paper_positions),
     ("paper_pnl",       cmd_paper_pnl),
     ("paper_trades",    cmd_paper_trades),
+    ("paper_export",    cmd_paper_export),
     ("paper_close",     cmd_paper_close),
     ("paper_config",    cmd_paper_config),
     ("paper_reset",     cmd_paper_reset),

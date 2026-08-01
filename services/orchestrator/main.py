@@ -1789,8 +1789,13 @@ def _wait_for_cycle_ready(timeout: float = 120.0) -> bool:
     return cycle_subscriber.wait_for_cycle(timeout=timeout)
 
 
-def _load_initial_data_from_redis():
-    """Load initial price + sensibull data from data-gateway's Redis hashes."""
+def _load_initial_data_from_redis(max_retries: int = 12, retry_delay: float = 30.0):
+    """Load initial price + sensibull data from data-gateway's Redis hashes.
+
+    After a clean Redis restart (no RDB), data will be empty until the
+    data-gateway completes its initial cycle.  Retry for up to 6 minutes
+    before proceeding with empty data.
+    """
     logger.info("[cycle] Loading initial data from Redis...")
 
     stock_objs = list(shared.app_ctx.stock_token_obj_dict.values())
@@ -1798,18 +1803,36 @@ def _load_initial_data_from_redis():
     commodity_objs = list(shared.app_ctx.commodity_token_obj_dict.values())
     global_indices_objs = list(shared.app_ctx.global_indices_token_obj_dict.values())
 
-    updated = load_price_data_from_redis(
-        redis_proxy, stock_objs, index_objs,
-        commodity_objs, global_indices_objs,
+    for attempt in range(1, max_retries + 1):
+        updated = load_price_data_from_redis(
+            redis_proxy, stock_objs, index_objs,
+            commodity_objs, global_indices_objs,
+        )
+
+        sensibull_loaded = 0
+        for stock in stock_objs + index_objs:
+            if load_sensibull_from_redis(redis_proxy, stock):
+                sensibull_loaded += 1
+
+        if updated > 0 or sensibull_loaded > 0:
+            logger.info(
+                "[cycle] Loaded price data for %d symbols, sensibull for %d symbols",
+                updated, sensibull_loaded,
+            )
+            return updated, sensibull_loaded
+
+        if attempt < max_retries:
+            logger.warning(
+                "[cycle] No data in Redis (attempt %d/%d) — waiting %.0fs for data-gateway",
+                attempt, max_retries, retry_delay,
+            )
+            _time.sleep(retry_delay)
+
+    logger.warning(
+        "[cycle] No data after %d retries — proceeding with empty data",
+        max_retries,
     )
-    logger.info(f"[cycle] Loaded price data for {updated} symbols")
-
-    sensibull_loaded = 0
-    for stock in stock_objs + index_objs:
-        if load_sensibull_from_redis(redis_proxy, stock):
-            sensibull_loaded += 1
-
-    logger.info(f"[cycle] Loaded sensibull data for {sensibull_loaded} symbols")
+    return 0, 0
 
 
 def _shutdown_background_services():
