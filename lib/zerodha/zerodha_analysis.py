@@ -48,6 +48,7 @@ class ZerodhaTickerManager:
         self._reauth_lock = threading.Lock()
         self._is_reauthing = False
         self._tick_count = 0
+        self._options_subscribed_once = False
 
         self._last_atm: dict = {}
         self._last_aggregate_time: dict = defaultdict(float)
@@ -150,6 +151,26 @@ class ZerodhaTickerManager:
 
     def update_enctoken(self, new_enctoken):
         self.encToken = new_enctoken
+
+        # Stop the tick processor and wait for it to exit BEFORE closing WS.
+        # close_connection() fires on_close_base() → signal_tick_processor_stop()
+        # on the same thread, but the processor thread won't notice the flag
+        # until its tick_queue.get(timeout=1) returns.  If we then call
+        # connect() → on_connect_base() → start_tick_processor() before the
+        # old thread has exited, start_tick_processor() sees the old thread
+        # alive and returns early — leaving stop_processor=True and no new
+        # thread.  By stopping + joining here we guarantee the old thread is
+        # dead before the new WS fires on_connect.
+        self.stop_tick_processor()
+
+        # Drain any stale ticks left in the queue from the old WS session
+        # so they don't get routed to Stock objects after the reconnect.
+        while not self.tick_queue.empty():
+            try:
+                self.tick_queue.get_nowait()
+            except queue.Empty:
+                break
+
         self.close_connection()
         self._init_kite_ticker_base()
         self._init_kite_ticker_options()
@@ -196,7 +217,9 @@ class ZerodhaTickerManager:
 
     def start_tick_processor(self):
         if self.processor_thread and self.processor_thread.is_alive():
-            return
+            if not self.stop_processor:
+                return
+            self.processor_thread.join(timeout=3)
         self.stop_processor = False
         self.processor_thread = threading.Thread(target=self.process_ticks, daemon=True)
         self.processor_thread.start()
@@ -538,8 +561,19 @@ class ZerodhaTickerManager:
     def on_connect_options(self, ws, response):
         self._options_connected = True
         logger.info(f"WS2 (options) connected. Response: {response}")
-        # No tokens subscribed here — subscribe_live_options() handles it
-        # after spot prices arrive from WS1 index ticks.
+        # On initial startup, option subscription is deferred to
+        # _subscribe_options_later() in main.py (waits for WS1 index ticks
+        # to provide spot prices).  On enctoken-refresh reconnect, that
+        # deferred path does NOT re-fire, so we must re-subscribe here.
+        # Guard with a flag to skip the very first connect (handled by the
+        # deferred thread) but catch all subsequent connects.
+        if self._options_subscribed_once:
+            if self.live_options_engine is not None:
+                threading.Thread(
+                    target=self.subscribe_live_options, args=(False,),
+                    daemon=True,
+                ).start()
+        self._options_subscribed_once = True
 
     def on_close_options(self, ws, code, reason):
         self._options_connected = False
