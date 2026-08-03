@@ -552,9 +552,12 @@ def main():
     logger.info("[market-data] Service started — entering heartbeat loop")
     heartbeat_counter = 0
 
+    from lib.logging_util import refresh_level_from_redis
+
     while _running:
         try:
             _update_heartbeat(redis, tm, publisher=publisher)
+            refresh_level_from_redis(redis, "market-data")
         except Exception as e:
             logger.error(f"[market-data] Heartbeat error: {e}")
 
