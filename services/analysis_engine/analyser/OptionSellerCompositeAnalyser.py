@@ -364,7 +364,7 @@ class OptionSellerCompositeAnalyser(BaseAnalyzer):
                 mode=mode_label,
                 triggers=triggers,
             )
-            stock.set_analysis("NEUTRAL", "GAMMA_TRAP", result)
+            stock.set_analysis("NEUTRAL", "GAMMA_TRAP", result._asdict())
 
             # Write suppression flag — Range Bound checks this before running
             stock.analysis["NEUTRAL"]["GAMMA_TRAP_ACTIVE"] = True
@@ -680,7 +680,7 @@ class OptionSellerCompositeAnalyser(BaseAnalyzer):
                 gex_supports=gex_supports,
                 triggers=triggers,
             )
-            stock.set_analysis("NEUTRAL", "RANGE_BOUND_SETUP", result)
+            stock.set_analysis("NEUTRAL", "RANGE_BOUND_SETUP", result._asdict())
             self._set_priority_override(stock, NotificationPriority.HIGH)
 
             logger.info(
@@ -903,7 +903,7 @@ class OptionSellerCompositeAnalyser(BaseAnalyzer):
                 mode=self._mode_label(),
                 triggers=triggers,
             )
-            stock.set_analysis("NEUTRAL", "SKEW_FADE_SETUP", result)
+            stock.set_analysis("NEUTRAL", "SKEW_FADE_SETUP", result._asdict())
             self._set_priority_override(stock, NotificationPriority.HIGH)
 
             logger.info(
