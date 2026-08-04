@@ -76,7 +76,7 @@ def parse_analysis_result(fields: dict) -> tuple[list[EntrySignal], list[ExitSig
     try:
         analysis_json = json.loads(fields.get("analysis_json", "{}"))
     except (json.JSONDecodeError, TypeError):
-        logger.warning(f"[signal_router] Malformed analysis_json for {fields.get('symbol')}")
+        logger.warning("[signal_router] Malformed analysis_json for %s", fields.get("symbol"))
         return entries, exits
 
     symbol = fields.get("symbol", "")
@@ -93,6 +93,11 @@ def parse_analysis_result(fields: dict) -> tuple[list[EntrySignal], list[ExitSig
 
     if "RANGE_BOUND_SETUP" in neutral:
         setup = neutral["RANGE_BOUND_SETUP"]
+        # set_analysis() wraps duplicate entries into a list on consecutive
+        # cycles.  Take the most recent (last) entry — it has the freshest
+        # wall strikes and IV percentile.
+        if isinstance(setup, list):
+            setup = setup[-1]
         try:
             entries.append(EntrySignal(
                 strategy=setup["setup_type"],   # "IRON_CONDOR" | "STRANGLE"
@@ -104,10 +109,12 @@ def parse_analysis_result(fields: dict) -> tuple[list[EntrySignal], list[ExitSig
                 mode=mode,
             ))
         except (KeyError, TypeError, ValueError) as e:
-            logger.warning(f"[signal_router] Malformed RANGE_BOUND_SETUP for {symbol}: {e}")
+            logger.warning("[signal_router] Malformed RANGE_BOUND_SETUP for %s: %s", symbol, e)
 
     if "SKEW_FADE_SETUP" in neutral:
         setup = neutral["SKEW_FADE_SETUP"]
+        if isinstance(setup, list):
+            setup = setup[-1]
         try:
             entries.append(EntrySignal(
                 strategy="CREDIT_SPREAD",
