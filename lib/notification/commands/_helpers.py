@@ -7,12 +7,20 @@ logger = get_logger("notification")
 
 
 def _get_redis():
-    """Get the monolith's Redis proxy (lazy import to avoid circular deps)."""
+    """Get a Redis connection — monolith proxy first, direct fallback for standalone services."""
     try:
         import intraday.intraday_monitor as _im
-        return getattr(_im, "redis_proxy", None)
+        proxy = getattr(_im, "redis_proxy", None)
+        if proxy is not None:
+            return proxy
     except Exception as e:
-        logger.debug("[helpers] Redis import failed: %s", e)
+        logger.debug("[helpers] Redis proxy import failed: %s", e)
+    try:
+        import redis as _redis
+        import os as _os
+        return _redis.from_url(_os.environ.get("REDIS_URL", "redis://localhost:6379"), decode_responses=True)
+    except Exception as e:
+        logger.debug("[helpers] Redis direct connect failed: %s", e)
         return None
 
 
