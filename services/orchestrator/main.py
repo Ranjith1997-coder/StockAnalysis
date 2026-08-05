@@ -864,29 +864,73 @@ def _format_paper_trading_section() -> str:
         account = redis_proxy.hgetall("paper:account") or {}
         used = float(account.get("margin_used", 0))
         cap = float(account.get("capital", 1000000))
+        realized = float(account.get("realized_pnl", 0))
+        unrealized = float(account.get("unrealized_pnl", 0))
+        total_pnl = realized + unrealized
         used_pct = (used / cap * 100) if cap > 0 else 0.0
+        pnl_pct = (total_pnl / cap * 100) if cap > 0 else 0.0
+
+        pnl_icon = "\U0001F7E2" if total_pnl >= 0 else "\U0001F534"
         lines = ["\n── \U0001F4CA <b>Paper Trading</b> ──"]
         lines.append(
-            "   %d pos | Margin: \u20B9%s/%s (%s%%)" % (
-                len(positions_raw),
-                _format_inr(used),
-                _format_inr(cap),
-                "%d" % int(used_pct),
+            "   %d pos | P&L: %s \u20B9%+.0f (%+.1f%%) | Margin: \u20B9%s/%s (%d%%)" % (
+                len(positions_raw), pnl_icon, total_pnl, pnl_pct,
+                _format_inr(used), _format_inr(cap), int(used_pct),
             )
         )
         for pid, raw in positions_raw.items():
             pos = json.loads(raw)
+            symbol = pos.get("symbol", "?")
+            strategy = pos.get("strategy", "?")
+            direction = pos.get("direction", "?")
+            entry_credit = pos.get("entry_credit", 0)
+            legs = pos.get("legs", [])
+
+            pnl = _compute_position_pnl(pos)
+            pos_icon = "\U0001F7E2" if pnl >= 0 else "\U0001F534"
+
             lines.append(
-                "  %s %s %s | Cr: \u20B9%s" % (
-                    pos.get("symbol", "?"),
-                    pos.get("strategy", "?"),
-                    pos.get("direction", ""),
-                    _fmt_short(pos.get("entry_credit", 0)),
+                "  %s <b>%s</b> %s %s | Cr:\u20B9%.0f P&L:%s\u20B9%+.0f" % (
+                    pos_icon, symbol, strategy, direction,
+                    entry_credit, pos_icon, pnl,
                 )
             )
+            lines.append("   %s" % _fmt_legs_compact(legs))
         return "\n".join(lines)
     except Exception:
         return ""
+
+
+def _compute_position_pnl(pos: dict) -> float:
+    """Compute unrealized P&L from position leg data."""
+    legs = pos.get("legs", [])
+    if not legs:
+        return 0.0
+    entry_credit = pos.get("entry_credit", 0)
+    lot_size = pos.get("lot_size", 15)
+    lots = legs[0].get("lots", 1) if legs else 1
+    qty = lot_size * lots
+    sell_val = sum(l.get("current_premium", 0) for l in legs if l.get("side") == "SELL") * qty
+    buy_val = sum(l.get("current_premium", 0) for l in legs if l.get("side") == "BUY") * qty
+    current_debit = sell_val - buy_val
+    return entry_credit - current_debit
+
+
+def _fmt_legs_compact(legs: list) -> str:
+    """Compact leg summary: 'PE24550 ₹91→₹123  CE80000 ₹23→₹21'"""
+    parts = []
+    for leg in legs:
+        side = leg.get("side", "")
+        if side == "BUY":
+            continue  # skip protective legs, show only short legs
+        ot = leg.get("option_type", "")
+        strike = leg.get("strike", 0)
+        ep = leg.get("entry_premium", 0)
+        cp = leg.get("current_premium", 0)
+        chg = (cp - ep) / ep * 100 if ep > 0 else 0
+        arrow = "\u2191" if chg > 0 else "\u2193" if chg < 0 else "\u2192"
+        parts.append("%s%d %s\u20B9%.0f\u2192\u20B9%.0f (%+.0f%%)" % (ot, int(strike), arrow, ep, cp, chg))
+    return " | ".join(parts) if parts else "\u2014"
 
 
 def _format_inr(val: float) -> str:
@@ -895,12 +939,6 @@ def _format_inr(val: float) -> str:
     if abs(val) >= 1000:
         return "\u20B9%dk" % (val / 1000)
     return "\u20B9%.0f" % val
-
-
-def _fmt_short(val: float) -> str:
-    if abs(val) >= 1000:
-        return "%.1fk" % (val / 1000)
-    return "%.0f" % val
 
 
 def report_index_data():
