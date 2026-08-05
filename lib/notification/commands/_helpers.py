@@ -6,21 +6,34 @@ from lib.logging_util import get_logger
 logger = get_logger("notification")
 
 
+_cached_redis = None
+
+
 def _get_redis():
-    """Get a Redis connection — monolith proxy first, direct fallback for standalone services."""
+    """Get a Redis connection — cached, direct-first to avoid slow monolith import."""
+    global _cached_redis
+    if _cached_redis is not None:
+        try:
+            _cached_redis.ping()
+            return _cached_redis
+        except Exception:
+            _cached_redis = None
+
+    try:
+        import redis, os
+        _cached_redis = redis.from_url(
+            os.environ.get("REDIS_URL", "redis://localhost:6379"),
+            decode_responses=True,
+        )
+        return _cached_redis
+    except Exception:
+        pass
+
     try:
         import intraday.intraday_monitor as _im
-        proxy = getattr(_im, "redis_proxy", None)
-        if proxy is not None:
-            return proxy
-    except Exception as e:
-        logger.debug("[helpers] Redis proxy import failed: %s", e)
-    try:
-        import redis as _redis
-        import os as _os
-        return _redis.from_url(_os.environ.get("REDIS_URL", "redis://localhost:6379"), decode_responses=True)
-    except Exception as e:
-        logger.debug("[helpers] Redis direct connect failed: %s", e)
+        _cached_redis = getattr(_im, "redis_proxy", None)
+        return _cached_redis
+    except Exception:
         return None
 
 
