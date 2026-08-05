@@ -852,6 +852,57 @@ def report_top_gainers_and_losers():
     logger.info(f"EOD Report\n {report}")
     return report
 
+def _format_paper_trading_section() -> str:
+    """Read paper trading state from Redis and return a formatted section.
+
+    Returns empty string if no positions are open or paper service is not running."""
+    try:
+        import json
+        positions_raw = redis_proxy.hgetall("paper:positions:open") or {}
+        if not positions_raw:
+            return ""
+        account = redis_proxy.hgetall("paper:account") or {}
+        used = float(account.get("margin_used", 0))
+        cap = float(account.get("capital", 1000000))
+        used_pct = (used / cap * 100) if cap > 0 else 0.0
+        lines = ["\n── \U0001F4CA <b>Paper Trading</b> ──"]
+        lines.append(
+            "   %d pos | Margin: \u20B9%s/%s (%s%%)" % (
+                len(positions_raw),
+                _format_inr(used),
+                _format_inr(cap),
+                "%d" % int(used_pct),
+            )
+        )
+        for pid, raw in positions_raw.items():
+            pos = json.loads(raw)
+            lines.append(
+                "  %s %s %s | Cr: \u20B9%s" % (
+                    pos.get("symbol", "?"),
+                    pos.get("strategy", "?"),
+                    pos.get("direction", ""),
+                    _fmt_short(pos.get("entry_credit", 0)),
+                )
+            )
+        return "\n".join(lines)
+    except Exception:
+        return ""
+
+
+def _format_inr(val: float) -> str:
+    if abs(val) >= 100000:
+        return "\u20B9%.1fL" % (val / 100000)
+    if abs(val) >= 1000:
+        return "\u20B9%dk" % (val / 1000)
+    return "\u20B9%.0f" % val
+
+
+def _fmt_short(val: float) -> str:
+    if abs(val) >= 1000:
+        return "%.1fk" % (val / 1000)
+    return "%.0f" % val
+
+
 def report_index_data():
     logger.info("Reporting index data")
     report = "\U0001F3E6 <b>Index Report</b>\n"
@@ -868,6 +919,12 @@ def report_index_data():
                 report += f"  <b>{index.stock_symbol}</b>: <code>{index.ltp:.2f}</code>\n"
         except Exception as e:
             logger.error(f"Error while getting index data for {index.stock_symbol}: {e}")
+
+    # Append paper trading position summary if any positions are open
+    paper_section = _format_paper_trading_section()
+    if paper_section:
+        report += paper_section
+
     TELEGRAM_NOTIFICATIONS.send_notification(report, parse_mode="HTML")
     logger.info(f"Index Report\n {report}")
     return report
