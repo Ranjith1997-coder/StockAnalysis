@@ -666,8 +666,8 @@ Most analysers stack `@both` + `@index_both` (run in all 4 combinations). Some u
 
 ### 7.9 GEXAnalyser
 
-**File:** `analyser/GEXAnalyser.py`
-**Data sources:** `stock.options_live` (Sensibull WS), `stock.options_aggregate`, `stock.ltp`
+**File:** `services/analysis_engine/analyser/GEXAnalyser.py`
+**Data sources:** `stock.options_live` (Sensibull WS greeks), `stock.options_aggregate`, `stock.ltp`
 **Applies to:** NIFTY, BANKNIFTY, SENSEX only (`LIVE_OPTIONS_INDICES`)
 
 **`_is_applicable()` guard:** Returns `False` unless:
@@ -849,7 +849,7 @@ Methods where intraday and positional read **different** data sources or structu
 
 ### Gaps Remaining
 
-1. **TechnicalAnalyser `analyze_buy_sell_quantity` (#2):** ✅ Resolved — `data:tick:*` now includes `total_buy_quantity` and `total_sell_quantity` (published by market-data snapshot_publisher).
+1. **TechnicalAnalyser `analyze_buy_sell_quantity` (#2):** ✅ Resolved — `data:tick:*` includes `total_buy_quantity`/`total_sell_quantity` (published by market-data snapshot_publisher), and `services/analysis_engine/worker.py` now calls `load_equity_tick_from_redis()` (extracted from `load_tick_from_redis()`) on every job to hydrate `stock.zerodha_data` before analysers run. (Previously the loader existed in `stock_loader.py` but was never wired into `worker.py` — the analyser always saw zero-initialized values in the production/microservice path; the monolith/dev single-process path was unaffected since its `Stock` objects share the live WS-fed `TickStore` directly.)
 
 2. **GEXAnalyser (#9):** ✅ Resolved — `data:options_agg:*` now published by market-data at 1s interval with gex_total, gex_ce, gex_pe, gex_regime, gex_flip_level, gex_by_strike.
 
