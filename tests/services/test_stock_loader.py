@@ -443,6 +443,49 @@ class TestLoadOptionsLiveFromRedis:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# load_equity_tick_from_redis
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestLoadEquityTickFromRedis:
+    """Test load_equity_tick_from_redis() — extracted from load_tick_from_redis
+    so services/analysis_engine/worker.py can hydrate zerodha_data without also
+    paying for the (index-only) options_agg/options_live HGETALLs."""
+
+    def test_returns_false_when_no_data(self):
+        from services.common.stock_loader import load_equity_tick_from_redis
+        redis = MagicMock()
+        redis.hgetall.return_value = {}
+        stock = Stock("Test", "TEST")
+        assert load_equity_tick_from_redis(redis, stock) is False
+
+    def test_loads_equity_tick_into_zerodha_data(self):
+        from services.common.stock_loader import load_equity_tick_from_redis
+        redis = _mock_redis_hgetall({
+            "data:tick:RELIANCE": {
+                "last_price": "2450.5",
+                "volume_traded": "1000000",
+                "total_buy_quantity": "50000",
+                "total_sell_quantity": "60000",
+            },
+        })
+        stock = Stock("Reliance", "RELIANCE")
+        result = load_equity_tick_from_redis(redis, stock)
+        assert result is True
+        zd = stock._tick_store._zerodha_data
+        assert zd["last_price"] == 2450.5
+        assert zd["total_buy_quantity"] == 50000.0
+        assert zd["total_sell_quantity"] == 60000.0
+
+    def test_does_not_touch_options_aggregate(self):
+        """Only the equity dict is written — no options_agg HGETALL issued."""
+        from services.common.stock_loader import load_equity_tick_from_redis
+        redis = _mock_redis_hgetall({"data:tick:X": {"last_price": "100"}})
+        stock = Stock("X", "X")
+        load_equity_tick_from_redis(redis, stock)
+        redis.hgetall.assert_called_once_with("data:tick:X")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # load_tick_from_redis
 # ═══════════════════════════════════════════════════════════════════════════
 

@@ -237,6 +237,30 @@ def load_options_live_from_redis(redis: RedisProxy, stock: Stock) -> bool:
     return False
 
 
+def load_equity_tick_from_redis(redis: RedisProxy, stock: Stock) -> bool:
+    """Load live equity/index tick fields from `data:tick:{symbol}` into TickStore.
+
+    Reads the hash published by the market-data service's 1-second snapshot
+    publisher and populates stock._tick_store._zerodha_data (last_price, ohlc,
+    volume, buy/sell qty). Returns True if any data was loaded.
+    """
+    tick_raw = redis.hgetall(f"data:tick:{stock.stock_symbol}")
+    if not tick_raw:
+        return False
+
+    zd = stock._tick_store._zerodha_data
+    for field in ("last_price", "open", "high", "low", "close",
+                   "volume_traded", "total_buy_quantity", "total_sell_quantity",
+                   "average_traded_price", "change", "timestamp"):
+        val = tick_raw.get(field)
+        if val is not None and val != "":
+            try:
+                zd[field] = float(val)
+            except (ValueError, TypeError):
+                pass
+    return True
+
+
 def load_tick_from_redis(redis: RedisProxy, stock: Stock) -> bool:
     """Load live tick data (equity + options aggregate) from Redis into TickStore.
 
@@ -248,22 +272,7 @@ def load_tick_from_redis(redis: RedisProxy, stock: Stock) -> bool:
 
     Returns True if any data was loaded.
     """
-    loaded = False
-
-    # Equity/index tick
-    tick_raw = redis.hgetall(f"data:tick:{stock.stock_symbol}")
-    if tick_raw:
-        zd = stock._tick_store._zerodha_data
-        for field in ("last_price", "open", "high", "low", "close",
-                       "volume_traded", "total_buy_quantity", "total_sell_quantity",
-                       "average_traded_price", "change", "timestamp"):
-            val = tick_raw.get(field)
-            if val is not None and val != "":
-                try:
-                    zd[field] = float(val)
-                except (ValueError, TypeError):
-                    pass
-        loaded = True
+    loaded = load_equity_tick_from_redis(redis, stock)
 
     # Options aggregate
     agg_raw = redis.hgetall(f"data:options_agg:{stock.stock_symbol}")

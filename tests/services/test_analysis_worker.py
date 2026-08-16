@@ -50,14 +50,43 @@ def _fake_stock_with_data(symbol="NIFTY", is_index=True):
     return stock
 
 
+def _real_stock_with_data(symbol="RELIANCE", is_index=False):
+    """Real common.Stock (has a genuine TickStore) with minimal price data."""
+    import pandas as pd
+    from common.Stock import Stock
+
+    stock = Stock(symbol, symbol, is_index=is_index)
+    stock.ltp = 2500.0
+    stock.ltp_change_perc = 0.85
+    stock._priceData = pd.DataFrame({
+        "Close": [2440, 2470, 2500],
+        "Volume": [100000, 110000, 120000],
+    })
+    stock.prevDayOHLCV = {"OPEN": 2440, "HIGH": 2560, "LOW": 2430, "CLOSE": 2450, "VOLUME": 1500000}
+    stock.daily_hv = 18.5
+    stock.sensibull_ctx = {
+        "last_fetch_time": None,
+        "current": {},
+        "historical_data": pd.DataFrame(),
+        "oi_chain_history": [],
+        "iv_chart_history": pd.DataFrame(),
+        "oi_history": pd.DataFrame(),
+    }
+    stock.reset_analysis = lambda: None
+    stock.update_latest_data = lambda: None
+    return stock
+
+
 class TestProcessJob:
     """Tests for process_job()."""
 
     @patch("services.analysis_engine.worker.load_stock_from_redis")
     @patch("services.analysis_engine.worker.load_sensibull_from_redis")
     @patch("services.analysis_engine.worker.load_zerodha_from_redis")
+    @patch("services.analysis_engine.worker.load_equity_tick_from_redis")
     def test_success_intraday_trend_found(
         self,
+        mock_load_equity_tick,
         mock_load_zerodha,
         mock_load_sensibull,
         mock_load_stock,
@@ -204,7 +233,8 @@ class TestProcessJob:
     @patch("services.analysis_engine.worker.load_stock_from_redis")
     @patch("services.analysis_engine.worker.load_zerodha_from_redis")
     @patch("services.analysis_engine.worker.load_sensibull_from_redis")
-    def test_52_week_detected(self, mock_load_sensibull, mock_load_zerodha, mock_load_stock, patch_app_ctx):
+    @patch("services.analysis_engine.worker.load_equity_tick_from_redis")
+    def test_52_week_detected(self, mock_load_equity_tick, mock_load_sensibull, mock_load_zerodha, mock_load_stock, patch_app_ctx):
         """52-week high detected in analysis → is_52w_high=true."""
         import common.shared as shared
         from services.analysis_engine.worker import process_job
@@ -237,7 +267,8 @@ class TestProcessJob:
     @patch("services.analysis_engine.worker.load_stock_from_redis")
     @patch("services.analysis_engine.worker.load_zerodha_from_redis")
     @patch("services.analysis_engine.worker.load_sensibull_from_redis")
-    def test_index_analysis(self, mock_load_sensibull, mock_load_zerodha, mock_load_stock, patch_app_ctx):
+    @patch("services.analysis_engine.worker.load_equity_tick_from_redis")
+    def test_index_analysis(self, mock_load_equity_tick, mock_load_sensibull, mock_load_zerodha, mock_load_stock, patch_app_ctx):
         """Index stocks use run_all_intraday with index=True."""
         import common.shared as shared
         from services.analysis_engine.worker import process_job
@@ -270,7 +301,8 @@ class TestProcessJob:
     @patch("services.analysis_engine.worker.load_stock_from_redis")
     @patch("services.analysis_engine.worker.load_zerodha_from_redis")
     @patch("services.analysis_engine.worker.load_sensibull_from_redis")
-    def test_analyser_exception_caught(self, mock_load_sensibull, mock_load_zerodha, mock_load_stock, patch_app_ctx):
+    @patch("services.analysis_engine.worker.load_equity_tick_from_redis")
+    def test_analyser_exception_caught(self, mock_load_equity_tick, mock_load_sensibull, mock_load_zerodha, mock_load_stock, patch_app_ctx):
         """Exception in analyser → ERROR result."""
         import common.shared as shared
         from services.analysis_engine.worker import process_job
@@ -290,3 +322,89 @@ class TestProcessJob:
 
         assert result["result"] == "ERROR"
         assert "Bad data" in result["error"]
+
+
+class TestLoadEquityTickWiring:
+    """Regression guard: process_job() must hydrate zerodha_data (total_buy_quantity/
+    total_sell_quantity) from data:tick:{symbol} via load_equity_tick_from_redis().
+
+    Previously this loader existed in stock_loader.py but was never imported/called
+    by worker.py, so analyze_buy_sell_quantity always saw zero-initialized values
+    in the analysis-engine (production) path. See docs/ANALYSER_DATA_SOURCES.md.
+    """
+
+    @patch("services.analysis_engine.worker.load_stock_from_redis")
+    @patch("services.analysis_engine.worker.load_sensibull_from_redis")
+    @patch("services.analysis_engine.worker.load_zerodha_from_redis")
+    def test_equity_tick_hydrated_from_redis(
+        self, mock_load_zerodha, mock_load_sensibull, mock_load_stock, patch_app_ctx,
+    ):
+        """load_equity_tick_from_redis is NOT mocked here — verifies the real
+        function actually runs and writes into stock.zerodha_data."""
+        import common.shared as shared
+        from services.analysis_engine.worker import process_job
+
+        patch_app_ctx.mode = shared.Mode.INTRADAY
+
+        stock = _real_stock_with_data("RELIANCE", is_index=False)
+        mock_load_stock.return_value = stock
+        mock_load_sensibull.return_value = True
+
+        redis = MagicMock()
+        redis.hgetall.side_effect = lambda key: (
+            {
+                "last_price": "2500.5",
+                "total_buy_quantity": "45000",
+                "total_sell_quantity": "12000",
+                "average_traded_price": "2495.0",
+            }
+            if key == "data:tick:RELIANCE" else {}
+        )
+
+        orchestrator = MagicMock()
+        mock_score = MagicMock()
+        mock_score.total_score = 0
+        mock_score.priority.name = "LOW"
+        mock_score.priority.value = 1
+        orchestrator.run_all_intraday.return_value = (False, mock_score)
+
+        job = {"job_id": "abc", "cycle_id": "c1", "symbol": "RELIANCE", "is_index": "false", "mode": "intraday"}
+        process_job(redis, orchestrator, job)
+
+        assert stock.zerodha_data["total_buy_quantity"] == 45000.0
+        assert stock.zerodha_data["total_sell_quantity"] == 12000.0
+        assert stock.zerodha_data["last_price"] == 2500.5
+
+    @patch("services.analysis_engine.worker.load_stock_from_redis")
+    @patch("services.analysis_engine.worker.load_sensibull_from_redis")
+    @patch("services.analysis_engine.worker.load_zerodha_from_redis")
+    def test_buy_sell_quantity_analyser_fires_when_hydrated(
+        self, mock_load_zerodha, mock_load_sensibull, mock_load_stock, patch_app_ctx,
+    ):
+        """End-to-end: with real tick hydration, analyze_buy_sell_quantity (run via
+        the real orchestrator) actually sets BUY_SELL on stock.analysis."""
+        import common.shared as shared
+        from services.analysis_engine.worker import process_job
+        from services.analysis_engine.analyser.Analyser import AnalyserOrchestrator
+        from services.analysis_engine.analyser.TechnicalAnalyser import TechnicalAnalyser
+
+        patch_app_ctx.mode = shared.Mode.INTRADAY
+
+        stock = _real_stock_with_data("RELIANCE", is_index=False)
+        mock_load_stock.return_value = stock
+        mock_load_sensibull.return_value = True
+
+        redis = MagicMock()
+        redis.hgetall.side_effect = lambda key: (
+            {"total_buy_quantity": "90000", "total_sell_quantity": "10000"}
+            if key == "data:tick:RELIANCE" else {}
+        )
+
+        orchestrator = AnalyserOrchestrator()
+        orchestrator.register(TechnicalAnalyser())
+
+        job = {"job_id": "abc", "cycle_id": "c1", "symbol": "RELIANCE", "is_index": "false", "mode": "intraday"}
+        process_job(redis, orchestrator, job)
+
+        assert "BUY_SELL" in stock.analysis["BULLISH"]
+        assert stock.analysis["BULLISH"]["BUY_SELL"].buy_quantity == 90000.0
