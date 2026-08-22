@@ -155,39 +155,6 @@ class TestCompositeLossWeightingOptions:
         assert any(p.grad is not None and p.grad.abs().sum().item() > 0
                    for p in model.parameters())
 
-    def test_vega_weight_requires_vega_train(self):
-        model = VolatilityPINN()
-        k, tau, w = _sample_training_data()
-        collocation = sample_collocation(n_points=50, rng=np.random.default_rng(14))
-
-        with pytest.raises(ValueError):
-            composite_loss(model, k, tau, w, collocation, use_vega_weight=True)
-
-    def test_enabling_vega_weight_changes_data_loss(self):
-        model = VolatilityPINN()
-        k, tau, w = _sample_training_data()
-        collocation = sample_collocation(n_points=50, rng=np.random.default_rng(15))
-        vega_train = torch.linspace(0.01, 50.0, len(k))  # varied, non-uniform vega
-
-        _, unweighted = composite_loss(model, k, tau, w, collocation)
-        _, weighted = composite_loss(
-            model, k, tau, w, collocation, vega_train=vega_train, use_vega_weight=True,
-        )
-        assert unweighted["data"] != weighted["data"]
-
-    def test_all_three_weights_combined_finite_and_backprops(self):
-        model = VolatilityPINN()
-        k, tau, w = _sample_training_data()
-        collocation = sample_collocation(n_points=50, rng=np.random.default_rng(16))
-        vega_train = torch.linspace(0.01, 50.0, len(k))
-
-        total, _ = composite_loss(
-            model, k, tau, w, collocation,
-            use_tau_weight=True, use_moneyness_weight=True, use_vega_weight=True,
-            vega_train=vega_train,
-        )
-        total.backward()
-
-        assert torch.isfinite(total)
-        assert any(p.grad is not None and p.grad.abs().sum().item() > 0
-                   for p in model.parameters())
+    # use_vega_weight / vega_train were removed from composite_loss after an
+    # isolation experiment found vega-weighting (raw and sqrt(tau)-normalized)
+    # actively hurt wing accuracy -- see data_loss.py's module-level note.

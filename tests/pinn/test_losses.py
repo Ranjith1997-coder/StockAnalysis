@@ -13,7 +13,7 @@ import torch.nn as nn
 import pytest
 
 from tools.pinn_volatility.model.pinn import VolatilityPINN
-from tools.pinn_volatility.losses.data_loss import beta_nll_loss, tau_weight, moneyness_weight, vega_weight
+from tools.pinn_volatility.losses.data_loss import beta_nll_loss, tau_weight, moneyness_weight
 from tools.pinn_volatility.losses.arbitrage import (
     calendar_penalty, butterfly_penalty, durrleman_density,
 )
@@ -273,34 +273,12 @@ class TestMoneynessWeight:
         assert w_pos.item() == pytest.approx(w_neg.item())
 
 
-class TestVegaWeight:
-    def test_matches_squared_vega(self):
-        vega = torch.tensor([2.0, 10.0])
-        w = vega_weight(vega, floor=0.0)
-        assert w[0].item() == pytest.approx(4.0, abs=1e-6)
-        assert w[1].item() == pytest.approx(100.0, abs=1e-6)
-
-    def test_high_vega_weighted_far_more_than_near_zero_vega(self):
-        """Core premise of Fix 3: deep OTM (vega~0) samples must contribute
-        almost nothing relative to ATM (high vega) samples."""
-        vega = torch.tensor([50.0, 0.01])  # ATM vs. deep OTM
-        w = vega_weight(vega)
-        assert w[0] > w[1] * 1000
-
-    def test_zero_vega_floored_not_exactly_zero(self):
-        """A literal zero weight would zero out the sample's gradient
-        contribution to variance/etc entirely and risks div-by-zero in
-        beta_nll_loss's mean-1.0 renormalization if ALL weights were zero --
-        floor keeps it a very small but nonzero, numerically safe value."""
-        vega = torch.tensor([0.0])
-        w = vega_weight(vega, floor=1e-6)
-        assert w.item() == pytest.approx(1e-6, abs=1e-9)
-        assert w.item() > 0
-
-    def test_always_nonnegative(self):
-        vega = torch.tensor([-1.0, 0.0, 5.0])  # vega shouldn't be negative in practice, but ** 2 handles it anyway
-        w = vega_weight(vega)
-        assert torch.all(w >= 0)
+# vega_weight() was removed from data_loss.py after an isolation experiment
+# found it actively hurt wing accuracy (both raw and sqrt(tau)-normalized
+# variants) -- see data_loss.py's module-level note and conversation
+# history on feature/pinn-volatility-engine. Its test coverage is removed
+# along with it; bs_utils.vega() itself is untouched and still tested in
+# test_bs_utils.py.
 
 
 class TestBetaNllLossSampleWeights:
