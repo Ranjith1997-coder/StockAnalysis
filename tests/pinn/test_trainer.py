@@ -49,7 +49,6 @@ class TestPINNTrainerDefaults:
         assert t.lambda_cal == 1.0
         assert t.lambda_but == 0.5
         assert t.beta_nll == 0.5
-        assert t.use_vega_weight is False
         assert t.seed is None
         assert t.grad_clip_norm == 1.0
 
@@ -228,22 +227,7 @@ class TestReproducibility:
         assert math.isfinite(result.final_breakdown["total"])
 
 
-class TestVegaWeightIntegration:
-    def test_use_vega_weight_requires_vega_train_or_raises(self):
-        k, tau, w = _synthetic_training_data(seed=0)
-        model = VolatilityPINN()
-        trainer = PINNTrainer(adam_epochs=3, n_collocation=20, lbfgs_max_iter=2,
-                               log_every=5, use_vega_weight=True)
-        with pytest.raises(ValueError):
-            trainer.train(model, k, tau, w)  # no vega_train passed
-
-    def test_use_vega_weight_with_vega_train_runs_and_is_finite(self):
-        torch.manual_seed(8)
-        k, tau, w = _synthetic_training_data(seed=8)
-        vega_train = torch.linspace(0.01, 20.0, len(k))
-        model = VolatilityPINN()
-        trainer = PINNTrainer(adam_epochs=10, n_collocation=20, lbfgs_max_iter=3,
-                               log_every=5, use_vega_weight=True)
-
-        result = trainer.train(model, k, tau, w, vega_train=vega_train)
-        assert math.isfinite(result.final_breakdown["total"])
+# use_vega_weight/vega_train were removed from PINNTrainer after an
+# isolation experiment found vega-weighting actively hurt wing accuracy --
+# see data_loss.py's module-level note and conversation history on
+# feature/pinn-volatility-engine.

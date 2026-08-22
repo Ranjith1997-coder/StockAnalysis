@@ -98,23 +98,15 @@ def moneyness_weight(k: torch.Tensor, alpha: float = 5.0) -> torch.Tensor:
     return 1.0 + alpha * k ** 2
 
 
-def vega_weight(vega: torch.Tensor, floor: float = 1e-6) -> torch.Tensor:
-    """Weight each sample by its (squared) Black-Scholes vega -- shifts the
-    loss's implicit objective from vol-space error to pricing-space error.
-
-    Since Delta_C ~ Vega * Delta_sigma, weighting the vol-residual term by
-    Vega^2 makes the loss reflect (Delta_C)^2 (monetary/pricing error)
-    rather than raw (Delta_sigma)^2. Deep OTM/ITM options have Vega -> 0,
-    meaning a sub-tick settlement-price change there implies a huge,
-    untrustworthy apparent IV swing (Delta_sigma ~ Delta_price / Vega blows
-    up as Vega -> 0) -- an unweighted loss lets exactly that noise dominate
-    the gradient on illiquid fringe strikes. Weighting by Vega^2 makes those
-    samples contribute almost nothing instead, which is the correct
-    response to a reading that's inherently untrustworthy, not a bug to
-    work around.
-
-    `floor` prevents a literal zero weight -- numerically safe, and guards
-    against beta_nll_loss's internal mean-1.0 renormalization dividing by
-    zero in the pathological all-deep-OTM-batch case.
-    """
-    return torch.clamp(vega ** 2, min=floor)
+# NOTE: a vega_weight() (Black-Scholes-vega-squared sample reweighting) was
+# tried here and deliberately removed. An isolation experiment (see
+# conversation, feature/pinn-volatility-engine branch history) found it
+# actively HURT wing accuracy -- both raw and sqrt(tau)-normalized variants
+# -- rather than helping: it suppresses gradient signal from low-vega
+# (mostly deep-wing) samples by design, which is the opposite of what wing
+# *accuracy* needs. Fourier feature encoding (model/pinn.py's
+# num_fourier_bands) turned out to be doing 100% of the real improvement;
+# combining it with vega-weighting only diluted that gain. bs_utils.vega()
+# itself is kept (a correct, independently useful BS primitive, and
+# dataset.py still records it per-sample) -- only the loss-reweighting use
+# of it was removed.

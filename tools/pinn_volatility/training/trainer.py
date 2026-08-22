@@ -83,7 +83,6 @@ class PINNTrainer:
         use_moneyness_weight: bool = False,
         tau_weight_max: float = 20.0,
         moneyness_alpha: float = 5.0,
-        use_vega_weight: bool = False,
         seed: int | None = None,
     ):
         self.adam_epochs = adam_epochs
@@ -103,21 +102,19 @@ class PINNTrainer:
         self.use_moneyness_weight = use_moneyness_weight
         self.tau_weight_max = tau_weight_max
         self.moneyness_alpha = moneyness_alpha
-        self.use_vega_weight = use_vega_weight
         self.seed = seed
         self._rng = np.random.default_rng(seed) if seed is not None else None
 
     def _sample_collocation(self):
         return sample_collocation(self.n_collocation, rng=self._rng)
 
-    def _loss(self, model, k_train, tau_train, w_train, collocation, vega_train=None):
+    def _loss(self, model, k_train, tau_train, w_train, collocation):
         return composite_loss(
             model, k_train, tau_train, w_train, collocation,
             beta=self.beta_nll, lambda_data=self.lambda_data,
             lambda_cal=self.lambda_cal, lambda_but=self.lambda_but,
             use_tau_weight=self.use_tau_weight, use_moneyness_weight=self.use_moneyness_weight,
             tau_weight_max=self.tau_weight_max, moneyness_alpha=self.moneyness_alpha,
-            vega_train=vega_train, use_vega_weight=self.use_vega_weight,
         )
 
     def train(
@@ -126,7 +123,6 @@ class PINNTrainer:
         k_train: torch.Tensor,
         tau_train: torch.Tensor,
         w_train: torch.Tensor,
-        vega_train: torch.Tensor | None = None,
     ) -> TrainingResult:
         """Run the full two-stage training loop in place on `model`.
 
@@ -135,8 +131,6 @@ class PINNTrainer:
                 the same object is returned in the result).
             k_train, tau_train, w_train: RAW training samples (from
                 dataset.samples_to_tensors()), each shape (N,).
-            vega_train: RAW (N,) per-sample BS vega (e.g. from
-                dataset.vega_tensor()) -- required iff use_vega_weight=True.
 
         Returns:
             TrainingResult with the (now-trained) model, the final loss
@@ -157,7 +151,7 @@ class PINNTrainer:
             if epoch > 0 and epoch % self.collocation_regen_every == 0:
                 collocation = self._sample_collocation()
 
-            loss, breakdown = self._loss(model, k_train, tau_train, w_train, collocation, vega_train)
+            loss, breakdown = self._loss(model, k_train, tau_train, w_train, collocation)
 
             optimizer.zero_grad()
             loss.backward()
@@ -186,7 +180,7 @@ class PINNTrainer:
         def closure():
             nonlocal last_breakdown
             lbfgs.zero_grad()
-            loss, breakdown = self._loss(model, k_train, tau_train, w_train, collocation_final, vega_train)
+            loss, breakdown = self._loss(model, k_train, tau_train, w_train, collocation_final)
             loss.backward()
             last_breakdown = breakdown
             return loss

@@ -12,9 +12,7 @@ from __future__ import annotations
 import torch
 
 from tools.pinn_volatility.model.pinn import VolatilityPINN, RawInputModel
-from tools.pinn_volatility.losses.data_loss import (
-    beta_nll_loss, tau_weight, moneyness_weight, vega_weight,
-)
+from tools.pinn_volatility.losses.data_loss import beta_nll_loss, tau_weight, moneyness_weight
 from tools.pinn_volatility.losses.arbitrage import calendar_penalty, butterfly_penalty
 
 
@@ -32,8 +30,6 @@ def composite_loss(
     use_moneyness_weight: bool = False,
     tau_weight_max: float = 20.0,
     moneyness_alpha: float = 5.0,
-    vega_train: torch.Tensor | None = None,
-    use_vega_weight: bool = False,
 ) -> tuple[torch.Tensor, dict[str, float]]:
     """Compute the full composite training loss.
 
@@ -55,12 +51,6 @@ def composite_loss(
             docstring). Default False -- reproduces the original behavior.
         tau_weight_max, moneyness_alpha: tuning knobs for the above, only
             relevant when the corresponding flag is True.
-        vega_train: RAW (N,) per-sample BS vega (e.g. from
-            dataset.vega_tensor()) -- required when use_vega_weight=True.
-        use_vega_weight: if True, up-weight samples by (BS vega)^2, shifting
-            the loss toward pricing-space error and naturally down-weighting
-            noisy, near-zero-vega fringe strikes (see
-            losses/data_loss.vega_weight docstring). Default False.
 
     Returns:
         (total_loss, breakdown) -- total_loss is the scalar to call
@@ -75,16 +65,12 @@ def composite_loss(
     mu, v_squared = wrapped(k_tau_train)
 
     sample_weights = None
-    if use_tau_weight or use_moneyness_weight or use_vega_weight:
+    if use_tau_weight or use_moneyness_weight:
         sample_weights = torch.ones_like(tau_train)
         if use_tau_weight:
             sample_weights = sample_weights * tau_weight(tau_train, max_weight=tau_weight_max)
         if use_moneyness_weight:
             sample_weights = sample_weights * moneyness_weight(k_train, alpha=moneyness_alpha)
-        if use_vega_weight:
-            if vega_train is None:
-                raise ValueError("use_vega_weight=True requires vega_train to be provided")
-            sample_weights = sample_weights * vega_weight(vega_train)
 
     l_data = beta_nll_loss(mu, v_squared, w_train, beta=beta, sample_weights=sample_weights)
     l_cal = calendar_penalty(wrapped, collocation)
