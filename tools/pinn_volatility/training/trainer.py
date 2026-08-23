@@ -63,18 +63,21 @@ class PINNTrainer:
     (see conversation) -- purely from different random collocation draws,
     not genuine model-quality differences.
 
-    lambda_but=1.0 (raised from 0.5): with num_fourier_bands=3 (the model's
+    lambda_but=0.7 (raised from 0.5): with num_fourier_bands=3 (the model's
     own default), the network has real capacity to fit wing curvature --
     but that same capacity let it produce locally negative Durrleman
     density (a genuine butterfly-arbitrage violation) at lambda_but=0.5,
     confirmed via training/validate.py's audit_arbitrage() at up to 7.6% of
     a dense audit grid on one holdout day, above the plan's own 5%
-    acceptance threshold (section 7.4). Raised to 1.0 and re-validated
-    across 3 independent holdout days: violation rate dropped to a
-    consistent 1.7-3.2% while wings MAE stayed under the 2.5% target
-    (in fact improved slightly) -- at a modest cost of ~0.3 points on
-    ATM/overall MAE. See conversation history for the full lambda_but
-    sweep (0.5/1.0/2.0/3.0) that motivated this value specifically.
+    acceptance threshold (section 7.4). A coarse sweep (0.5/1.0/2.0/3.0)
+    found 1.0 resolved the violation but cost ~0.3 points of ATM/overall
+    MAE; a finer sweep between 0.5 and 1.0 found violations drop sharply
+    already by 0.6 and stay roughly flat (2-3%) from there to 1.0 -- so
+    0.7 clears the threshold with real margin (2.83 +/- 0.55% across 3
+    holdout days, max 3.58%, vs. the 5% limit) while recovering nearly all
+    of the 0.5 config's ATM/bias quality (ATM 2.99 vs. 1.0's 3.18; bias
+    -1.79 vs. -1.96), with wings essentially unchanged (2.05 vs. 2.06).
+    See conversation history for the full sweep data.
     """
 
     def __init__(
@@ -88,7 +91,7 @@ class PINNTrainer:
         collocation_regen_every: int = 1,
         lambda_data: float = 1.0,
         lambda_cal: float = 1.0,
-        lambda_but: float = 1.0,
+        lambda_but: float = 0.7,
         beta_nll: float = 0.5,
         grad_clip_norm: float = 1.0,
         log_every: int = 500,

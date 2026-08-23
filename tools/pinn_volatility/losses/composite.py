@@ -27,7 +27,7 @@ def composite_loss(
     beta: float = 0.5,
     lambda_data: float = 1.0,
     lambda_cal: float = 1.0,
-    lambda_but: float = 1.0,
+    lambda_but: float = 0.7,
     use_tau_weight: bool = False,
     use_moneyness_weight: bool = False,
     tau_weight_max: float = 20.0,
