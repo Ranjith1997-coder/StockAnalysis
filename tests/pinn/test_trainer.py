@@ -49,9 +49,10 @@ class TestPINNTrainerDefaults:
         assert t.lambda_cal == 1.0
         # Raised from 0.5 -- at 0.5, num_fourier_bands=3's real wing-fitting
         # capacity produced actual butterfly-arbitrage violations (up to
-        # 7.6% of an audit grid, above the plan's 5% threshold). 1.0
-        # brought this to a consistent 1.7-3.2% across 3 holdout days.
-        assert t.lambda_but == 1.0
+        # 7.6% of an audit grid, above the plan's 5% threshold). A finer
+        # sweep found 0.7 clears the threshold (~2.8% across 3 holdout
+        # days, max 3.58%) while recovering most of 0.5's ATM/bias quality.
+        assert t.lambda_but == 0.7
         assert t.beta_nll == 0.5
         assert t.seed is None
         assert t.grad_clip_norm == 1.0

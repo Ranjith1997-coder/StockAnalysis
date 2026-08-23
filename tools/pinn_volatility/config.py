@@ -49,10 +49,13 @@ class PINNConfig:
     # Raised from 0.5 -- at 0.5, num_fourier_bands=3's real wing-fitting
     # capacity let the model produce actual butterfly-arbitrage violations
     # (up to 7.6% of an audit grid on one holdout day, above the plan's 5%
-    # threshold). 1.0 brought violations to a consistent 1.7-3.2% across 3
-    # holdout days while wings MAE stayed under the 2.5% target. See
-    # training/trainer.py's PINNTrainer docstring for the full context.
-    lambda_butterfly: float = 1.0
+    # threshold). A finer sweep found 0.7 is the sweet spot: violations drop
+    # to a consistent ~2.8% (max 3.58%, still well under 5%) across 3
+    # holdout days while recovering nearly all of the 0.5 config's ATM/bias
+    # quality (unlike 1.0, which also cleared the threshold but cost more
+    # accuracy). See training/trainer.py's PINNTrainer docstring for the
+    # full sweep.
+    lambda_butterfly: float = 0.7
     beta_nll: float = 0.5
 
     # NOTE: vega-weighting (use_vega_weight) was tried and removed -- an
