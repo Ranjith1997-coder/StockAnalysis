@@ -15,7 +15,7 @@ import pytest
 from tools.pinn_volatility.model.pinn import VolatilityPINN
 from tools.pinn_volatility.losses.data_loss import beta_nll_loss, tau_weight, moneyness_weight
 from tools.pinn_volatility.losses.arbitrage import (
-    calendar_penalty, butterfly_penalty, durrleman_density,
+    calendar_penalty, butterfly_penalty, durrleman_density, calendar_slope,
 )
 
 
@@ -103,6 +103,34 @@ class TestBetaNllLoss:
         loss = beta_nll_loss(mu, v2, target, beta=1.0)
         expected = (v2 * 0.5 * torch.log(v2) + 0.5 * (target.reshape(mu.shape) - mu) ** 2).mean()
         assert loss.item() == pytest.approx(expected.item(), abs=1e-6)
+
+
+class TestCalendarSlope:
+    def test_matches_hand_derived_closed_form(self):
+        """w = a*tau + b*k^2 + c -> dw/dtau = a exactly, everywhere,
+        independent of k -- trivial closed form to check autograd against."""
+        a, b, c = 0.35, 0.3, 0.5
+        surface = SyntheticSurface(a=a, b=b, c=c)
+        k_tau = _grid(n=15, tau=0.2)
+        slope = calendar_slope(surface, k_tau)
+        assert torch.allclose(slope, torch.full_like(slope, a), atol=1e-5)
+
+    def test_shape_matches_durrleman_density_convention(self):
+        surface = SyntheticSurface()
+        k_tau = _grid(n=10)
+        slope = calendar_slope(surface, k_tau)
+        assert slope.shape == (10,)
+
+    def test_calendar_penalty_uses_same_slope_values(self):
+        """calendar_penalty must be exactly derivable from calendar_slope's
+        raw values -- regression guard for the refactor that extracted
+        calendar_slope out of calendar_penalty's body."""
+        surface = SyntheticSurface(a=-0.3, b=0.3, c=0.5)
+        k_tau = _grid()
+        slope = calendar_slope(surface, k_tau)
+        expected_penalty = (torch.clamp(-slope, min=0.0) ** 2).mean()
+        actual_penalty = calendar_penalty(surface, k_tau)
+        assert actual_penalty.item() == pytest.approx(expected_penalty.item(), abs=1e-6)
 
 
 class TestCalendarPenalty:

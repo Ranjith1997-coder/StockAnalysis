@@ -13,7 +13,9 @@ import torch
 
 from tools.pinn_volatility.model.pinn import VolatilityPINN, RawInputModel
 from tools.pinn_volatility.losses.data_loss import beta_nll_loss, tau_weight, moneyness_weight
-from tools.pinn_volatility.losses.arbitrage import calendar_penalty, butterfly_penalty
+from tools.pinn_volatility.losses.arbitrage import (
+    calendar_penalty, butterfly_penalty, calendar_slope, durrleman_density,
+)
 
 
 def composite_loss(
@@ -78,10 +80,23 @@ def composite_loss(
 
     total = lambda_data * l_data + lambda_cal * l_cal + lambda_but * l_but
 
+    # Diagnostic-only raw values -- separate autograd passes over the same
+    # collocation batch, NOT part of `total`'s backward graph (their results
+    # are only ever read via .item(), never backpropagated). These answer
+    # "is the penalty actually being exercised right now" (min < 0 means a
+    # real violation exists somewhere in this batch), which the aggregate
+    # penalty alone can't show -- a penalty of exactly 0.0 is consistent
+    # with either "no violations anywhere" or "violations exist but are
+    # tiny", and this audit found the two are easy to conflate in practice.
+    min_g = durrleman_density(wrapped, collocation).min().item()
+    min_calendar_slope = calendar_slope(wrapped, collocation).min().item()
+
     breakdown = {
         "data": l_data.item(),
         "calendar": l_cal.item(),
         "butterfly": l_but.item(),
         "total": total.item(),
+        "min_g": min_g,
+        "min_calendar_slope": min_calendar_slope,
     }
     return total, breakdown

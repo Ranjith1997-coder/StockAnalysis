@@ -114,7 +114,9 @@ class TestTrainingMechanics:
 
         result = trainer.train(model, k, tau, w)
 
-        assert set(result.final_breakdown.keys()) == {"data", "calendar", "butterfly", "total"}
+        assert set(result.final_breakdown.keys()) == {
+            "data", "calendar", "butterfly", "total", "min_g", "min_calendar_slope",
+        }
 
 
 class TestCollocationRegeneration:

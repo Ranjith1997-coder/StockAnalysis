@@ -28,9 +28,25 @@ class TestCompositeLoss:
 
         assert total.dim() == 0
         assert torch.isfinite(total)
-        assert set(breakdown.keys()) == {"data", "calendar", "butterfly", "total"}
+        assert set(breakdown.keys()) == {
+            "data", "calendar", "butterfly", "total", "min_g", "min_calendar_slope",
+        }
         for v in breakdown.values():
             assert np.isfinite(v)
+
+    def test_min_g_and_min_calendar_slope_are_real_raw_values(self):
+        """Regression guard: these must be actual per-point minimums (can be
+        negative, e.g. mid-training before the surface is arbitrage-free),
+        not accidentally the same as the (always >= 0) penalty values."""
+        model = VolatilityPINN()
+        k, tau, w = _sample_training_data()
+        collocation = sample_collocation(n_points=100, rng=np.random.default_rng(2))
+
+        _, breakdown = composite_loss(model, k, tau, w, collocation)
+
+        # Not derived from / equal to the penalty terms (which are always >= 0).
+        assert breakdown["min_g"] != breakdown["butterfly"]
+        assert breakdown["min_calendar_slope"] != breakdown["calendar"]
 
     def test_total_matches_weighted_sum_of_breakdown(self):
         model = VolatilityPINN()

@@ -161,9 +161,11 @@ class PINNTrainer:
 
             if epoch % self.log_every == 0 or epoch == self.adam_epochs - 1:
                 logger.info(
-                    "[pinn] Adam epoch %d/%d: total=%.6f data=%.6f cal=%.6f but=%.6f",
+                    "[pinn] Adam epoch %d/%d: total=%.6f data=%.6f cal=%.6f but=%.6f "
+                    "min_g=%.6f min_cal_slope=%.6f",
                     epoch, self.adam_epochs, breakdown["total"], breakdown["data"],
                     breakdown["calendar"], breakdown["butterfly"],
+                    breakdown["min_g"], breakdown["min_calendar_slope"],
                 )
                 history.append({"epoch": epoch, "stage": "adam", **breakdown})
 
@@ -188,9 +190,11 @@ class PINNTrainer:
         lbfgs.step(closure)
 
         logger.info(
-            "[pinn] L-BFGS final: total=%.6f data=%.6f cal=%.6f but=%.6f",
+            "[pinn] L-BFGS final: total=%.6f data=%.6f cal=%.6f but=%.6f "
+            "min_g=%.6f min_cal_slope=%.6f",
             last_breakdown.get("total", 0.0), last_breakdown.get("data", 0.0),
             last_breakdown.get("calendar", 0.0), last_breakdown.get("butterfly", 0.0),
+            last_breakdown.get("min_g", 0.0), last_breakdown.get("min_calendar_slope", 0.0),
         )
         history.append({"epoch": self.adam_epochs, "stage": "lbfgs", **last_breakdown})
 

@@ -66,12 +66,15 @@ class VolatilityPINN(nn.Module):
     remain perfectly smooth (C-infinity) -- so the calendar/butterfly
     penalties' autograd requirements are unaffected either way.
 
-    Default num_fourier_bands=0 (disabled) reproduces the original
-    architecture and parameter count exactly -- this is opt-in, not a
-    silent behavior change.
+    Default num_fourier_bands=3: found empirically optimal via a frequency
+    sweep on real 8-day NIFTY+BANKNIFTY walk-forward data -- L=2 gave 3.79%
+    overall MAE, L=3 gave 2.68% (well-balanced: 2.67% ATM, 2.75% wings),
+    L=4 gave 3.32% with growing bias (overshooting into high-frequency
+    wiggle territory). Pass num_fourier_bands=0 explicitly to reproduce the
+    original pre-Fourier architecture and parameter count exactly.
     """
 
-    def __init__(self, hidden_dim: int = 128, num_layers: int = 4, num_fourier_bands: int = 0):
+    def __init__(self, hidden_dim: int = 128, num_layers: int = 4, num_fourier_bands: int = 3):
         super().__init__()
         self.num_fourier_bands = num_fourier_bands
         # gamma(k) (2 * num_fourier_bands dims) + tau (1 dim), or plain (k, tau) if disabled.

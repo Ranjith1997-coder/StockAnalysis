@@ -40,8 +40,13 @@ class TestVolatilityPINN:
         assert mu.shape == (16, 1)
         assert v_squared.shape == (16, 1)
 
-    def test_param_count(self):
-        model = VolatilityPINN(hidden_dim=128, num_layers=4)
+    def test_param_count_fourier_disabled(self):
+        """Explicit num_fourier_bands=0 -- the "bare" 2-input architecture.
+        Note: this is no longer the default (see TestFourierFeatureEncoding
+        .test_default_is_now_three_fourier_bands) -- num_fourier_bands=3 was
+        found empirically optimal (2.68% MAE walk-forward, see conversation)
+        and is now VolatilityPINN's default."""
+        model = VolatilityPINN(hidden_dim=128, num_layers=4, num_fourier_bands=0)
         n_params = sum(p.numel() for p in model.parameters())
         # 2->128 (384) + 3x(128->128) (3x16512=49536) + 128->2 (258) = 50178
         assert n_params == 50178
@@ -194,15 +199,32 @@ class TestRawInputModel:
 
 
 class TestFourierFeatureEncoding:
-    """num_fourier_bands=0 (default) must reproduce the original architecture
-    exactly -- these tests focus on the opt-in encoding, and specifically
-    re-verify the critical property the whole architecture depends on
-    (non-degenerate second derivative w.r.t. k) still holds with it enabled."""
+    """num_fourier_bands=3 is now VolatilityPINN's default -- found
+    empirically optimal via a frequency sweep (L=2: 3.79% MAE, L=3: 2.68%,
+    L=4: 3.32%, all on the same seeded 8-day walk-forward holdout; L=4
+    overshoots into higher bias, confirming the classic Fourier-feature
+    bias/variance tradeoff). num_fourier_bands=0 remains available and
+    exactly reproduces the pre-Fourier architecture when explicitly passed.
+    These tests re-verify the critical property the whole architecture
+    depends on (non-degenerate second derivative w.r.t. k) still holds with
+    Fourier encoding enabled."""
 
-    def test_default_disabled_preserves_original_param_count(self):
-        model = VolatilityPINN()  # num_fourier_bands=0 by default
+    def test_default_is_now_three_fourier_bands(self):
+        model = VolatilityPINN()  # no args -- exercises the actual default
+        assert model.num_fourier_bands == 3
+        input_dim = 2 * 3 + 1
+        expected = (
+            (input_dim * 128 + 128)
+            + 3 * (128 * 128 + 128)
+            + (128 * 2 + 2)
+        )
         n_params = sum(p.numel() for p in model.parameters())
-        assert n_params == 50178  # same as TestVolatilityPINN.test_param_count
+        assert n_params == expected
+
+    def test_explicit_disabled_preserves_original_param_count(self):
+        model = VolatilityPINN(num_fourier_bands=0)
+        n_params = sum(p.numel() for p in model.parameters())
+        assert n_params == 50178  # same as TestVolatilityPINN.test_param_count_fourier_disabled
 
     def test_gamma_k_matches_hand_computed_values(self):
         model = VolatilityPINN(num_fourier_bands=2)
