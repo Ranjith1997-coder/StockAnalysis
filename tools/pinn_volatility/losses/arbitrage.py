@@ -11,21 +11,34 @@ from __future__ import annotations
 import torch
 
 
-def calendar_penalty(model, k_tau_collocation: torch.Tensor) -> torch.Tensor:
-    """Penalty for calendar arbitrage: total variance must be non-decreasing
-    in tau, i.e. ∂w/∂tau >= 0 everywhere.
+def calendar_slope(model, k_tau: torch.Tensor) -> torch.Tensor:
+    """Raw ∂w/∂tau per collocation point, via autodiff -- NOT clamped or
+    squared. Positive everywhere satisfies the calendar no-arbitrage
+    condition; any negative value is a genuine violation at that point.
 
-    Uses first-order autograd. Only violations (negative derivative) are
-    penalized -- a surface with ∂w/∂tau > 0 contributes zero penalty.
+    Shape (N,) -- mirrors durrleman_density()'s convention (below), so both
+    can feed either a training penalty (calendar_penalty) or diagnostic/audit
+    code (training/validate.py's audit_arbitrage) that wants the raw
+    min/distribution, not just the aggregate penalty.
     """
-    k_tau = k_tau_collocation.clone().requires_grad_(True)
+    k_tau = k_tau.clone().requires_grad_(True)
     mu, _ = model(k_tau)
 
     grad_outputs = torch.ones_like(mu)
     grads = torch.autograd.grad(mu, k_tau, grad_outputs=grad_outputs,
                                  create_graph=True)[0]
-    dw_dtau = grads[:, 1:2]  # ∂w/∂tau (index 1 of the input is tau)
+    return grads[:, 1]  # ∂w/∂tau (index 1 of the input is tau), shape (N,)
 
+
+def calendar_penalty(model, k_tau_collocation: torch.Tensor) -> torch.Tensor:
+    """Penalty for calendar arbitrage: total variance must be non-decreasing
+    in tau, i.e. ∂w/∂tau >= 0 everywhere.
+
+    Uses first-order autograd (via calendar_slope). Only violations
+    (negative derivative) are penalized -- a surface with ∂w/∂tau > 0
+    contributes zero penalty.
+    """
+    dw_dtau = calendar_slope(model, k_tau_collocation)
     violation = torch.clamp(-dw_dtau, min=0.0)
     return (violation ** 2).mean()
 

@@ -3,10 +3,52 @@ holdout evaluation (the start of Step 9)."""
 
 import math
 import torch
+import torch.nn as nn
 import pytest
 
 from tools.pinn_volatility.model.pinn import VolatilityPINN
-from tools.pinn_volatility.training.validate import evaluate_holdout, HoldoutMetrics
+import tools.pinn_volatility.training.validate as validate_module
+from tools.pinn_volatility.training.validate import (
+    evaluate_holdout, HoldoutMetrics, audit_arbitrage, ArbitrageAudit,
+)
+
+
+class _SyntheticSurface(nn.Module):
+    """w(k, tau) = a*tau + b*k^2 + c -- mirrors test_losses.py's fixture
+    (duplicated here to keep this file self-contained). Trivial closed-form
+    derivatives (w'=2bk, w''=2b, dw/dtau=a) let tests assert exact expected
+    audit values instead of just "runs without crashing"."""
+
+    def __init__(self, a=0.5, b=0.3, c=0.5, v2=0.01):
+        super().__init__()
+        self.a = nn.Parameter(torch.tensor(a))
+        self.b = nn.Parameter(torch.tensor(b))
+        self.c = nn.Parameter(torch.tensor(c))
+        self.v2 = v2
+
+    def forward(self, k_tau):
+        k = k_tau[:, 0:1]
+        tau = k_tau[:, 1:2]
+        w = self.a * tau + self.b * k ** 2 + self.c
+        return w, torch.full_like(w, self.v2)
+
+
+class _PassthroughWrap:
+    """Test double standing in for RawInputModel, WITHOUT its normalize()
+    step -- lets these tests feed _SyntheticSurface truly raw (k, tau) and
+    hand-verify against the same closed-form parameter combinations already
+    empirically verified valid/invalid in test_losses.py (RawInputModel's
+    fixed global normalize() would otherwise silently remap the domain,
+    invalidating those already-checked parameter choices)."""
+
+    def __init__(self, model):
+        self.model = model
+
+    def __call__(self, k_tau):
+        return self.model(k_tau)
+
+    def parameters(self):
+        return self.model.parameters()
 
 
 class _FakeModel:
@@ -123,3 +165,81 @@ class TestEvaluateHoldout:
         assert metrics.n_samples == 20
         assert math.isfinite(metrics.rmse_w)
         assert math.isfinite(metrics.mae_sigma)
+
+
+class TestAuditArbitrage:
+    """Uses _PassthroughWrap (monkeypatched in for RawInputModel) so
+    _SyntheticSurface receives truly raw (k, tau) -- matching the exact
+    parameter combinations already empirically verified valid/invalid in
+    test_losses.py's TestButterflyPenalty/TestCalendarPenalty."""
+
+    def test_valid_surface_no_violations(self, monkeypatch):
+        monkeypatch.setattr(validate_module, "RawInputModel", _PassthroughWrap)
+        # a=0.5,b=0.3,c=0.5 empirically verified (test_losses.py): g(k) >= ~0.10
+        # across k in [-2,2] at tau=0.1 -- valid, no butterfly violation.
+        surface = _SyntheticSurface(a=0.5, b=0.3, c=0.5)
+
+        audit = audit_arbitrage(surface, n_points=2000, k_range=(-2.0, 2.0),
+                                 tau_range=(0.09, 0.11), seed=0)
+
+        assert isinstance(audit, ArbitrageAudit)
+        assert audit.min_g > 0
+        assert audit.min_calendar_slope == pytest.approx(0.5, abs=1e-3)  # dw/dtau = a, exactly, everywhere
+        assert audit.butterfly_violation_rate == 0.0
+        assert audit.calendar_violation_rate == 0.0
+        assert audit.max_butterfly_violation == 0.0
+        assert audit.max_calendar_violation == 0.0
+
+    def test_invalid_surface_butterfly_violation_detected(self, monkeypatch):
+        monkeypatch.setattr(validate_module, "RawInputModel", _PassthroughWrap)
+        # a=0.5,b=1.5,c=0.3 empirically verified (test_losses.py): min g(k)
+        # as low as ~-2.2 at tau=0.1 -- a genuine, deliberate violation.
+        surface = _SyntheticSurface(a=0.5, b=1.5, c=0.3)
+
+        audit = audit_arbitrage(surface, n_points=2000, k_range=(-2.0, 2.0),
+                                 tau_range=(0.09, 0.11), seed=0)
+
+        assert audit.min_g < 0
+        assert audit.butterfly_violation_rate > 0
+        assert audit.max_butterfly_violation > 0
+        assert audit.max_butterfly_violation == pytest.approx(-audit.min_g, abs=1e-4)
+
+    def test_invalid_surface_calendar_violation_detected(self, monkeypatch):
+        monkeypatch.setattr(validate_module, "RawInputModel", _PassthroughWrap)
+        # a<0 -> dw/dtau = a < 0 everywhere -> every point violates.
+        surface = _SyntheticSurface(a=-0.3, b=0.3, c=0.5)
+
+        audit = audit_arbitrage(surface, n_points=500, k_range=(-1.0, 1.0),
+                                 tau_range=(0.05, 0.15), seed=0)
+
+        assert audit.min_calendar_slope == pytest.approx(-0.3, abs=1e-3)
+        assert audit.calendar_violation_rate == pytest.approx(1.0, abs=1e-6)
+        assert audit.max_calendar_violation == pytest.approx(0.3, abs=1e-3)
+
+    def test_runs_on_real_pinn_model(self):
+        """No monkeypatch here -- sanity check against the actual
+        RawInputModel-normalized path with a real VolatilityPINN."""
+        model = VolatilityPINN()
+        audit = audit_arbitrage(model, n_points=500, seed=0)
+
+        assert isinstance(audit, ArbitrageAudit)
+        assert audit.n_points == 500
+        assert math.isfinite(audit.min_g)
+        assert math.isfinite(audit.min_calendar_slope)
+        assert 0.0 <= audit.butterfly_violation_rate <= 1.0
+        assert 0.0 <= audit.calendar_violation_rate <= 1.0
+
+    def test_reproducible_with_seed(self):
+        model = VolatilityPINN()
+        audit1 = audit_arbitrage(model, n_points=200, seed=7)
+        audit2 = audit_arbitrage(model, n_points=200, seed=7)
+        assert audit1.min_g == audit2.min_g
+        assert audit1.min_calendar_slope == audit2.min_calendar_slope
+
+    def test_restores_original_training_mode(self):
+        """Must not silently leave the model in eval() mode if it was
+        training when called (e.g. mid-training diagnostic use)."""
+        model = VolatilityPINN()
+        model.train()
+        audit_arbitrage(model, n_points=100, seed=0)
+        assert model.training is True
