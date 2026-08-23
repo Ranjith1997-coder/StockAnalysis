@@ -46,7 +46,13 @@ class PINNConfig:
     # ── Loss weights ──
     lambda_data: float = 1.0
     lambda_calendar: float = 1.0
-    lambda_butterfly: float = 0.5
+    # Raised from 0.5 -- at 0.5, num_fourier_bands=3's real wing-fitting
+    # capacity let the model produce actual butterfly-arbitrage violations
+    # (up to 7.6% of an audit grid on one holdout day, above the plan's 5%
+    # threshold). 1.0 brought violations to a consistent 1.7-3.2% across 3
+    # holdout days while wings MAE stayed under the 2.5% target. See
+    # training/trainer.py's PINNTrainer docstring for the full context.
+    lambda_butterfly: float = 1.0
     beta_nll: float = 0.5
 
     # NOTE: vega-weighting (use_vega_weight) was tried and removed -- an
