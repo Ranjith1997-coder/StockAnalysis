@@ -10,6 +10,7 @@ from tools.pinn_volatility.model.pinn import VolatilityPINN
 import tools.pinn_volatility.training.validate as validate_module
 from tools.pinn_volatility.training.validate import (
     evaluate_holdout, HoldoutMetrics, audit_arbitrage, ArbitrageAudit,
+    check_acceptance_criteria, AcceptanceResult,
 )
 
 
@@ -243,3 +244,115 @@ class TestAuditArbitrage:
         model.train()
         audit_arbitrage(model, n_points=100, seed=0)
         assert model.training is True
+
+
+def _fake_holdout(wings_mae=0.01, overall_mae=0.01, atm_mae=0.01):
+    return HoldoutMetrics(
+        n_samples=100, rmse_w=0.001, mae_sigma=overall_mae, mean_bias_sigma=0.0,
+        mae_sigma_by_moneyness={"atm": atm_mae, "wings": wings_mae},
+    )
+
+
+def _fake_audit(butterfly_rate=0.0, calendar_rate=0.0):
+    return ArbitrageAudit(
+        n_points=5000, min_g=0.1, min_calendar_slope=0.1,
+        butterfly_violation_rate=butterfly_rate, calendar_violation_rate=calendar_rate,
+        max_butterfly_violation=0.0, max_calendar_violation=0.0,
+    )
+
+
+class TestCheckAcceptanceCriteria:
+    """Mocks evaluate_holdout/audit_arbitrage directly -- an untrained
+    random model's actual metrics aren't controllable precisely enough to
+    hit exact threshold boundaries, and this is testing the GATE LOGIC
+    itself, not accuracy (already covered by TestEvaluateHoldout/
+    TestAuditArbitrage)."""
+
+    def _dummy_inputs(self):
+        k = torch.zeros(10)
+        tau = torch.full((10,), 0.1)
+        w = torch.full((10,), 0.02)
+        sigma = torch.full((10,), 0.15)
+        return k, tau, w, sigma
+
+    def test_accepts_when_all_thresholds_met(self, monkeypatch):
+        monkeypatch.setattr(validate_module, "evaluate_holdout", lambda *a, **kw: _fake_holdout(wings_mae=0.01))
+        monkeypatch.setattr(validate_module, "audit_arbitrage", lambda *a, **kw: _fake_audit())
+
+        result = check_acceptance_criteria(VolatilityPINN(), *self._dummy_inputs())
+
+        assert isinstance(result, AcceptanceResult)
+        assert result.accepted is True
+        assert result.reasons == []
+        assert result.holdout is not None
+        assert result.audit is not None
+
+    def test_rejects_on_wings_mae_over_threshold(self, monkeypatch):
+        monkeypatch.setattr(validate_module, "evaluate_holdout", lambda *a, **kw: _fake_holdout(wings_mae=0.03))
+        monkeypatch.setattr(validate_module, "audit_arbitrage", lambda *a, **kw: _fake_audit())
+
+        result = check_acceptance_criteria(VolatilityPINN(), *self._dummy_inputs(), max_wings_mae=0.025)
+
+        assert result.accepted is False
+        assert any("wings" in r for r in result.reasons)
+
+    def test_rejects_on_butterfly_violation_over_threshold(self, monkeypatch):
+        monkeypatch.setattr(validate_module, "evaluate_holdout", lambda *a, **kw: _fake_holdout(wings_mae=0.01))
+        monkeypatch.setattr(validate_module, "audit_arbitrage", lambda *a, **kw: _fake_audit(butterfly_rate=0.076))
+
+        result = check_acceptance_criteria(VolatilityPINN(), *self._dummy_inputs(), max_butterfly_violation_rate=0.05)
+
+        assert result.accepted is False
+        assert any("butterfly" in r for r in result.reasons)
+
+    def test_rejects_on_calendar_violation_over_threshold(self, monkeypatch):
+        monkeypatch.setattr(validate_module, "evaluate_holdout", lambda *a, **kw: _fake_holdout(wings_mae=0.01))
+        monkeypatch.setattr(validate_module, "audit_arbitrage", lambda *a, **kw: _fake_audit(calendar_rate=0.02))
+
+        result = check_acceptance_criteria(VolatilityPINN(), *self._dummy_inputs(), max_calendar_violation_rate=0.01)
+
+        assert result.accepted is False
+        assert any("calendar" in r for r in result.reasons)
+
+    def test_multiple_failures_all_reported(self, monkeypatch):
+        monkeypatch.setattr(validate_module, "evaluate_holdout", lambda *a, **kw: _fake_holdout(wings_mae=0.03))
+        monkeypatch.setattr(validate_module, "audit_arbitrage", lambda *a, **kw: _fake_audit(butterfly_rate=0.076))
+
+        result = check_acceptance_criteria(VolatilityPINN(), *self._dummy_inputs())
+
+        assert result.accepted is False
+        assert len(result.reasons) == 2
+
+    def test_overall_mae_gate_disabled_by_default(self, monkeypatch):
+        """max_overall_mae=None by default -- a bad overall MAE must NOT
+        cause rejection unless the caller explicitly opts in."""
+        monkeypatch.setattr(validate_module, "evaluate_holdout",
+                             lambda *a, **kw: _fake_holdout(wings_mae=0.01, overall_mae=0.10))
+        monkeypatch.setattr(validate_module, "audit_arbitrage", lambda *a, **kw: _fake_audit())
+
+        result = check_acceptance_criteria(VolatilityPINN(), *self._dummy_inputs())
+
+        assert result.accepted is True
+
+    def test_overall_mae_gate_when_explicitly_enabled(self, monkeypatch):
+        monkeypatch.setattr(validate_module, "evaluate_holdout",
+                             lambda *a, **kw: _fake_holdout(wings_mae=0.01, overall_mae=0.10))
+        monkeypatch.setattr(validate_module, "audit_arbitrage", lambda *a, **kw: _fake_audit())
+
+        result = check_acceptance_criteria(VolatilityPINN(), *self._dummy_inputs(), max_overall_mae=0.03)
+
+        assert result.accepted is False
+        assert any("overall" in r for r in result.reasons)
+
+    def test_runs_on_real_untrained_model_without_mocking(self):
+        """Sanity/integration check -- no mocks, just confirms the real
+        evaluate_holdout + audit_arbitrage wiring works end to end."""
+        model = VolatilityPINN()
+        k, tau, w, sigma = self._dummy_inputs()
+
+        result = check_acceptance_criteria(model, k, tau, w, sigma, audit_seed=0)
+
+        assert isinstance(result, AcceptanceResult)
+        assert isinstance(result.accepted, bool)
+        assert result.holdout.n_samples == 10
+        assert result.audit.n_points == 5000
