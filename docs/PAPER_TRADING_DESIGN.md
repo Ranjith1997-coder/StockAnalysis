@@ -1,8 +1,8 @@
 # Paper Trading System — Automated Option Selling
 
-> **Status**: Design complete, implementation pending
+> **Status**: Implemented — `services/paper_trading/` (engine.py, ledger.py, models.py, signal_router.py, span_calculator.py, strategy_builder.py, main.py) running as `stockanalysis-paper-trading.service`
 > **Scope**: Automated paper trading system for option-selling strategies (Phase 1 — no PINN vol-surface)
-> **Last Updated**: July 2026
+> **Last Updated**: August 2026
 
 ---
 

@@ -10,7 +10,7 @@ StockAnalysis is an automated analysis system for Indian equity and derivatives 
 
 ## Operating Modes
 
-The monolith (`intraday/intraday_monitor.py`) runs 24/7 as an always-on systemd service. It self-schedules the daily flow internally — no timers, no restarts:
+The orchestrator (`services/orchestrator/main.py`) runs 24/7 as an always-on systemd service. It self-schedules the daily flow internally — no timers, no restarts:
 
 | Phase | Time (IST) | Description |
 |-------|-----------|-------------|
@@ -81,7 +81,7 @@ Mode selection in production (`PRODUCTION=1`) is time-based via `_run_daily_loop
 │                                    │  │ services/analysis_engine/ │     │
 │                                    │  │  Consumes data:cycle_     │     │
 │                                    │  │    stream                 │     │
-│                                    │  │  12 analysers + scoring   │     │
+│                                    │  │  11 analysers + scoring   │     │
 │                                    │  │  → analysis_count,        │     │
 │                                    │  │    trends_found, errors   │     │
 │                                    │  │    per-stock + system     │     │
@@ -98,7 +98,7 @@ Data flow:
                   → Redis hashes (data:tick:*, data:options_agg:*)
                   → Pub/Sub (signal:channel for live alerts)
                   → Heartbeat: stats:system + per-stock tick counters (every 30s)
-  analysis-engine → Consumes data:cycle_stream → runs 12 analysers + scoring
+  analysis-engine → Consumes data:cycle_stream → runs 11 analysers + scoring
                   → Writes analysis metrics (stats:stock:*, stats:system)
                   → RedisSignalBus emits INTRADAY/POSITIONAL signals → intelligence:signals
   signal-intelligence → Consumes intelligence:signals (LIVE+INTRADAY+POSITIONAL, all processes)
@@ -136,18 +136,19 @@ Data flow:
 
 | Analyser | File | What it detects |
 |----------|------|-----------------|
-| **FuturesAnalyser** | `analyser/Futures_Analyser.py` | Long/short buildup, short covering, long unwinding; PVO patterns; ORB breakout; positional OI trend; cost of carry / backwardation; rollover pressure; intraday OI buildup from open |
-| **TechnicalAnalyser** | `analyser/TechnicalAnalyser.py` | RSI, MACD, EMA crossover, Bollinger Bands, VWAP, ATR, Supertrend, RSI divergence, Stochastic, Pivot Points |
-| **VolumeAnalyser** | `analyser/VolumeAnalyser.py` | Volume breakout (2x MA + price confirm), OBV divergence, volume climax (3x spike) |
-| **CandleStickAnalyser** | `analyser/candleStickPatternAnalyser.py` | Marubozu, Hammer/Shooting Star, Engulfing/Piercing/Dark Cloud, Morning/Evening Star, continuation patterns |
-| **IVAnalyser** | `analyser/IVAnalyser.py` | IV spike, IV trend, IV rank (IVP percentile), IV vs historical volatility |
-| **PCRAnalyser** | `analyser/PCRAnalyser.py` | PCR extreme zones (contrarian), PCR directional bias, PCR trend (5-day), PCR intraday trend, PCR reversal, positional PCR reversal |
-| **MaxPainAnalyser** | `analyser/MaxPainAnalyser.py` | Max pain deviation (moderate/strong), max pain trend (converging/diverging), max pain alignment with PCR |
-| **OIChainAnalyser** | `analyser/OIChainAnalyser.py` | OI support/resistance, OI buildup, OI wall (statistical outlier), OI shift, intraday OI trend, intraday S/R shift, OI capitulation (positional), OI wall migration (positional), positional OI trend, OI acceleration |
-| **PanicModeAnalyser** | `analyser/PanicModeAnalyser.py` | PANIC_MODE (≥4/6 conditions aligned), PANIC_EXHAUSTION (≥3/4 contrarian conditions) — reads all earlier analysers' output, **must precede OptionSellerCompositeAnalyser** |
-| **OptionSellerCompositeAnalyser** | `analyser/OptionSellerCompositeAnalyser.py` | Three high-probability option-seller setups — GAMMA_TRAP (kill-switch: close shorts, directional breach confirmed), RANGE_BOUND_SETUP (Iron Condor / Strangle candidate: range-trapped + overpriced vol), SKEW_FADE_SETUP (directional credit spread: panic exhaustion at OI wall + reversal candle). All bypass score gate via `PRIORITY_OVERRIDE`. **Must be registered last** |
-| **LiveOIAnalyser** | `analyser/LiveOIAnalyser.py` | Real-time: PCR crossover, PCR extreme, PCR sustained trend, OI wall breach |
-| **LiveStraddleAnalyser** | `analyser/LiveStraddleAnalyser.py` | Real-time: IV expanding/compressing, implied move boundary, IV skew reversal |
+| **FuturesAnalyser** | `services/analysis_engine/analyser/Futures_Analyser.py` | Long/short buildup, short covering, long unwinding; PVO patterns; ORB breakout; positional OI trend; cost of carry / backwardation; rollover pressure; intraday OI buildup from open |
+| **TechnicalAnalyser** | `services/analysis_engine/analyser/TechnicalAnalyser.py` | RSI, MACD, EMA crossover, Bollinger Bands, VWAP, ATR, Supertrend, RSI divergence, Stochastic, Pivot Points |
+| **VolumeAnalyser** | `services/analysis_engine/analyser/VolumeAnalyser.py` | Volume breakout (2x MA + price confirm), OBV divergence, volume climax (3x spike) |
+| **CandleStickAnalyser** | `services/analysis_engine/analyser/candleStickPatternAnalyser.py` | Marubozu, Hammer/Shooting Star, Engulfing/Piercing/Dark Cloud, Morning/Evening Star, continuation patterns |
+| **IVAnalyser** | `services/analysis_engine/analyser/IVAnalyser.py` | IV spike, IV trend, IV rank (IVP percentile), IV vs historical volatility |
+| **PCRAnalyser** | `services/analysis_engine/analyser/PCRAnalyser.py` | PCR extreme zones (contrarian), PCR directional bias, PCR trend (5-day), PCR intraday trend, PCR reversal, positional PCR reversal |
+| **MaxPainAnalyser** | `services/analysis_engine/analyser/MaxPainAnalyser.py` | Max pain deviation (moderate/strong), max pain trend (converging/diverging), max pain alignment with PCR |
+| **OIChainAnalyser** | `services/analysis_engine/analyser/OIChainAnalyser.py` | OI support/resistance, OI buildup, OI wall (statistical outlier), OI shift, intraday OI trend, intraday S/R shift, OI capitulation (positional), OI wall migration (positional), positional OI trend, OI acceleration |
+| **GEXAnalyser** | `services/analysis_engine/analyser/GEXAnalyser.py` | Gamma Exposure analysis for NIFTY/BANKNIFTY/SENSEX. Requires Sensibull WS greeks (`OPTIONS_SOURCE=sensibull` or `both`). Signals: `GEX_REGIME` (positive/negative dealer gamma regime), `GEX_FLIP_PROXIMITY` (spot approaching zero-crossing strike), `GEX_WALL` (significant gamma concentration at a strike), `GEX_WALL_BREACH` (spot crossing a GEX wall with gamma collapse), `GEX_IMBALANCE` (CE vs PE GEX ratio imbalance). In Zerodha-only mode all gamma values are 0 → all methods silently skip. |
+| **PanicModeAnalyser** | `services/analysis_engine/services/analysis_engine/analyser/PanicModeAnalyser.py` | PANIC_MODE (≥4/6 conditions aligned), PANIC_EXHAUSTION (≥3/4 contrarian conditions) — reads all earlier analysers' output, **must precede OptionSellerCompositeAnalyser** |
+| **OptionSellerCompositeAnalyser** | `services/analysis_engine/analyser/OptionSellerCompositeAnalyser.py` | Three high-probability option-seller setups — GAMMA_TRAP (kill-switch: close shorts, directional breach confirmed), RANGE_BOUND_SETUP (Iron Condor / Strangle candidate: range-trapped + overpriced vol), SKEW_FADE_SETUP (directional credit spread: panic exhaustion at OI wall + reversal candle). All bypass score gate via `PRIORITY_OVERRIDE`. **Must be registered last** |
+| **LiveOIAnalyser** | `services/analysis_engine/analyser/LiveOIAnalyser.py` | Real-time: PCR crossover, PCR extreme, PCR sustained trend, OI wall breach |
+| **LiveStraddleAnalyser** | `services/analysis_engine/analyser/LiveStraddleAnalyser.py` | Real-time: IV expanding/compressing, implied move boundary, IV skew reversal |
 
 ---
 
@@ -267,7 +268,7 @@ When `ENABLE_NARRATOR=1` (requires `GEMINI_API_KEY`):
 
 ### Logging (unified across all services)
 
-All services use `services/common/logging.py` via `get_logger("service-name")`. The monolith's `common/logging_util.py` is a thin shim that delegates to the same factory — all 44+ modules that import it get the unified logger transparently.
+All services and libraries use `lib/logging_util` via `get_logger("service-name")`. This is the single entry point for all project logging — no module should call `logging.getLogger()` directly. The package provides: `factory.py` (rotating file + console handler, 10 MB/3 backups), `levels.py` (Redis-backed runtime level control via `service:log_level:{name}` keys, polled every 30s), `timing.py` (`log_duration()` context manager + `@timed` decorator for instrumenting external calls), `trace.py` (`TraceFilter` + `trace_id` ContextVar for cross-service request correlation via `grep trace_id=<hex> logs/*.log`).
 
 Log files (10 MB rotating, 3 backups each):
 
@@ -276,7 +277,7 @@ Log files (10 MB rotating, 3 backups each):
 | `logs/monolith.log` | Monolith (intraday + positional) |
 | `logs/data-gateway.log` | Data gateway |
 | `logs/market-data.log` | Market-data (WebSocket ingestion) |
-| `logs/analysis-engine.log` | Analysis engine (12 analysers + scoring) |
+| `logs/analysis-engine.log` | Analysis engine (11 analysers + scoring) |
 | `logs/signal-intelligence.log` | Signal intelligence (cross-layer confluence detection) |
 | `logs/notification-service.log` | Notification service |
 | `logs/resource-monitor.log` | Resource monitor (system metrics + alerts) |
@@ -293,18 +294,20 @@ LOG_LEVEL=INFO NOTIFICATION_LOG_LEVEL=DEBUG make run-dev
 | Env Var | Effect |
 |----------|--------|
 | `LOG_LEVEL` | Global default for all services (default: `INFO`) |
-| `{SERVICE}_LOG_LEVEL` | Per-service override, e.g. `NOTIFICATION_LOG_LEVEL=DEBUG` |
+| `{SERVICE}_LOG_LEVEL` | Per-service override at startup, e.g. `NOTIFICATION_LOG_LEVEL=DEBUG` |
+
+Runtime level changes (no restart needed): `/loglevel <service> <DEBUG\|INFO\|WARNING\|ERROR>` via Telegram bot, or `debug_cli.py loglevel <service> <level>`. Changes propagate within 30s via `service:log_level:{name}` Redis keys polled by each service's heartbeat.
 
 ---
 
 ## Automated Zerodha Authentication
 
-`auth/auth_login.py` performs a fully automated TOTP-based Zerodha login and writes the fresh `ZERODHA_ENC_TOKEN` directly into `.env`, removing the need for manual token updates.
+`services/auth_service/auth/auth_login.py` performs a fully automated TOTP-based Zerodha login and writes the fresh `ZERODHA_ENC_TOKEN` directly into `.env`, removing the need for manual token updates.
 
 Requires `ZERODHA_USER`, `ZERODHA_PASS`, and `ZERODHA_TOTP_SECRET` in `.env`.
 
 ```bash
-python auth/auth_login.py   # generates enctoken and writes it to .env
+python -m services.auth_service.auth.auth_login   # generates enctoken and writes it to .env
 ```
 
 In production, the **auth-service** (`services/auth_service/main.py`) handles authentication automatically:
@@ -351,11 +354,13 @@ All services run 24/7 with `Restart=always`. `scripts/system_config` contains th
 | `stockanalysis-notification.service` | 24/7 | Notification stream consumer → Telegram/Discord |
 | `stockanalysis-data-gateway.service` | 24/7 (self-scheduling) | yfinance + Sensibull → Redis hashes + cycle signals |
 | `stockanalysis-market-data.service` | 24/7 | WebSocket ingestion (WS1 equity/index, WS2 options, Sensibull WS) → Redis snapshots + Pub/Sub signals |
-| `stockanalysis-analysis-engine.service` | 24/7 | Consumes data:cycle_stream → runs 12 analysers + scoring → writes analysis metrics |
+| `stockanalysis-analysis-engine.service` | 24/7 | Consumes data:cycle_stream → runs 11 analysers + scoring → writes analysis metrics + publishes to analysis:results stream |
+| `stockanalysis-orchestrator.service` | 24/7 (self-scheduling) | Main orchestrator — pre-market, intraday loop, positional analysis, EOD reports. Replaces old monolith `intraday/intraday_monitor.py`. Reads from Redis, dispatches to analysis-engine, consumes intelligence:confluence for LLM narrator |
+| `stockanalysis-paper-trading.service` | 24/7 | Paper trading — consumes analysis:results + intelligence:confluence → virtual option-selling positions (Iron Condor, Strangle, Credit Spread), MTM every 3s, Redis-persisted state under `paper:*` |
 | `stockanalysis-signal-intelligence.service` | 24/7, single instance | Consumes intelligence:signals → cross-layer confluence via SignalCorrelator → intelligence:confluence + direct Telegram alert |
 | `stockanalysis-resource-monitor.service` | 24/7 | Polls psutil + Redis metrics every 30s → sys:latest:* + sys:ts:* + proactive alerts → notification:jobs |
 | `stockanalysis-auth.service` | 24/7 (self-scheduling) | Zerodha TOTP login (09:00 + 18:50) + Sensibull OAuth auto-login + reactive refresh via auth:commands stream |
-| `stockanalysis.service` | 24/7 (self-scheduling) | Monolith — pre-market, intraday, positional analysis |
+| `stockanalysis.service` | 24/7 (self-scheduling) | Legacy monolith entry — superseded by `stockanalysis-orchestrator.service` in production |
 
 No timers. All services self-schedule. The auth-service handles both Zerodha enctoken and Sensibull access_token lifecycle.
 
@@ -379,19 +384,19 @@ cp .env.template .env   # fill in your credentials
 ```bash
 # Intraday (dev mode)
 # Set DEV_INTRADAY=1, PRODUCTION=0 in .env
-python intraday/intraday_monitor.py
+make run-dev
 
 # Positional EOD (dev mode)
 # Set DEV_POSITIONAL=1, PRODUCTION=0 in .env
-python intraday/intraday_monitor.py
+make run-dev-positional
 
-# Production (auto time-based mode selection)
+# Production (auto time-based mode selection, orchestrator service)
 # Set PRODUCTION=1 in .env
-python intraday/intraday_monitor.py
+python -m services.orchestrator.main
 
 # Analyze specific stock or index
-python intraday/intraday_monitor.py --stock RELIANCE
-python intraday/intraday_monitor.py --index NIFTY
+make run-dev-stock-intraday STOCK=RELIANCE
+make run-dev-index-intraday INDEX=NIFTY
 ```
 
 ### Makefile targets
@@ -507,30 +512,34 @@ StockAnalysis/
 ├── nse/               # NSE API wrappers + market calendar helpers
 ├── plans/             # microservices_architecture.md — migration plan
 ├── post_market_analysis/  # FII/DII, sector perf, F&O OI, index returns pipeline
-├── premarket/         # Global cues, bonds, commodities, pre-open report
-├── scripts/           # deploy.py, service_stop.py (holiday-aware), system_config (systemd units)
-├── sentiment/         # FinBERT news sentiment
-├── services/          # Microservices (Phase 1–3 — extracted services)
-│   ├── common/        # Shared infra: logging.py, redis_proxy.py, stock_loader.py, cycle_subscriber.py, stock_proxy.py, metrics.py, rate_limiter.py
-│   ├── notification-service/  # Notification stream consumer (EXTRACTED)
-│   ├── data_gateway/  # yfinance + Sensibull fetcher → Redis (EXTRACTED — Phase 1)
-│   ├── market_data/   # WebSocket ingestion → Redis snapshots + Pub/Sub (EXTRACTED — Phase 2)
-│   ├── analysis_engine/  # Stream consumer: 12 analysers + scoring (EXTRACTED — Phase 3)
+├── services/          # Microservices (all extracted, always-running)
+│   ├── common/        # Shared infra: redis_proxy.py, stock_loader.py, cycle_subscriber.py, stock_proxy.py, metrics.py, rate_limiter.py, crash_handler.py, version.py
+│   ├── notification-service/  # Notification stream consumer
+│   ├── data_gateway/  # yfinance + Sensibull fetcher → Redis
+│   ├── market_data/   # WebSocket ingestion → Redis snapshots + Pub/Sub
+│   ├── analysis_engine/  # Stream consumer: 11 analysers + scoring; publishes analysis:results
+│   │   └── analyser/  # All 11 analyser classes + GEXAnalyser + OptionSellerCompositeAnalyser
+│   ├── orchestrator/  # Main orchestrator: pre-market, intraday loop, positional (replaces intraday/intraday_monitor.py)
+│   │   ├── premarket/               # premarket_report.py (global cues, pre-open)
+│   │   └── post_market_analysis/    # FII/DII, index returns, sector performance, F&O OI pipeline
+│   ├── paper_trading/ # Paper trading service: virtual option-selling (Iron Condor, Strangle, Credit Spread)
+│   │   # engine.py, ledger.py, models.py, signal_router.py, span_calculator.py, strategy_builder.py
+│   ├── signal_intelligence/ # Cross-layer confluence detector (single instance)
 │   ├── resource_monitor/ # System + per-service + Redis metrics collector (30s poll)
-│   ├── auth_service/   # Zerodha enctoken + Sensibull OAuth lifecycle: scheduled TOTP login + reactive refresh (EXTRACTED)
-│   └── coordinator/   # Orchestrator + intelligence + bot (compact mode, designed)
-├── tests/             # 1251 tests across 69 files
-├── zerodha/           # WebSocket lifecycle, TickStore, FuturesFetcher, LiveOptionsEngine
-├── Makefile
-├── .env.template
-└── requirements.txt
-```
+│   └── auth_service/  # Zerodha enctoken + Sensibull OAuth lifecycle
+├── lib/               # Shared libraries (importable by all services + common)
+│   ├── fno/           # sensibull_fetcher.py, sensibull_adapter.py (OPTIONS_SOURCE=both support)
+│   ├── intelligence/  # signal.py, signal_bus.py, correlator.py, context_builder.py, narrator.py, llm_client.py
+│   ├── logging_util/  # Unified logger: factory.py, levels.py (Redis-backed runtime control), timing.py, trace.py
+│   ├── notification/  # Notification.py, bot_listener.py, commands/ (all bot commands incl. /loglevel, /paper_*)
+│   └── zerodha/       # zerodha_connect.py, zerodha_analysis.py, zerodha_ticker.py, tick_store.py, futures_fetcher.py,
+│                      # live_options_engine.py, live_stock_engine.py
 
 ### Key Files
 
 | File | Purpose |
 |------|---------|
-| `intraday/intraday_monitor.py` | Main entry point — always-running daily loop, orchestration, observability |
+| `services/orchestrator/main.py` | Main entry point — always-running daily loop, orchestration, pre-market, positional, LLM narrator |
 | `services/data_gateway/main.py` | Data gateway — self-scheduling yfinance + Sensibull fetcher → Redis (24/7) |
 | `services/data_gateway/sensibull_fetcher.py` | Parallel Sensibull fetcher (10 workers) → Redis hashes |
 | `services/data_gateway/yfinance_fetcher.py` | yfinance fetcher → Redis hashes (initial + intraday + positional + prevDayOHLCV daily refresh) |
@@ -538,25 +547,28 @@ StockAnalysis/
 | `services/market_data/snapshot_publisher.py` | Publishes `data:tick:*` and `data:options_agg:*` Redis hashes at 1s interval |
 | `services/market_data/signal_publisher.py` | Pub/Sub signal bus for live options alerts (`signal:channel`) |
 | `services/analysis_engine/main.py` | Analysis-engine entry point — consumes data:cycle_stream, dispatches worker pool |
-| `services/analysis_engine/worker.py` | Per-stock worker: loads from Redis, runs 12 analysers + scoring, writes metrics |
+| `services/analysis_engine/worker.py` | Per-stock worker: loads from Redis, runs 11 analysers + scoring, writes metrics |
 | `services/notification-service/main.py` | Notification stream consumer → Telegram/Discord (24/7) |
 | `services/resource_monitor/main.py` | Resource monitor — polls psutil + Redis every 30s, stores sys:latest:* + sys:ts:* time-series, fires proactive alerts |
-| `services/common/metrics.py` | Per-stock + system-wide counters in Redis (`stats:stock:*`, `stats:system`, `stats:daily:*`) — fail-safe |
-| `services/common/cycle_subscriber.py` | Redis Pub/Sub + stream subscriber for cycle sync (monolith ↔ data-gateway) |
+| `lib/fno/sensibull_adapter.py` | SensibullAdapter — translates Sensibull WS snapshot into TickStore structures; supports `OPTIONS_SOURCE=both` enrichment-only mode |
+| `lib/logging_util/` | Unified logger package: `get_logger()`, runtime level control, `log_duration()`, `TraceFilter` |
+| `lib/notification/commands/paper_trading_cmds.py` | Bot commands: `/paper_positions`, `/paper_pnl`, `/paper_trades`, `/paper_close`, `/paper_config`, `/paper_reset`, `/paper_export` |
+| `lib/notification/commands/loglevel.py` | `/loglevel` — runtime log level control for any service (reads/writes `service:log_level:*` Redis keys) |
 | `services/common/stock_loader.py` | Sync Stock object reconstruction from Redis hashes |
-| `services/common/logging.py` | Unified per-service logger factory (`get_logger("service-name")`) |
 | `services/common/redis_proxy.py` | Redis client wrapper (hset, hgetall, xadd, xreadgroup, publish, pubsub) |
-| `common/logging_util.py` | Thin shim → delegates to `services/common/logging.py` (44 modules import this) |
+| `services/common/metrics.py` | Per-stock + system-wide counters in Redis (`stats:stock:*`, `stats:system`, `stats:daily:*`) — fail-safe |
+| `services/common/cycle_subscriber.py` | Redis Pub/Sub + stream subscriber for cycle sync (orchestrator ↔ data-gateway) |
 | `common/Stock.py` | Core data model; delegates live ticks to TickStore |
 | `common/constants.py` | ANALYSIS_WEIGHTS, priority thresholds, env var names, category sets |
 | `common/shared.py` | AppContext singleton, Mode enum, global state |
 | `common/scoring.py` | Score calculation, alignment bonus, should_notify() |
-| `analyser/OptionSellerCompositeAnalyser.py` | Option-seller composite setups: GAMMA_TRAP, RANGE_BOUND_SETUP, SKEW_FADE_SETUP |
-| `auth/auth_login.py` | Automated TOTP Zerodha login — called by auth-service at 09:00 + 18:50 |
+| `services/analysis_engine/analyser/OptionSellerCompositeAnalyser.py` | Option-seller composite setups: GAMMA_TRAP, RANGE_BOUND_SETUP, SKEW_FADE_SETUP |
+| `services/analysis_engine/analyser/GEXAnalyser.py` | GEX regime, flip proximity, wall, wall breach, CE/PE imbalance (requires Sensibull WS greeks) |
+| `services/auth_service/auth/auth_login.py` | Automated TOTP Zerodha login — called by auth-service at 09:00 + 18:50 |
 | `services/auth_service/main.py` | Auth-service — Zerodha TOTP login + Sensibull OAuth auto-login + reactive refresh via auth:commands stream |
-| `notification/commands/sysstats.py` | `/sysstats` bot command — live dashboard, 24h sparklines, Redis deep dive |
-| `configs/*.service` | systemd unit files (auth + notification + data-gateway + market-data + analysis-engine + signal-intelligence + resource-monitor + monolith — all always-on) |
-| `analyser/Analyser.py` | BaseAnalyzer (decorator framework) + AnalyserOrchestrator |
+| `lib/notification/commands/sysstats.py` | `/sysstats` bot command — live dashboard, 24h sparklines, Redis deep dive |
+| `configs/*.service` | systemd unit files (orchestrator + auth + notification + data-gateway + market-data + analysis-engine + signal-intelligence + resource-monitor + paper-trading — all always-on) |
+| `services/analysis_engine/analyser/Analyser.py` | BaseAnalyzer (decorator framework) + AnalyserOrchestrator |
 | `zerodha/zerodha_connect.py` | Modified KiteConnect — enctoken auth, dual root URI (/oms for authenticated, api.kite.trade for public instruments) |
 | `zerodha/futures_fetcher.py` | FuturesFetcher — Kite historical futures data (used by data-gateway's ZerodhaFuturesManager) |
 | `services/data_gateway/zerodha_fetcher.py` | ZerodhaFuturesManager — fetches futures data via Zerodha REST → publishes to Redis (data:zerodha:*) |
