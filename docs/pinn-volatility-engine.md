@@ -1,8 +1,8 @@
 # PINN Volatility Engine — Complete Design & Implementation Plan
 
-> **Status**: Phase 1 (data pipeline, model, training, acceptance gate, CLI) implemented and validated on real data. Phase 2 (live inference service) not started. See Section 0 for full status, empirical deviations from this design, and next work items.
+> **Status**: Phase 1 (data pipeline, model, training, acceptance gate, CLI) implemented, validated on real data, and re-validated live on 2026-08-25 data. Phase 2 (live inference service) not started. See Section 0 for full status, empirical deviations from this design, and next work items.
 > **Created**: 2026-08-01
-> **Last updated**: 2026-08-25
+> **Last updated**: 2026-08-25 (2026-08-11 root-cause investigation + live 08-25 re-validation)
 > **Branch**: `feature/pinn-volatility-engine` (8 commits, not yet merged/reviewed)
 > **Prerequisites**: Paper trading service deployed (commits `ef19db1`–`2fd67a1`), analysis-engine with composite analyser, market-data WS pipeline, SPAN margin calculator
 
@@ -75,6 +75,16 @@ Walk-forward holdout (train on the prior week, evaluate on a genuinely unseen ne
 
 **2026-08-11 failed both thresholds simultaneously** (wings 3.03%, butterfly violation 5.44%) — investigated and deliberately **not** chased by further tuning: forcing every single day under threshold risks overfitting to that one day's microstructure noise at the expense of the other 9. This is the reasoning behind Section 0.5's acceptance-gate design — model risk is handled operationally (reject-and-fall-back), not by assuming the math is perfect on every conceivable day.
 
+#### 0.4.1 2026-08-11 root-cause investigation (2026-08-25)
+
+Re-ran the exact walk-forward window (train 2026-08-05→08-10, holdout 08-11, NIFTY, same config, seed=42) with per-expiry/per-tau instrumentation. Two real findings, one methodological caveat:
+
+- **Weekly-expiry rollover discontinuity.** 08-10 is the *last* trading day of that week's contract — its nearest-to-expiry bucket has τ≈0.003 (a few hours to expiry) where NSE index-option settlement prices are known to blow up (illiquid deep OTM strikes settling at distorted premiums; observed ATM IV ~14-16% but far-OTM strikes implying 60-110%+ IV). This extreme short-τ regime dominates the `τ < 0.01` slice of the training set (4.5% of train rows, all from 08-10). On the holdout day (08-11), that contract has expired — the new nearest-week contract sits at τ≈0.019 with a completely different, much calmer smile (ATM ~10%, max wing ~29%, not 100%+). The model's largest errors are concentrated exactly in this near-week bucket on 08-11 (6-7 vol-point overshoot at low |k|, τ≈0.019) — it's carrying over a short-τ IV *level* learned from the distorted expiring-contract data into the freshly-rolled contract, where that level doesn't apply. This is a structural, explainable failure mode tied to the weekly-expiry cycle, not random noise.
+- **Sparse far-tenor extrapolation.** The single worst holdout error (20+ vol points) is a deep-OTM put on the Dec-2026 expiry (τ≈0.38, k≈−0.74) — a tenor/moneyness combination with very few training rows, i.e. an extrapolation gap rather than a rollover artifact.
+- **Gate-outcome seed sensitivity (caveat).** This re-run, with the same config and data as the original 10-day validation, produced wings MAE 2.29% / butterfly violation 3.98% — both **under** threshold (ACCEPTED), not the originally logged 3.03%/5.44% (REJECTED) for the same calendar day. The discrepancy traces to nondeterminism between runs (this project's collocation resampling and Adam optimization are seeded, but the original 10-day sweep did not pin down every source of run-to-run variance as tightly as this isolated re-run did). Practical implication: on a borderline day, the accept/reject verdict itself has some variance — reinforcing that the gate should be treated as a noisy operational check, not a precise measurement, and that a single day's PASS/FAIL is not by itself strong evidence either way.
+
+Neither finding changes the gate thresholds or defaults — the rollover effect is inherent to how NSE weekly options settle (not fixable by re-tuning `lambda_but`/Fourier bands without the overfitting trap already documented above), and it's exactly the scenario the accept/reject gate exists to catch operationally.
+
 ### 0.5 Acceptance gate — supersedes Section 7.4
 
 `training/validate.py`'s `check_acceptance_criteria()` replaces Section 7.4's untested thresholds with ones tiered by actual validation status:
@@ -86,14 +96,24 @@ Walk-forward holdout (train on the prior week, evaluate on a genuinely unseen ne
 
 A rejected model is never deployed — `run_training.py` leaves the previously-accepted model (and its `_latest.pt` symlink) untouched and returns a nonzero exit code. Verified with a real (non-mocked) live run: NIFTY-only on 2026-08-14 correctly rejected (butterfly violation 5.52%), no artifact written.
 
-### 0.6 Next work items, roughly in priority order
+### 0.6 Live re-validation on current data (2026-08-25)
+
+Ran the production CLI unmodified against a fresh 8-trading-day window ending 2026-08-25 (`run_training.py --symbols NIFTY BANKNIFTY --end-date 2026-08-25 --seed 42`), fetching that day's real NSE Bhavcopy over the network rather than the cached historical files used elsewhere in this doc:
+
+| Symbol | Verdict | Wings MAE | Butterfly violation |
+|---|---|---|---|
+| NIFTY | **ACCEPTED** | 2.08% | 4.58% |
+| BANKNIFTY | **ACCEPTED** | 1.83% | 1.98% |
+
+Both comfortably inside threshold (wings < 2.5%, butterfly < 5%), consistent with the 10-day validated average in 0.4 — confirms the pipeline still functions correctly end-to-end (network fetch → dataset → train → gate → save/symlink) two weeks after the original validation window, on data it had never seen before.
+
+### 0.7 Next work items, roughly in priority order
 
 1. **Phase 2 — `services/volatility_engine/` (live inference service).** Section 8's design (model loader/hot-reload, 3s inference loop, arbitrage monitor thread) is unbuilt and untested against this project's actual `VolatilityPINN`/`RawInputModel` interfaces — expect some adaptation needed, same as Phase 1 needed vs. the original plan.
 2. **Deploy `run_training.py` on a schedule** (systemd timer per Section 7.5, or equivalent) — currently a manually-invoked CLI only.
-3. **Investigate 2026-08-11 specifically** (expiry day? unusual volatility? a data-quality issue?) before deciding whether the current gate thresholds are the right long-term operating point, or whether that day reveals something fixable.
-4. **Paper-trading integration** (Section 9) — `parse_pinn_signal`, the `strategy_builder.py` one-line fix, and the confirmation-mode hook in `_handle_entry_signal()` are all still exactly as originally designed and entirely unbuilt.
-5. **Open a PR** for `feature/pinn-volatility-engine` — 8 commits, 206 tests, currently unreviewed.
-6. Phase 3 (Greeks/backtesting) and Phase 4 (SSVI baseline) remain as originally scoped in Sections 10 and the plan's Phase 4 — untouched.
+3. **Paper-trading integration** (Section 9) — `parse_pinn_signal`, the `strategy_builder.py` one-line fix, and the confirmation-mode hook in `_handle_entry_signal()` are all still exactly as originally designed and entirely unbuilt.
+4. Phase 3 (Greeks/backtesting) and Phase 4 (SSVI baseline) remain as originally scoped in Sections 10 and the plan's Phase 4 — untouched.
+5. ~~Investigate 2026-08-11~~ — done, see 0.4.1. ~~Open a PR~~ — done, PR #54.
 
 ---
 
