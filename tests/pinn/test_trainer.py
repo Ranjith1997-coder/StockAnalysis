@@ -56,6 +56,11 @@ class TestPINNTrainerDefaults:
         assert t.beta_nll == 0.5
         assert t.seed is None
         assert t.grad_clip_norm == 1.0
+        # Experimental flags from the 2026-09-17 investigation -- must
+        # default off, preserving every behavior validated before them.
+        assert t.deterministic_threads is False
+        assert t.short_tau_boost_frac == 0.0
+        assert t.short_tau_boost_range == (0.005, 0.02)
 
 
 class TestTrainingMechanics:
@@ -232,6 +237,45 @@ class TestReproducibility:
         trainer = PINNTrainer(adam_epochs=5, n_collocation=20, lbfgs_max_iter=3, log_every=5)
         result = trainer.train(model, k, tau, w)
         assert math.isfinite(result.final_breakdown["total"])
+
+
+class TestDeterministicThreads:
+    """2026-09-17 investigation: an identical (seed, config, data) re-run
+    produced materially different holdout metrics (wings 2.53% vs 3.41%),
+    traced to PyTorch's non-associative multi-threaded CPU reductions --
+    not eliminated by seeding alone. deterministic_threads=True closes that
+    gap by pinning torch to a single thread for the duration of train()."""
+
+    def test_disabled_by_default_does_not_touch_thread_count(self):
+        with patch.object(trainer_module.torch, "set_num_threads") as mock_set:
+            k, tau, w = _synthetic_training_data(seed=0)
+            model = VolatilityPINN()
+            trainer = PINNTrainer(adam_epochs=3, n_collocation=10, lbfgs_max_iter=2, log_every=5)
+            trainer.train(model, k, tau, w)
+        mock_set.assert_not_called()
+
+    def test_enabled_calls_set_num_threads_one(self):
+        with patch.object(trainer_module.torch, "set_num_threads") as mock_set:
+            k, tau, w = _synthetic_training_data(seed=0)
+            model = VolatilityPINN()
+            trainer = PINNTrainer(adam_epochs=3, n_collocation=10, lbfgs_max_iter=2,
+                                   log_every=5, deterministic_threads=True)
+            trainer.train(model, k, tau, w)
+        mock_set.assert_called_once_with(1)
+
+
+class TestShortTauBoostPlumbing:
+    def test_boost_params_reach_sample_collocation(self):
+        trainer = PINNTrainer(n_collocation=1000, seed=1,
+                               short_tau_boost_frac=0.4, short_tau_boost_range=(0.005, 0.02))
+        pts = trainer._sample_collocation()
+        tau = pts[:, 1]
+        in_window = ((tau >= 0.005 - 1e-9) & (tau <= 0.02 + 1e-9)).sum().item()
+        assert in_window >= int(1000 * 0.4)
+
+    def test_default_frac_zero_unaffected(self):
+        trainer = PINNTrainer(n_collocation=1000, seed=1)
+        assert trainer.short_tau_boost_frac == 0.0
 
 
 # use_vega_weight/vega_train were removed from PINNTrainer after an
