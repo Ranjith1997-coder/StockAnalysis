@@ -1,14 +1,14 @@
 # PINN Volatility Engine — Complete Design & Implementation Plan
 
-> **Status**: Phase 1 (data pipeline, model, training, acceptance gate, CLI) implemented and validated on real data. Phase 2 (live inference service) not started. See Section 0 for full status, empirical deviations from this design, and next work items.
+> **Status**: Phase 1 (data pipeline, model, training, acceptance gate, CLI) **merged to master**. Phase 2 part 1 (live inference service core: model loading, live-vs-fair comparison, signal emission) **merged to master**. Paper-trading integration, `/pinn_status`, and deployment (systemd) are still unbuilt. As of the most recent scheduled run (2026-09-18), **no model is currently accepted for either symbol** — see 0.6.1. See Section 0 for full status, empirical deviations from this design, and next work items.
 > **Created**: 2026-08-01
-> **Last updated**: 2026-08-25
-> **Branch**: `feature/pinn-volatility-engine` (8 commits, not yet merged/reviewed)
+> **Last updated**: 2026-09-18 (09-17 short-tau investigation, experimental flags + their validation, Phase 2 part 1 status)
+> **Branches**: Phase 1 merged via `feature/pinn-volatility-engine` (PR #54); Phase 2 part 1 merged via `feature/pinn-inference-service` (PR #56); this update is on `feature/pinn-experimental-flags` (not yet merged) and also folds in PR #55's 08-11/08-25 content, which was never merged as its own PR — close #55 without merging once this branch lands, to avoid a stale duplicate.
 > **Prerequisites**: Paper trading service deployed (commits `ef19db1`–`2fd67a1`), analysis-engine with composite analyser, market-data WS pipeline, SPAN margin calculator
 
 ---
 
-## 0. Implementation Status (as of 2026-08-25)
+## 0. Implementation Status (as of 2026-09-18)
 
 This section is a living summary maintained on top of the original design below. The original design (Sections 1–18) is kept as-written for historical reference — where implementation diverged from it, that's called out here and inline, not by silently editing the original numbers.
 
@@ -31,15 +31,27 @@ All of Steps 1–10 from Section 14's phased plan are implemented, tested, and v
 
 `tools/pinn_volatility/config.py` (`PINNConfig`) also now exists — the plan's original "Step 0", never built until this pass. **Not** yet wired into `VolatilityPINN`/`PINNTrainer` as their actual parameter source; it's a documented snapshot of current defaults, consumed by `run_training.py`.
 
-**206 tests passing** (`tests/pinn/`), plus repeated real (non-mocked) end-to-end runs against live NSE data throughout development, including one full live run of the `run_training.py` CLI itself.
+**218 tests passing** (`tests/pinn/`, up from 206 — see 0.7 for the 12 new ones), plus repeated real (non-mocked) end-to-end runs against live NSE data throughout development, including multiple full live runs of the `run_training.py` CLI itself (2026-08-14, 08-25, and 09-18).
 
-### 0.2 What's NOT built — Phase 2 and beyond
+### 0.1b What's built (Phase 2, part 1 — live inference service core)
 
-- `services/volatility_engine/` (the live inference service reading ticks, comparing against the trained surface, emitting `pinn:signals`) — **does not exist**. Everything built so far is training-side only.
-- No systemd timer/service unit — `run_training.py` is a working CLI, not a deployed nightly job.
-- No paper-trading integration (`parse_pinn_signal`, the `strategy_builder.py` one-line fix, the confirmation-mode hook) — Section 9's design is unchanged from the original plan and entirely unbuilt.
+`services/volatility_engine/` exists and is merged (PR #56): `model_manager.py`, `comparator.py`, `signal_emitter.py`, `main.py`, 24 tests. Implements Section 8's design, adapted to this project's real Redis schema and `VolatilityPINN`/`normalize()` interfaces — the doc's original section 8 pseudocode assumed helpers/fields that don't exist as such (see deviations below). Specifically:
+
+- **`ModelManager`** — loads `{symbol}_latest.pt` checkpoints, reconstructs the exact trained architecture from checkpoint metadata (`hidden_dim`/`num_layers`/`num_fourier_bands`), hot-reloads when `run_training.py`'s symlink is repointed (tracked by target filename, not mtime — same-second re-symlinks don't reliably change mtime on all filesystems).
+- **`comparator.py`** — pulls live spot (`data:tick:{symbol}` → `last_price`), live option ticks (`data:options_live:{symbol}`), and nearest expiry + forward price (`data:sensibull:{symbol}` → `current_json` → `stats.per_expiry_map`, matching `MaxPainAnalyser`'s existing convention — **not** the invented `read_future_price`/`read_nearest_expiry` helpers from Section 8.4's original pseudocode) from Redis; inverts live prices to IV via the same BS convention as training; runs the PINN forward pass; computes z-scores; emits `SKEW_FADE_SETUP`/`RANGE_BOUND_SETUP` signals. Also fixes an unpassed `tau` free-variable bug in the original `check_signal_thresholds` pseudocode.
+- **`signal_emitter.py`** — publishes to `pinn:signals` stream + `pinn:zscore:{symbol}` confirmation cache, per Section 8.6/8.7.
+- **`main.py`** — always-running service entry point (inference loop every 3s, arbitrage monitor every 30s, heartbeat), same pattern as `paper_trading/main.py`.
+
+**Deviation from Section 8.2**: `ModelManager.SYMBOLS` defaults to `PINNConfig().symbols` (`["NIFTY", "BANKNIFTY"]`), not the doc's hardcoded `["NIFTY", "BANKNIFTY", "SENSEX"]` — SENSEX has no checkpoint (see 0.3's SENSEX exclusion, which was already true for Phase 1 and applies identically here).
+
+**Not yet done for Phase 2 part 1**: no live validation against a real Redis instance during market hours — everything above has only been exercised with synthetic data and a stub model in tests. That's the natural next check before trusting it in production, same as Phase 1 needed a real Bhavcopy run before being trusted.
+
+### 0.2 What's NOT built — Phase 2 (remaining) and beyond
+
+- **Paper-trading integration** — `signal_router.parse_pinn_signal()` doesn't exist; `strategy_builder.py`'s `select_strikes()` still checks `signal.signal_source == "SKEW_FADE_SETUP"` instead of the documented `signal.sr_level is not None` one-line fix; no confirmation-mode hook in `paper_trading/main.py`'s `_handle_entry_signal()`; no 6th consumer thread reading `pinn:signals`. Section 9's design is otherwise unchanged from the original plan.
+- **`/pinn_status` bot command** — `lib/notification/commands/pinn_cmds.py` doesn't exist.
+- **No systemd units at all** — neither `stockanalysis-volatility-engine.service` (the inference service) nor a nightly-training timer for `run_training.py`. Training is still triggered manually; the inference service, even once live-validated, would need to be started by hand too.
 - No Greeks/backtesting (Section 10, Phase 3) or SSVI baseline (Phase 4).
-- Not merged — still on a feature branch, no PR opened.
 
 ### 0.3 Key deviations from this document's original design
 
@@ -75,6 +87,27 @@ Walk-forward holdout (train on the prior week, evaluate on a genuinely unseen ne
 
 **2026-08-11 failed both thresholds simultaneously** (wings 3.03%, butterfly violation 5.44%) — investigated and deliberately **not** chased by further tuning: forcing every single day under threshold risks overfitting to that one day's microstructure noise at the expense of the other 9. This is the reasoning behind Section 0.5's acceptance-gate design — model risk is handled operationally (reject-and-fall-back), not by assuming the math is perfect on every conceivable day.
 
+#### 0.4.1 2026-08-11 root-cause investigation (2026-08-25)
+
+Re-ran the exact walk-forward window (train 2026-08-05→08-10, holdout 08-11, NIFTY, same config, seed=42) with per-expiry/per-tau instrumentation. Two real findings, one methodological caveat:
+
+- **Weekly-expiry rollover discontinuity.** 08-10 is the *last* trading day of that week's contract — its nearest-to-expiry bucket has τ≈0.003 (a few hours to expiry) where NSE index-option settlement prices are known to blow up (illiquid deep OTM strikes settling at distorted premiums; observed ATM IV ~14-16% but far-OTM strikes implying 60-110%+ IV). This extreme short-τ regime dominates the `τ < 0.01` slice of the training set (4.5% of train rows, all from 08-10). On the holdout day (08-11), that contract has expired — the new nearest-week contract sits at τ≈0.019 with a completely different, much calmer smile (ATM ~10%, max wing ~29%, not 100%+). The model's largest errors are concentrated exactly in this near-week bucket on 08-11 (6-7 vol-point overshoot at low |k|, τ≈0.019) — it's carrying over a short-τ IV *level* learned from the distorted expiring-contract data into the freshly-rolled contract, where that level doesn't apply. This is a structural, explainable failure mode tied to the weekly-expiry cycle, not random noise.
+- **Sparse far-tenor extrapolation.** The single worst holdout error (20+ vol points) is a deep-OTM put on the Dec-2026 expiry (τ≈0.38, k≈−0.74) — a tenor/moneyness combination with very few training rows, i.e. an extrapolation gap rather than a rollover artifact.
+- **Gate-outcome seed sensitivity (caveat).** This re-run, with the same config and data as the original 10-day validation, produced wings MAE 2.29% / butterfly violation 3.98% — both **under** threshold (ACCEPTED), not the originally logged 3.03%/5.44% (REJECTED) for the same calendar day. The discrepancy traces to nondeterminism between runs (this project's collocation resampling and Adam optimization are seeded, but the original 10-day sweep did not pin down every source of run-to-run variance as tightly as this isolated re-run did). Practical implication: on a borderline day, the accept/reject verdict itself has some variance — reinforcing that the gate should be treated as a noisy operational check, not a precise measurement, and that a single day's PASS/FAIL is not by itself strong evidence either way.
+
+Neither finding changes the gate thresholds or defaults — the rollover effect is inherent to how NSE weekly options settle (not fixable by re-tuning `lambda_but`/Fourier bands without the overfitting trap already documented above), and it's exactly the scenario the accept/reject gate exists to catch operationally.
+
+#### 0.4.2 2026-09-17 root-cause investigation (2026-09-18)
+
+A scheduled-equivalent run (`run_training.py --symbols NIFTY BANKNIFTY --seed 42`, no `--end-date`, i.e. "today") on the next available live window **rejected both symbols**: NIFTY wings 3.41% / butterfly 7.68%, BANKNIFTY wings 3.69%. Re-investigated with the same per-expiry/per-tau instrumentation as 0.4.1.
+
+- **Correction to this project's expiry assumption**: NIFTY's weekly expiry is **Tuesday**, confirmed directly from Bhavcopy expiry lists (`2026-09-15`, `2026-09-22`, ... are all Tuesdays) — not Thursday as assumed elsewhere in this codebase's design docs (`docs/DESIGN.md`'s "Expiry Selection" section). Doesn't change any of this project's code (it never hardcoded a weekday), but matters for interpreting *when* a rollover falls relative to a training window.
+- **Same failure mode as 0.4.1, different timing.** The 09-15→09-16 rollover happened *inside* the training window this time (not at the train/holdout boundary), so the model had one day of the new contract to learn from. It still overshot badly: per-expiry breakdown showed the freshly-rolled contract (`2026-09-22`, τ=0.0137 — near the model's τ-domain floor of 0.003) at **5.76% MAE** vs. 1.2%-3.2% for every other expiry in the holdout set. Worst errors: near-ATM, actual σ≈9-12%, predicted σ≈20% (8-13 point overshoot) — even though training data one day earlier at nearly the same τ (0.016-0.019) showed the correct ~12-16% level. This is a short-τ **extrapolation** failure specifically at the edge of the model's τ domain, not the model parroting stale data.
+- **Confirmed (again): the gate's verdict has real run-to-run variance.** Manually re-running the *identical* config/data/seed (42) as the production run got wings 2.53% / butterfly 1.48% — essentially passing — not the production run's 3.41%/7.68% (clearly rejected). Same code, same seed, different outcome, on a borderline case. Root cause identified this time (not just observed): PyTorch's CPU matmul/reduction kernels are not bit-reproducible across runs even with `torch.manual_seed()` fixed, because multi-threaded floating-point reduction order isn't guaranteed. This directly motivated the `enable_deterministic_threads` flag in 0.7.
+- **Background, not causal**: ~9-14% of every single day's option rows (checked across all 8 days in the training window, not just this one) have 1-10 lot volume — a standing `min_volume=1` data-quality gap, not something specific to this week. Motivated the `min_volume=25` experiment in 0.7, though that experiment's own result (0.7) shows it isn't a clean win either.
+
+**Operational consequence**: as of this run, `data/pinn_models/` has no accepted checkpoint for either symbol (the very first production-path run for both symbols happened to land on a difficult week). The service has nothing to serve yet — see 0.6.1.
+
 ### 0.5 Acceptance gate — supersedes Section 7.4
 
 `training/validate.py`'s `check_acceptance_criteria()` replaces Section 7.4's untested thresholds with ones tiered by actual validation status:
@@ -86,14 +119,56 @@ Walk-forward holdout (train on the prior week, evaluate on a genuinely unseen ne
 
 A rejected model is never deployed — `run_training.py` leaves the previously-accepted model (and its `_latest.pt` symlink) untouched and returns a nonzero exit code. Verified with a real (non-mocked) live run: NIFTY-only on 2026-08-14 correctly rejected (butterfly violation 5.52%), no artifact written.
 
-### 0.6 Next work items, roughly in priority order
+### 0.6 Live re-validation on current data (2026-08-25)
 
-1. **Phase 2 — `services/volatility_engine/` (live inference service).** Section 8's design (model loader/hot-reload, 3s inference loop, arbitrage monitor thread) is unbuilt and untested against this project's actual `VolatilityPINN`/`RawInputModel` interfaces — expect some adaptation needed, same as Phase 1 needed vs. the original plan.
-2. **Deploy `run_training.py` on a schedule** (systemd timer per Section 7.5, or equivalent) — currently a manually-invoked CLI only.
-3. **Investigate 2026-08-11 specifically** (expiry day? unusual volatility? a data-quality issue?) before deciding whether the current gate thresholds are the right long-term operating point, or whether that day reveals something fixable.
-4. **Paper-trading integration** (Section 9) — `parse_pinn_signal`, the `strategy_builder.py` one-line fix, and the confirmation-mode hook in `_handle_entry_signal()` are all still exactly as originally designed and entirely unbuilt.
-5. **Open a PR** for `feature/pinn-volatility-engine` — 8 commits, 206 tests, currently unreviewed.
-6. Phase 3 (Greeks/backtesting) and Phase 4 (SSVI baseline) remain as originally scoped in Sections 10 and the plan's Phase 4 — untouched.
+Ran the production CLI unmodified against a fresh 8-trading-day window ending 2026-08-25 (`run_training.py --symbols NIFTY BANKNIFTY --end-date 2026-08-25 --seed 42`), fetching that day's real NSE Bhavcopy over the network rather than the cached historical files used elsewhere in this doc:
+
+| Symbol | Verdict | Wings MAE | Butterfly violation |
+|---|---|---|---|
+| NIFTY | **ACCEPTED** | 2.08% | 4.58% |
+| BANKNIFTY | **ACCEPTED** | 1.83% | 1.98% |
+
+Both comfortably inside threshold (wings < 2.5%, butterfly < 5%), consistent with the 10-day validated average in 0.4 — confirms the pipeline still functions correctly end-to-end (network fetch → dataset → train → gate → save/symlink) two weeks after the original validation window, on data it had never seen before.
+
+#### 0.6.1 2026-09-18 run — both symbols rejected
+
+Ran the same production CLI against the next available live window. Both NIFTY and BANKNIFTY were **REJECTED** (see 0.4.2 for the root-cause investigation this triggered). Since `data/pinn_models/` had no prior accepted checkpoint for either symbol at this point, this run's rejection means **the pipeline currently has no model to serve** for either symbol — the gate's fallback ("keep the previous accepted model live") has nothing to fall back to yet. This is expected/correct behavior for a system that has never yet had an accepted run in its target deployment location, not a bug — but it does mean Phase 2's inference service, once live-validated, would start with zero usable models until a future scheduled run passes the gate.
+
+### 0.7 Experimental flags (2026-09-18) — evaluated, not adopted
+
+Four flags were implemented and validated in response to a proposal for fixing the 0.4.2 short-τ overshoot. All are **opt-in, default off** — none change any existing validated behavior:
+
+| Flag | Where | Purpose |
+|---|---|---|
+| `enable_deterministic_threads` (`PINNConfig`) → `PINNTrainer.deterministic_threads` | `training/trainer.py` | Calls `torch.set_num_threads(1)` at the start of `train()`, closing the run-to-run non-determinism confirmed in 0.4.2. |
+| `max_tau` | `data/dataset.py`'s `build_training_samples()` | Optional upper bound on time-to-expiry (years); drops samples beyond it (e.g. multi-year LEAPS-style expiries that already sit outside the model's normalized `TAU_RANGE=(0.003, 1.0)` domain). |
+| `min_volume` (existing param, tested at a stricter value) | `data/dataset.py`'s `build_training_samples()` | Raise the liquidity floor from the default of 1 lot to strip thin/stale settlement prices. |
+| `short_tau_collocation_boost` (`PINNConfig`) → `sample_collocation()`'s `short_tau_boost_frac`/`short_tau_boost_range` | `data/collocation.py` | Carves out a fraction of collocation points into a narrow τ window near the domain floor, spread across the full k range (not just ATM) — intended to better constrain the arbitrage penalty right at the boundary where 0.4.2's overshoot occurred. |
+
+**Validation**: a 20-run (10-day × 2-symbol) walk-forward sweep — same 10 days and methodology as the 0.4 baseline, so directly comparable — with **all four flags on together** (`max_tau=0.5`, `min_volume=25`, deterministic threads, and the short-τ boost at its default 40%/[0.005, 0.02]):
+
+| Metric | This test (4 flags on) | 0.4 baseline (flags off) |
+|---|---|---|
+| Wings MAE | **3.47 ± 0.91%** | 2.39 ± 0.37% |
+| Overall MAE | 4.73 ± 1.32% | 2.95 ± 0.26% |
+| ATM MAE | 4.97 ± 1.47% | 3.04 ± 0.30% |
+| Butterfly violation | 2.62 ± 2.87% | 3.11 ± 1.07% |
+| Worst-case wings | 5.52% (NIFTY 08-10) | 3.03% (NIFTY 08-11) |
+| Worst-case butterfly | **10.80%** (NIFTY 08-13) — a new project-worst | 5.44% (NIFTY 08-11) |
+| Gate acceptance | **3/20 (15%)** | ~9/10 combined |
+
+**Verdict: net regression — do not adopt this combination.** Most likely mechanism: `short_tau_collocation_boost` reallocates 40% of an already-modest, fixed collocation budget (512 points) into a narrow τ slice; since collocation points only constrain the arbitrage/PDE penalty (never the data-fitting loss — they carry no market data), this measurably weakens arbitrage-penalty coverage across the *rest* of the domain, consistent with the worst-ever butterfly violation observed. `max_tau=0.5` and `min_volume=25` also shrink the training set meaningfully (confirmed separately: `min_volume=25` alone drops ~20% of rows and zeroes out several far-dated expiries entirely). `enable_deterministic_threads` was not implicated in the regression — it has no plausible mechanism for affecting model quality, only run-to-run reproducibility.
+
+**Not done**: an isolated per-flag sweep (each flag alone, same 10 days) to identify which specific flag(s) are responsible — the bundled test only shows the combination is bad, not which piece(s). `enable_deterministic_threads` alone is the one flag worth adopting on its own reasoning (removes non-determinism, no plausible quality downside) without needing that isolation sweep first.
+
+### 0.8 Next work items, roughly in priority order
+
+1. **Paper-trading integration** (Section 9) — the highest-value remaining piece; Phase 2 part 1 computes signals but nothing consumes them yet. `parse_pinn_signal`, the `strategy_builder.py` one-line fix, and the confirmation-mode hook in `_handle_entry_signal()` are all still exactly as originally designed and entirely unbuilt.
+2. **Live-validate Phase 2 part 1** against a real Redis instance during market hours — everything so far is synthetic-data/stub-model tested only (see 0.1b).
+3. **Isolate the 0.7 experimental flags individually** (or just adopt `enable_deterministic_threads=True` alone) before considering any of them for defaults.
+4. **`/pinn_status` bot command** and **systemd units** (inference service + nightly training timer) — neither exists; training and (once validated) inference are both manual-only today.
+5. Phase 3 (Greeks/backtesting) and Phase 4 (SSVI baseline) remain as originally scoped in Sections 10 and the plan's Phase 4 — untouched.
+6. ~~Investigate 2026-08-11~~ — done, see 0.4.1. ~~Investigate 2026-09-17~~ — done, see 0.4.2. ~~Open a PR~~ — done, PR #54 (Phase 1), PR #56 (Phase 2 part 1).
 
 ---
 

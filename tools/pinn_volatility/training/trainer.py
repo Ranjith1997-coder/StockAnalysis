@@ -63,6 +63,18 @@ class PINNTrainer:
     (see conversation) -- purely from different random collocation draws,
     not genuine model-quality differences.
 
+    Even with a seed, a *second* nondeterminism source remains:
+    `deterministic_threads=True` calls `torch.set_num_threads(1)` at the
+    start of train() to close it. PyTorch's CPU matmul/conv kernels use
+    multi-threaded reductions whose floating-point order (and therefore
+    exact result) isn't guaranteed reproducible across runs even with
+    torch.manual_seed() fixed -- confirmed empirically on 2026-09-17: an
+    identical (seed, config, data) re-run produced wings MAE 2.53%/butterfly
+    1.48% vs. the original run's 3.41%/7.68%, on a borderline day where that
+    gap flips the accept/reject verdict. Single-threaded execution is slower
+    but bit-reproducible; default is False since most callers care more
+    about wall-clock than exact reproducibility.
+
     lambda_but=0.7 (raised from 0.5): with num_fourier_bands=3 (the model's
     own default), the network has real capacity to fit wing curvature --
     but that same capacity let it produce locally negative Durrleman
@@ -100,6 +112,9 @@ class PINNTrainer:
         tau_weight_max: float = 20.0,
         moneyness_alpha: float = 5.0,
         seed: int | None = None,
+        deterministic_threads: bool = False,
+        short_tau_boost_frac: float = 0.0,
+        short_tau_boost_range: tuple[float, float] = (0.005, 0.02),
     ):
         self.adam_epochs = adam_epochs
         self.adam_lr = adam_lr
@@ -119,10 +134,17 @@ class PINNTrainer:
         self.tau_weight_max = tau_weight_max
         self.moneyness_alpha = moneyness_alpha
         self.seed = seed
+        self.deterministic_threads = deterministic_threads
+        self.short_tau_boost_frac = short_tau_boost_frac
+        self.short_tau_boost_range = short_tau_boost_range
         self._rng = np.random.default_rng(seed) if seed is not None else None
 
     def _sample_collocation(self):
-        return sample_collocation(self.n_collocation, rng=self._rng)
+        return sample_collocation(
+            self.n_collocation, rng=self._rng,
+            short_tau_boost_frac=self.short_tau_boost_frac,
+            short_tau_boost_range=self.short_tau_boost_range,
+        )
 
     def _loss(self, model, k_train, tau_train, w_train, collocation):
         return composite_loss(
@@ -152,6 +174,9 @@ class PINNTrainer:
             TrainingResult with the (now-trained) model, the final loss
             breakdown, and a history of logged checkpoints.
         """
+        if self.deterministic_threads:
+            torch.set_num_threads(1)
+
         model.train()
         history: list = []
 

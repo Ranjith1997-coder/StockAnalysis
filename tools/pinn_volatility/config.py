@@ -69,6 +69,14 @@ class PINNConfig:
     k_range: tuple[float, float] = (-2.0, 2.0)
     tau_range: tuple[float, float] = (0.003, 1.0)
     collocation_concentrated_frac: float = 0.6
+    # Experimental flag from the 2026-09-17 short-tau investigation (see
+    # trainer.py / collocation.py docstrings) -- NOT validated as a default.
+    # When True, carves out short_tau_boost_frac of collocation points into
+    # the narrow short_tau_boost_range window, on top of the existing
+    # concentrated/spread split.
+    short_tau_collocation_boost: bool = False
+    short_tau_boost_frac: float = 0.4
+    short_tau_boost_range: tuple[float, float] = (0.005, 0.02)
 
     # ── Data ──
     symbols: list[str] = field(default_factory=lambda: ["NIFTY", "BANKNIFTY"])  # SENSEX excluded -- BSE product, not in NSE's file
@@ -78,6 +86,10 @@ class PINNConfig:
     max_iv: float = 2.0
     min_volume: int = 1
     k_max: float = 2.0
+    # Experimental, from the same 2026-09-17 investigation -- NOT validated.
+    # None (default) keeps every tenor including out-of-domain multi-year
+    # expiries; see dataset.build_training_samples' max_tau docstring.
+    max_tau: float | None = None
 
     # ── Paths ──
     model_dir: str = "data/pinn_models"
@@ -85,3 +97,7 @@ class PINNConfig:
 
     # ── Reproducibility ──
     seed: int | None = None
+    # Experimental, from the same 2026-09-17 investigation -- NOT validated
+    # as a default. See trainer.py's PINNTrainer docstring for why this
+    # matters even with `seed` set.
+    enable_deterministic_threads: bool = False
