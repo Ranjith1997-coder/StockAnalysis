@@ -94,6 +94,7 @@ def train_one_symbol(
     samples = build_training_samples(
         bhavcopy, symbols=[symbol], r=config.risk_free_rate, q=config.dividend_yield,
         k_max=config.k_max, max_iv=config.max_iv, min_volume=config.min_volume,
+        max_tau=config.max_tau,
     )
     if len(samples) < 50:
         return _failure_result(symbol, f"too few training samples after filtering ({len(samples)})")
@@ -123,6 +124,9 @@ def train_one_symbol(
         n_collocation=config.n_collocation, collocation_regen_every=config.collocation_regen_every,
         lambda_data=config.lambda_data, lambda_cal=config.lambda_calendar, lambda_but=config.lambda_butterfly,
         beta_nll=config.beta_nll, grad_clip_norm=config.grad_clip_norm, seed=config.seed,
+        deterministic_threads=config.enable_deterministic_threads,
+        short_tau_boost_frac=config.short_tau_boost_frac if config.short_tau_collocation_boost else 0.0,
+        short_tau_boost_range=config.short_tau_boost_range,
     )
     t0 = time.time()
     trainer.train(model, k_train, tau_train, w_train)

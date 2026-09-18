@@ -76,18 +76,31 @@ def build_training_samples(
     k_max: float = 2.0,
     max_iv: float = 2.0,
     min_volume: int = 1,
+    max_tau: float | None = None,
 ) -> list[TrainingSample]:
     """Convert Bhavcopy option rows into (k, tau, w) training samples.
 
     Per option row:
       1. Filter: TtlTradgVol >= min_volume, SttlmPric > 0.
-      2. tau = (expiry - trade_date).days / 365.
+      2. tau = (expiry - trade_date).days / 365. Filter: 0 < tau, and
+         tau <= max_tau if given (see below).
       3. Forward price F: matching IDF row's SttlmPric if one exists for the
          same (symbol, trade_date, expiry); else UndrlygPric * exp((r-q)*tau).
       4. k = ln(strike / F). Filter: |k| < k_max.
       5. sigma = invert_bs(UndrlygPric, strike, tau, r, q, SttlmPric, type).
          Skip if no solution (price below intrinsic) or sigma > max_iv.
       6. w = sigma^2 * tau.
+
+    Args:
+        max_tau: optional upper bound on time-to-expiry (years). None (default)
+            keeps every tenor, including multi-year LEAPS-style expiries that
+            sit outside the model's normalized TAU_RANGE=(0.003, 1.0) domain
+            (model/pinn.py) -- those rows still get included as training data
+            today with tau_norm > 1, an out-of-domain input. Set e.g. 0.5 to
+            drop anything past ~6 months if that out-of-domain tail turns out
+            to hurt more than the (usually tiny) sample count it removes --
+            not validated as a default; see conversation history for the
+            2026-09-17 investigation that raised the question.
 
     Returns:
         List of TrainingSample, one per surviving row. Logs a skip-reason
@@ -99,7 +112,7 @@ def build_training_samples(
     ]
 
     samples: list[TrainingSample] = []
-    skipped = {"volume": 0, "settle_price": 0, "tau": 0, "k_range": 0, "no_iv_solution": 0, "iv_range": 0}
+    skipped = {"volume": 0, "settle_price": 0, "tau": 0, "max_tau": 0, "k_range": 0, "no_iv_solution": 0, "iv_range": 0}
 
     for _, row in options.iterrows():
         if float(row.get("TtlTradgVol", 0) or 0) < min_volume:
@@ -116,6 +129,9 @@ def build_training_samples(
         tau = (expiry_date - trade_date).days / 365.0
         if tau <= 0:
             skipped["tau"] += 1
+            continue
+        if max_tau is not None and tau > max_tau:
+            skipped["max_tau"] += 1
             continue
 
         symbol = row["TckrSymb"]
