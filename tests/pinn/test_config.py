@@ -37,6 +37,16 @@ class TestPINNConfig:
         assert config.lambda_calendar == trainer.lambda_cal
         assert config.lambda_butterfly == trainer.lambda_but
         assert config.beta_nll == trainer.beta_nll
+        assert config.enable_deterministic_threads == trainer.deterministic_threads
+        assert config.short_tau_boost_range == trainer.short_tau_boost_range
+
+    def test_experimental_flags_default_off(self):
+        """The 2026-09-17-investigation flags must default to the original,
+        already-validated behavior -- opt-in only, never silently active."""
+        config = PINNConfig()
+        assert config.enable_deterministic_threads is False
+        assert config.short_tau_collocation_boost is False
+        assert config.max_tau is None
 
     def test_symbols_excludes_sensex(self):
         assert "SENSEX" not in PINNConfig().symbols

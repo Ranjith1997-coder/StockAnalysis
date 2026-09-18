@@ -140,6 +140,25 @@ class TestFiltering:
         samples = build_training_samples(bhavcopy)
         assert len(samples) == 0
 
+    def test_max_tau_none_keeps_long_dated_row(self):
+        """Default (None) -- unchanged behavior, matches every prior test above."""
+        row = _option_row(trade_date="2026-08-14", expiry="2028-08-17")  # ~2yr tau
+        bhavcopy = pd.DataFrame([row])
+        samples = build_training_samples(bhavcopy, max_tau=None)
+        assert len(samples) == 1
+
+    def test_max_tau_excludes_long_dated_row(self):
+        row = _option_row(trade_date="2026-08-14", expiry="2028-08-17")  # ~2yr tau
+        bhavcopy = pd.DataFrame([row])
+        samples = build_training_samples(bhavcopy, max_tau=0.5)
+        assert len(samples) == 0
+
+    def test_max_tau_keeps_row_at_or_under_bound(self):
+        row = _option_row(trade_date="2026-08-14", expiry="2026-09-13")  # ~30d tau
+        bhavcopy = pd.DataFrame([row])
+        samples = build_training_samples(bhavcopy, max_tau=0.5)
+        assert len(samples) == 1
+
 
 class TestIvInversionRoundTrip:
     @pytest.mark.parametrize("sigma,option_type,strike", [

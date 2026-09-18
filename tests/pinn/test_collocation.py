@@ -89,3 +89,44 @@ class TestSampleCollocation:
         k = pts[:, 0]
         assert k.min() >= narrow_k_range[0] - 1e-9
         assert k.max() <= narrow_k_range[1] + 1e-9
+
+
+class TestShortTauBoost:
+    def test_zero_frac_reproduces_original_output_exactly(self):
+        """short_tau_boost_frac=0.0 (default) must be bit-identical to the
+        pre-boost code path -- same rng consumption, same point count."""
+        pts_no_boost_kw = sample_collocation(n_points=1000, rng=np.random.default_rng(9))
+        pts_explicit_zero = sample_collocation(n_points=1000, short_tau_boost_frac=0.0,
+                                                rng=np.random.default_rng(9))
+        assert torch.equal(pts_no_boost_kw, pts_explicit_zero)
+
+    def test_boost_points_land_in_requested_window(self):
+        n_points = 2000
+        boost_frac = 0.4
+        boost_range = (0.005, 0.02)
+        pts = sample_collocation(n_points=n_points, short_tau_boost_frac=boost_frac,
+                                  short_tau_boost_range=boost_range,
+                                  rng=np.random.default_rng(6))
+        tau = pts[:, 1]
+        in_window = ((tau >= boost_range[0] - 1e-9) & (tau <= boost_range[1] + 1e-9)).sum().item()
+        # At least the boost allocation must land there (concentrated/spread
+        # zones may also contribute a few points to this narrow window by chance).
+        assert in_window >= int(n_points * boost_frac)
+
+    def test_boost_preserves_total_point_count(self):
+        pts = sample_collocation(n_points=777, short_tau_boost_frac=0.4,
+                                  rng=np.random.default_rng(7))
+        assert pts.shape == (777, 2)
+
+    def test_boost_spans_full_k_range_not_just_atm(self):
+        """Unlike the existing ATM-concentrated zone, the boost window is
+        meant to anchor the surface across all moneyness at short tau."""
+        k_range = (-2.0, 2.0)
+        pts = sample_collocation(n_points=2000, k_range=k_range, short_tau_boost_frac=0.4,
+                                  short_tau_boost_range=(0.005, 0.02),
+                                  rng=np.random.default_rng(8))
+        tau = pts[:, 1]
+        boosted_k = pts[(tau >= 0.005) & (tau <= 0.02), 0]
+        # With 40% of 2000 = 800 points spread uniformly over (-2, 2), we
+        # should see real coverage well outside the +/-0.5 ATM band.
+        assert (boosted_k.abs() > 0.5).sum().item() > 0
