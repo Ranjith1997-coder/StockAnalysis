@@ -158,6 +158,80 @@ def parse_confluence_message(fields: dict,
     )
 
 
+# ── Source 3: PINN mispricing signals from pinn:signals ─────────────────────
+
+def parse_pinn_signal(fields: dict) -> Optional[EntrySignal]:
+    """Parse a pinn:signals stream message (services/volatility_engine/
+    signal_emitter.py's emit_signal()) into an EntrySignal.
+
+    Unlike parse_analysis_result(), no strategy/signal_source inference is
+    needed here -- the emitter already sets `strategy` ("CREDIT_SPREAD" for
+    SKEW_FADE_SETUP, "IRON_CONDOR" for RANGE_BOUND_SETUP, per
+    services/volatility_engine/comparator.py) and `signal_source`
+    ("PINN_MISPRICING") correctly on the wire; this just trusts them rather
+    than re-deriving from signal_type, so there's one source of truth for
+    that mapping instead of two.
+
+    PINN signals are always intraday -- the inference service
+    (services/volatility_engine/main.py) only runs its comparison loop
+    during market hours.
+    """
+    signal_type = fields.get("signal_type", "")
+    symbol = fields.get("symbol", "")
+    if not symbol or symbol not in LIVE_OPTIONS_INDICES:
+        return None
+
+    strategy = fields.get("strategy", "")
+    direction = fields.get("direction", "NEUTRAL")
+
+    try:
+        score = float(fields.get("z_score", 0) or 0)
+
+        if signal_type == "SKEW_FADE_SETUP":
+            sr_level = fields.get("sr_level")
+            if sr_level is None:
+                return None
+            return EntrySignal(
+                strategy=strategy,
+                symbol=symbol,
+                direction=direction,
+                sr_level=float(sr_level),
+                signal_source="PINN_MISPRICING",
+                score=score,
+                mode="intraday",
+                signal_context={
+                    "fair_iv": float(fields.get("fair_iv", 0) or 0),
+                    "live_iv": float(fields.get("live_iv", 0) or 0),
+                    "overpriced_type": fields.get("overpriced_type", ""),
+                },
+            )
+
+        if signal_type == "RANGE_BOUND_SETUP":
+            put_wall = fields.get("put_wall_strike")
+            call_wall = fields.get("call_wall_strike")
+            if put_wall is None or call_wall is None:
+                return None
+            return EntrySignal(
+                strategy=strategy,
+                symbol=symbol,
+                direction=direction,
+                put_wall_strike=float(put_wall),
+                call_wall_strike=float(call_wall),
+                signal_source="PINN_MISPRICING",
+                score=score,
+                mode="intraday",
+                signal_context={
+                    "fair_iv_ce": float(fields.get("fair_iv_ce", 0) or 0),
+                    "fair_iv_pe": float(fields.get("fair_iv_pe", 0) or 0),
+                },
+            )
+    except (TypeError, ValueError) as e:
+        logger.warning("[signal_router] Malformed pinn signal for %s: %s", symbol, e)
+        return None
+
+    return None
+
+
 # ── Entry filters (docs/PAPER_TRADING_DESIGN.md section 6.2) ───────────────
 # Account/position-level filters only. Strike-availability and greeks checks
 # happen later in strategy_builder, once strikes are actually selected.

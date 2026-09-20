@@ -39,6 +39,7 @@ from services.paper_trading.signal_router import (
     check_entry_filters,
     parse_analysis_result,
     parse_confluence_message,
+    parse_pinn_signal,
 )
 from services.paper_trading.span_calculator import (
     SpanCalculator,
@@ -47,9 +48,11 @@ from services.paper_trading.span_calculator import (
     save_instruments_cache,
 )
 from services.paper_trading.strategy_builder import build_position
+from services.volatility_engine.signal_emitter import SIGNALS_STREAM as PINN_SIGNALS_STREAM
 
 ANALYSIS_GROUP = "paper-trader"
 CONFLUENCE_GROUP = "paper-trader-confluence"
+PINN_GROUP = "paper-trader-pinn"
 COMMANDS_STREAM = "paper:commands"
 COMMANDS_GROUP = "paper-trader-cmd"
 CONSUMER_NAME = "paper-trader-1"
@@ -287,6 +290,39 @@ def confluence_consumer(redis):
                     logger.debug("[paper-trading] xack confluence %s: %s", msg_id, e)
 
 
+def pinn_signal_consumer(redis):
+    try:
+        redis.xgroup_create(PINN_GROUP, PINN_SIGNALS_STREAM, mkstream=True)
+    except Exception as e:
+        logger.debug("[paper-trading] xgroup_create %s: %s", PINN_GROUP, e)
+
+    while _running:
+        try:
+            messages = redis.xreadgroup(
+                PINN_GROUP, CONSUMER_NAME,
+                {PINN_SIGNALS_STREAM: ">"}, count=10, block=5000,
+            )
+        except Exception as e:
+            logger.error("[paper-trading] pinn consumer error: %s", e, exc_info=True)
+            time.sleep(2)
+            continue
+        if not messages:
+            continue
+        entries = messages[0][1] if isinstance(messages, list) and messages else []
+        for msg_id, fields in entries:
+            try:
+                signal = parse_pinn_signal(fields)
+                if signal:
+                    entry_queue.put(signal)
+            except Exception as e:
+                logger.exception("[paper-trading] Error parsing pinn signal %s: %s", msg_id, e)
+            finally:
+                try:
+                    redis.xack(PINN_SIGNALS_STREAM, PINN_GROUP, msg_id)
+                except Exception as e:
+                    logger.debug("[paper-trading] xack pinn %s: %s", msg_id, e)
+
+
 def _handle_exit_signal(redis, signal) -> None:
     for position in load_open_positions(redis):
         if position.symbol != signal.symbol:
@@ -478,6 +514,7 @@ def main():
     threads = [
         threading.Thread(target=analysis_consumer, args=(redis,), name="analysis-consumer", daemon=True),
         threading.Thread(target=confluence_consumer, args=(redis,), name="confluence-consumer", daemon=True),
+        threading.Thread(target=pinn_signal_consumer, args=(redis,), name="pinn-consumer", daemon=True),
         threading.Thread(target=strategy_processor, args=(redis, span_calculator), name="strategy-processor", daemon=True),
         threading.Thread(target=mtm_engine, args=(redis,), name="mtm-engine", daemon=True),
         threading.Thread(target=command_listener, args=(redis,), name="command-listener", daemon=True),
