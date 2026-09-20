@@ -1,9 +1,9 @@
 # PINN Volatility Engine — Complete Design & Implementation Plan
 
-> **Status**: Phase 1 (data pipeline, model, training, acceptance gate, CLI) **merged to master**. Phase 2 part 1 (live inference service core: model loading, live-vs-fair comparison, signal emission) **merged to master**. Paper-trading integration, `/pinn_status`, and deployment (systemd) are still unbuilt. As of the most recent scheduled run (2026-09-18), **no model is currently accepted for either symbol** — see 0.6.1. See Section 0 for full status, empirical deviations from this design, and next work items.
+> **Status**: Phase 1 (data pipeline, model, training, acceptance gate, CLI) **merged to master**. Phase 2 part 1 (live inference service core: model loading, live-vs-fair comparison, signal emission) **merged to master**. Paper-trading integration is **partially done** — signal routing (`parse_pinn_signal`, the `strategy_builder.py` fix, the 6th consumer thread) is built; the confirmation-mode hook is not (0.4.3). `/pinn_status` and deployment (systemd) are still unbuilt. As of the most recent scheduled run (2026-09-18), **no model is currently accepted for either symbol** — see 0.6.1. Every tuning attempt made since (0.7's 4-flag bundle, the 0.7.1 per-flag isolation, and 0.7.2's log-τ input encoding) made accuracy *worse*, not better — none adopted. See Section 0 for full status, empirical deviations from this design, and next work items.
 > **Created**: 2026-08-01
-> **Last updated**: 2026-09-18 (09-17 short-tau investigation, experimental flags + their validation, Phase 2 part 1 status)
-> **Branches**: Phase 1 merged via `feature/pinn-volatility-engine` (PR #54); Phase 2 part 1 merged via `feature/pinn-inference-service` (PR #56); this update is on `feature/pinn-experimental-flags` (not yet merged) and also folds in PR #55's 08-11/08-25 content, which was never merged as its own PR — close #55 without merging once this branch lands, to avoid a stale duplicate.
+> **Last updated**: 2026-09-20 (per-flag isolation sweep, 5 further improvement proposals analyzed, log-τ input encoding implemented/validated/reverted, paper-trading signal routing built)
+> **Branches**: Phase 1 merged via `feature/pinn-volatility-engine` (PR #54); Phase 2 part 1 merged via `feature/pinn-inference-service` (PR #56); experimental flags + 08-11/08-25 content merged via `feature/pinn-experimental-flags` (PR #57). PR #55 (superseded duplicate of the 08-11/08-25 content, folded into #57) should still be closed without merging — not yet done. `feature/pinn-log-tau-normalization` was implemented, validated, found to be a severe regression, and deleted without merging (see 0.7.2) — the finding is preserved in this doc, the code was not kept. Paper-trading signal routing (0.4.3) is on `feature/pinn-paper-trading-integration` (not yet merged).
 > **Prerequisites**: Paper trading service deployed (commits `ef19db1`–`2fd67a1`), analysis-engine with composite analyser, market-data WS pipeline, SPAN margin calculator
 
 ---
@@ -48,7 +48,7 @@ All of Steps 1–10 from Section 14's phased plan are implemented, tested, and v
 
 ### 0.2 What's NOT built — Phase 2 (remaining) and beyond
 
-- **Paper-trading integration** — `signal_router.parse_pinn_signal()` doesn't exist; `strategy_builder.py`'s `select_strikes()` still checks `signal.signal_source == "SKEW_FADE_SETUP"` instead of the documented `signal.sr_level is not None` one-line fix; no confirmation-mode hook in `paper_trading/main.py`'s `_handle_entry_signal()`; no 6th consumer thread reading `pinn:signals`. Section 9's design is otherwise unchanged from the original plan.
+- **Paper-trading integration — partially done (2026-09-20)**: `signal_router.parse_pinn_signal()`, the `strategy_builder.py` `sr_level`-presence fix, and the 6th consumer thread (`pinn_signal_consumer`) reading `pinn:signals` into the shared `entry_queue` are all now built and merged (see 0.4.3). **Still missing**: no confirmation-mode hook in `paper_trading/main.py`'s `_handle_entry_signal()` (Section 9.3 — checking PINN's z-score confirmation before entering a *non*-PINN-sourced signal). Section 9's design is otherwise unchanged from the original plan.
 - **`/pinn_status` bot command** — `lib/notification/commands/pinn_cmds.py` doesn't exist.
 - **No systemd units at all** — neither `stockanalysis-volatility-engine.service` (the inference service) nor a nightly-training timer for `run_training.py`. Training is still triggered manually; the inference service, even once live-validated, would need to be started by hand too.
 - No Greeks/backtesting (Section 10, Phase 3) or SSVI baseline (Phase 4).
@@ -108,6 +108,17 @@ A scheduled-equivalent run (`run_training.py --symbols NIFTY BANKNIFTY --seed 42
 
 **Operational consequence**: as of this run, `data/pinn_models/` has no accepted checkpoint for either symbol (the very first production-path run for both symbols happened to land on a difficult week). The service has nothing to serve yet — see 0.6.1.
 
+#### 0.4.3 Paper-trading integration, part 1 (2026-09-20)
+
+Implements the first two of Section 9's three missing pieces (0.2), adapted to the real code (not the pseudocode's assumed field names):
+
+- **`signal_router.parse_pinn_signal()`** — deserializes `pinn:signals` messages into `EntrySignal`. Deviates from Section 9.2's pseudocode: it **trusts** the `strategy`/`signal_source` fields the emitter (`services/volatility_engine/signal_emitter.py`) already sets correctly on the wire (`"CREDIT_SPREAD"`/`"PINN_MISPRICING"` for `SKEW_FADE_SETUP`, `"IRON_CONDOR"` for `RANGE_BOUND_SETUP`, per `comparator.py`'s `PinnSignal` construction) rather than re-deriving them from `signal_type` a second time — one source of truth for that mapping, not two.
+- **`pinn_signal_consumer`** — the 6th consumer thread in `paper_trading/main.py`, wired identically to `confluence_consumer` (its own `xreadgroup` group `paper-trader-pinn` on the `pinn:signals` stream, feeding the shared `entry_queue`). Imports `PINN_SIGNALS_STREAM` directly from `signal_emitter.py` rather than duplicating the stream-name literal.
+- **`strategy_builder.py`'s one-line fix** — `select_strikes()`'s `CREDIT_SPREAD` branch now checks `signal.sr_level is not None` instead of `signal.signal_source == "SKEW_FADE_SETUP"`, exactly as Section 9.2 specifies. This was a real bug, not just a documentation gap: `PINN_MISPRICING` signals carry `sr_level` too, so the old check silently misrouted them down the CONFLUENCE/`atm_strike` path instead of using the model's specific mispriced strike.
+- 12 new tests (`tests/services/test_signal_router.py`'s `TestParsePinnSignal`, round-tripping fixtures through the real `emit_signal()` rather than hand-written field dicts, plus one regression test in `test_strategy_builder.py`).
+
+**Not done**: the confirmation-mode hook (Section 9.3) — `_handle_entry_signal()` doesn't yet check PINN's cached z-score before letting a non-PINN signal through. PINN-sourced signals themselves now flow end-to-end from `pinn:signals` into open positions once Phase 2 part 1's inference service is live-validated and producing an accepted model (0.6.1 — currently neither symbol has one).
+
 ### 0.5 Acceptance gate — supersedes Section 7.4
 
 `training/validate.py`'s `check_acceptance_criteria()` replaces Section 7.4's untested thresholds with ones tiered by actual validation status:
@@ -161,14 +172,61 @@ Four flags were implemented and validated in response to a proposal for fixing t
 
 **Not done**: an isolated per-flag sweep (each flag alone, same 10 days) to identify which specific flag(s) are responsible — the bundled test only shows the combination is bad, not which piece(s). `enable_deterministic_threads` alone is the one flag worth adopting on its own reasoning (removes non-determinism, no plausible quality downside) without needing that isolation sweep first.
 
+#### 0.7.1 Per-flag isolation sweep (2026-09-19) — resolves 0.7's "not done" item
+
+Same 10-day × 2-symbol methodology, each of the three quality-affecting flags tested alone (`enable_deterministic_threads=True` in every config, including the control, so the comparison isn't confounded by run-to-run noise):
+
+| Config | Wings MAE | ATM MAE | Overall MAE | Butterfly viol. | Accepted |
+|---|---|---|---|---|---|
+| `det_only` (control — determinism only) | 2.73 ± 0.80% | 4.10 ± 1.81% | 3.86 ± 1.60% | 3.25 ± 2.41% (max 8.58%) | 5/20 |
+| `det_maxtau` (+ `max_tau=0.5`) | 3.68 ± 0.87% | 4.91 ± 1.72% | 4.69 ± 1.51% | 4.21 ± 4.11% (max **11.00%**) | **1/20** |
+| `det_minvol25` (+ `min_volume=25`) | **2.46 ± 0.71%** | **3.90 ± 1.46%** | **3.67 ± 1.31%** | 4.69 ± 4.26% (max 10.96%) | 3/20 |
+| `det_boost` (+ `short_tau_collocation_boost`) | 2.98 ± 0.86% | 4.64 ± 1.90% | 4.35 ± 1.68% | **2.52 ± 2.32%** (max 8.34%) | **6/20** |
+
+**Verdict**: no individual flag beats the 0.4 baseline (2.39 ± 0.37% wings, ~9/10 combined acceptance) either — including the control, which reproduces determinism-only behavior but still shows materially higher variance than the original 0.4 measurement, most likely session/environment drift rather than a `enable_deterministic_threads` side effect (it has no plausible mechanism for changing model quality, only reproducibility). `max_tau=0.5` is unambiguously the worst single flag — new project-worst butterfly tail (11.00%), only 1/20 accepted — confirms it should not be pursued further in any form. `min_volume=25` gives the best raw accuracy of the four but the worst butterfly control. `short_tau_collocation_boost` gives the best butterfly control and best acceptance rate of the four but at a real accuracy cost. **None recommended individually either.**
+
+#### 0.7.2 Five further improvement proposals analyzed (2026-09-19); log-τ input encoding implemented, validated, and reverted (2026-09-19/20)
+
+A follow-up proposal suggested five further fixes for the 0.4.2 short-τ failure. Each was checked against the actual code before any implementation:
+
+1. **GradNorm/SoftAdapt adaptive loss weighting** — not pursued. The claimed benefit ("reduces run-to-run variance") is already independently explained and fixed by `enable_deterministic_threads` (0.4.2); GradNorm wouldn't touch that. It also wouldn't fix a data-fit-level error at the τ-domain boundary, since `lambda_cal`/`lambda_but` only weight the synthetic-collocation PDE penalty (`losses/composite.py`), never the data-fitting term itself.
+2. **Asymptotic Roger-Lee wing-slope bound penalty** — legitimate and cheap, but addresses far-wing (`|k|` large) behavior, not the short-τ rollover failure that's actually open. Deferred as a general hardening item, not a fix for 0.4.2.
+3. **Short-τ exponential data-loss multiplier** — not implemented as literally proposed: the given formula (`e^{-τ}` for τ < 0.02) evaluates to ≈0.98–0.997 across that entire window, i.e. effectively a no-op, the opposite of the intended "treat short-expiry errors as fatal." The equivalent, correctly-signed mechanism already exists — `losses/data_loss.py`'s `tau_weight()` (1/τ², capped at 20×) behind `use_tau_weight` — but has never been validated at scale (defaults off). Recommended trying that before writing new code; not yet done.
+4. **log(τ)/√τ time-domain input stretching** — **implemented and validated, then reverted.** See below.
+5. **Normalized strike input `k/√τ`** — not implemented; deferred pending (4)'s outcome. Real derivative-correctness risk: `losses/arbitrage.py`'s `calendar_slope`/`durrleman_density` differentiate w.r.t. the *raw* (k, τ) via autograd through `normalize()` (`model/pinn.py`) — a `k/√τ` transform changes what those derivatives mean unless the chain rule is rebuilt carefully, the same bug class already caught once in `losses/data_loss.py`'s β-NLL implementation (0.3, deviation 3).
+6. **Dual-branch gated architecture** — not implemented. Every current constant (`num_fourier_bands=3`, `lambda_butterfly=0.7`, `hidden_dim`/`num_layers`) was empirically tuned as a package for the existing single-branch architecture (0.3, deviations 4 and 6) — a gated architecture invalidates all of it and requires redoing every sweep from scratch, plus a smooth (not hard) gate to preserve the double-differentiability the butterfly penalty needs. Phase-3/4-scale effort, not a quick fix.
+
+**Log-τ normalization (item 4) — full result.** Implemented as `use_log_tau` (opt-in, default `False`, exactly reproduces existing behavior) in `model/pinn.py`'s `normalize()`, threaded through `RawInputModel`, `losses/composite.py`, `training/trainer.py`, `training/validate.py`, and `config.py` (`PINNConfig.use_log_tau`), with 8 new tests, on `feature/pinn-log-tau-normalization`.
+
+Motivation, confirmed directly from the code: `TAU_RANGE=(0.003, 1.0)` linear normalization squeezes the entire weekly-rollover window (τ ∈ [0.005, 0.02] — every ~3–14 day contract) into just **~1.5% of the model's [-1, 1] input range** (`tau_norm` ∈ [−0.996, −0.966]) — a 3-day and a 5-day contract are nearly indistinguishable network inputs. This is a mechanistic explanation for the short-τ extrapolation failures in both 0.4.1 and 0.4.2.
+
+Validated via the same 10-day × 2-symbol walk-forward, against a same-session control:
+
+| Metric | Control (`det_only`) | `use_log_tau=True` |
+|---|---|---|
+| Wings MAE | 2.73 ± 0.80% | **7.18 ± 3.39%** (max 13.58%) |
+| ATM MAE | 4.10 ± 1.81% | **7.26 ± 3.47%** (max 14.74%) |
+| Overall MAE | 3.86 ± 1.60% | **7.28 ± 3.29%** (max 14.12%) |
+| Butterfly violation | 3.25 ± 2.41% | 5.05 ± 2.15% |
+| Accepted | 5/20 | **0/20** |
+
+Degraded roughly uniformly across all 20 runs, both symbols, and both ATM and wings — not a single bad day dragging the average. Not an implementation bug: the 8 unit tests confirm the transform does exactly what it's supposed to (correct range endpoints, ~30× wider short-τ span than linear, doesn't touch the `k` dimension at all), and the control config reproduced the 0.7.1 numbers exactly on re-run.
+
+**Most likely mechanism**: linear normalization's compression of short-τ wasn't only hiding the 3-day/5-day distinction — it was also implicitly *smoothing over* the genuinely noisy short-dated data (0.4.2's finding: 9–14% of every day's rows have 1–10 lot volume, concentrated near rollover). Because linear normalization couldn't resolve individual short-τ contracts as distinct inputs, the network was structurally forced to fit a smooth extrapolation through that region. Log-τ normalization gives it enough resolution to fit that noise directly instead — and since none of `adam_lr`/the epoch schedule/`lambda_butterfly=0.7`/`num_fourier_bands=3` (all empirically tuned specifically against the linear mapping, 0.3) were retuned for the new input geometry, the optimizer converges to a substantially worse global fit, not just a locally-worse short-τ one.
+
+**Verdict: do not adopt.** `feature/pinn-log-tau-normalization` was deleted without merging — the result is unambiguously negative, and the code touches the core `normalize()` function used by live inference too (`services/volatility_engine/comparator.py` was deliberately left unthreaded, since a model trained with `use_log_tau=True` requires the *same* flag at inference time or predictions are silently wrong), which isn't worth carrying as opt-in dead code for an idea that failed this badly. This finding is preserved here instead of in the code.
+
+**Pattern across every tuning attempt to date** (0.7's 4-flag bundle, 0.7.1's per-flag isolation, and this log-τ test): every single change attempted so far to fix the 0.4.2 short-τ failure has made overall quality *worse*, never better. This model's hyperparameters (`adam_lr`, epoch budget, `lambda_butterfly`, `num_fourier_bands`) were empirically tuned as one interdependent package against the *current* linear-τ/fixed-weight setup (0.3) — perturbing any single piece of that package (data filtering, collocation allocation, or the input encoding itself) disturbs the balance rather than surgically fixing the boundary case. A structural fix (e.g. log-τ input, or item 5/6 above) likely needs a full re-tune of the whole package under the new geometry to have a fair chance — a substantially larger undertaking than any single-flag experiment tried so far. **Recommend pausing further single-change tuning experiments on this axis** in favor of higher-value remaining work (paper-trading integration, 0.8) until there's appetite for that larger re-tune.
+
 ### 0.8 Next work items, roughly in priority order
 
-1. **Paper-trading integration** (Section 9) — the highest-value remaining piece; Phase 2 part 1 computes signals but nothing consumes them yet. `parse_pinn_signal`, the `strategy_builder.py` one-line fix, and the confirmation-mode hook in `_handle_entry_signal()` are all still exactly as originally designed and entirely unbuilt.
+1. **Paper-trading integration** (Section 9) — **`parse_pinn_signal`, the `strategy_builder.py` one-line fix, and the 6th consumer thread are done** (0.4.3). Remaining: the confirmation-mode hook in `_handle_entry_signal()` (Section 9.3).
 2. **Live-validate Phase 2 part 1** against a real Redis instance during market hours — everything so far is synthetic-data/stub-model tested only (see 0.1b).
-3. **Isolate the 0.7 experimental flags individually** (or just adopt `enable_deterministic_threads=True` alone) before considering any of them for defaults.
-4. **`/pinn_status` bot command** and **systemd units** (inference service + nightly training timer) — neither exists; training and (once validated) inference are both manual-only today.
-5. Phase 3 (Greeks/backtesting) and Phase 4 (SSVI baseline) remain as originally scoped in Sections 10 and the plan's Phase 4 — untouched.
-6. ~~Investigate 2026-08-11~~ — done, see 0.4.1. ~~Investigate 2026-09-17~~ — done, see 0.4.2. ~~Open a PR~~ — done, PR #54 (Phase 1), PR #56 (Phase 2 part 1).
+3. **`/pinn_status` bot command** and **systemd units** (inference service + nightly training timer) — neither exists; training and (once validated) inference are both manual-only today.
+4. Phase 3 (Greeks/backtesting) and Phase 4 (SSVI baseline) remain as originally scoped in Sections 10 and the plan's Phase 4 — untouched.
+5. Close PR #55 on GitHub without merging (superseded duplicate, folded into #57) — flagged repeatedly, still not done.
+6. If there's appetite for a larger investment: a full hyperparameter re-tune (LR schedule, epoch budget, `lambda_butterfly`, Fourier bands) under a log-τ input encoding — 0.7.2 found the flag-toggle version is a severe regression precisely because nothing else was retuned for the new geometry.
+7. ~~Investigate 2026-08-11~~ — done, see 0.4.1. ~~Investigate 2026-09-17~~ — done, see 0.4.2. ~~Open a PR~~ — done, PR #54 (Phase 1), PR #56 (Phase 2 part 1), PR #57 (experimental flags). ~~Isolate the 0.7 experimental flags individually~~ — done, see 0.7.1. ~~Analyze further short-τ fix proposals~~ — done, see 0.7.2.
 
 ---
 
