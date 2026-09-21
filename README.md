@@ -355,12 +355,11 @@ All services run 24/7 with `Restart=always`. `scripts/system_config` contains th
 | `stockanalysis-data-gateway.service` | 24/7 (self-scheduling) | yfinance + Sensibull → Redis hashes + cycle signals |
 | `stockanalysis-market-data.service` | 24/7 | WebSocket ingestion (WS1 equity/index, WS2 options, Sensibull WS) → Redis snapshots + Pub/Sub signals |
 | `stockanalysis-analysis-engine.service` | 24/7 | Consumes data:cycle_stream → runs 11 analysers + scoring → writes analysis metrics + publishes to analysis:results stream |
-| `stockanalysis-orchestrator.service` | 24/7 (self-scheduling) | Main orchestrator — pre-market, intraday loop, positional analysis, EOD reports. Replaces old monolith `intraday/intraday_monitor.py`. Reads from Redis, dispatches to analysis-engine, consumes intelligence:confluence for LLM narrator |
 | `stockanalysis-paper-trading.service` | 24/7 | Paper trading — consumes analysis:results + intelligence:confluence → virtual option-selling positions (Iron Condor, Strangle, Credit Spread), MTM every 3s, Redis-persisted state under `paper:*` |
 | `stockanalysis-signal-intelligence.service` | 24/7, single instance | Consumes intelligence:signals → cross-layer confluence via SignalCorrelator → intelligence:confluence + direct Telegram alert |
 | `stockanalysis-resource-monitor.service` | 24/7 | Polls psutil + Redis metrics every 30s → sys:latest:* + sys:ts:* + proactive alerts → notification:jobs |
 | `stockanalysis-auth.service` | 24/7 (self-scheduling) | Zerodha TOTP login (09:00 + 18:50) + Sensibull OAuth auto-login + reactive refresh via auth:commands stream |
-| `stockanalysis.service` | 24/7 (self-scheduling) | Legacy monolith entry — superseded by `stockanalysis-orchestrator.service` in production |
+| `stockanalysis.service` | 24/7 (self-scheduling) | Main orchestrator — `services/orchestrator/main.py` (python -m). Pre-market, intraday loop, positional analysis, EOD reports. Reads from Redis, dispatches to analysis-engine, consumes intelligence:confluence for LLM narrator |
 
 No timers. All services self-schedule. The auth-service handles both Zerodha enctoken and Sensibull access_token lifecycle.
 
