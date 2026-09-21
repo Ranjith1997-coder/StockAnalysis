@@ -133,7 +133,7 @@ class TestZerodhaFallback:
         mgr._kc.historical_data.return_value = candles
 
         token_map = {"NAUKRI": 12345}
-        ok, fail = mgr.fetch_prev_day_ohlcv(redis, ["NAUKRI"], token_map)
+        ok, fail, _ = mgr.fetch_prev_day_ohlcv(redis, ["NAUKRI"], token_map)
 
         assert ok == 1
         assert fail == 0
@@ -165,7 +165,7 @@ class TestZerodhaFallback:
         mgr._kc.historical_data.return_value = candles
 
         token_map = {"NAUKRI": 12345}
-        ok, fail = mgr.fetch_prev_day_ohlcv(redis, ["NAUKRI"], token_map)
+        ok, fail, _ = mgr.fetch_prev_day_ohlcv(redis, ["NAUKRI"], token_map)
 
         assert ok == 1
         hset_call = redis.hset.call_args
@@ -185,7 +185,7 @@ class TestZerodhaFallback:
             mgr._has_enctoken = False
             mgr._kc = None
 
-        ok, fail = mgr.fetch_prev_day_ohlcv(redis, ["NAUKRI", "ABB"], {})
+        ok, fail, _ = mgr.fetch_prev_day_ohlcv(redis, ["NAUKRI", "ABB"], {})
         assert ok == 0
         assert fail == 2
 
@@ -196,7 +196,7 @@ class TestZerodhaFallback:
 
         token_map = {"NAUKRI": 12345}
         with mock_patch.object(mgr, "request_refresh") as mock_refresh:
-            ok, fail = mgr.fetch_prev_day_ohlcv(redis, ["NAUKRI"], token_map)
+            ok, fail, _ = mgr.fetch_prev_day_ohlcv(redis, ["NAUKRI"], token_map)
 
         assert ok == 0
         assert fail == 1
@@ -206,7 +206,7 @@ class TestZerodhaFallback:
         mgr, redis = self._make_manager_with_enctoken()
 
         token_map = {}  # NAUKRI not in map
-        ok, fail = mgr.fetch_prev_day_ohlcv(redis, ["NAUKRI"], token_map)
+        ok, fail, _ = mgr.fetch_prev_day_ohlcv(redis, ["NAUKRI"], token_map)
 
         assert ok == 0
         assert fail == 1
@@ -218,7 +218,7 @@ class TestZerodhaFallback:
         mgr._kc.historical_data.return_value = []
 
         token_map = {"NAUKRI": 12345}
-        ok, fail = mgr.fetch_prev_day_ohlcv(redis, ["NAUKRI"], token_map)
+        ok, fail, _ = mgr.fetch_prev_day_ohlcv(redis, ["NAUKRI"], token_map)
 
         assert ok == 0
         assert fail == 1
@@ -234,7 +234,7 @@ class TestZerodhaFallback:
         mgr._kc.historical_data.return_value = candles
 
         token_map = {"NAUKRI": 12345, "ABB": 67890}
-        ok, fail = mgr.fetch_prev_day_ohlcv(redis, ["NAUKRI", "ABB"], token_map)
+        ok, fail, _ = mgr.fetch_prev_day_ohlcv(redis, ["NAUKRI", "ABB"], token_map)
 
         assert ok == 2
         assert fail == 0
@@ -247,7 +247,7 @@ class TestZerodhaFallback:
 
         token_map = {"NAUKRI": 12345}
         with mock_patch.object(mgr, "request_refresh") as mock_refresh:
-            ok, fail = mgr.fetch_prev_day_ohlcv(redis, ["NAUKRI"], token_map)
+            ok, fail, _ = mgr.fetch_prev_day_ohlcv(redis, ["NAUKRI"], token_map)
 
         assert ok == 0
         assert fail == 1

@@ -40,9 +40,9 @@ class TestInit:
         kite = _kite("my_key")
         assert kite.api_key == "my_key"
 
-    def test_default_root_is_kite_trade(self):
+    def test_default_root_is_zerodha_oms(self):
         kite = _kite()
-        assert "kite.trade" in kite.root
+        assert kite.root == "https://kite.zerodha.com/oms"
 
     def test_default_timeout_is_7(self):
         kite = _kite()
