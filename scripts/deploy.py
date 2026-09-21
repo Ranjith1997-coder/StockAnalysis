@@ -1,124 +1,172 @@
-import boto3
-import paramiko
-import time
+"""Deploy latest master to the production server.
+
+Production is a physical machine reached over Tailscale SSH (see
+configs/server_metadata.yaml) — NOT an EC2 instance. Deployment is
+git-pull based:
+
+  1. Verify local HEAD is pushed to origin/master
+  2. git pull --ff-only on the server
+  3. Sync systemd unit files from configs/ (only units already installed)
+  4. Restart StockAnalysis services in dependency order
+  5. Report per-service status
+
+Usage:
+    make deploy        # or: PYTHONPATH=. python scripts/deploy.py
+
+Environment overrides (via .env or shell):
+    DEPLOY_SERVER   SSH target         (default: hacker@100.92.21.31)
+    DEPLOY_APP_DIR  repo dir on server (default: ~/StockAnalysis)
+"""
 import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
 load_dotenv(override=True)
 
-# AWS Configuration from environment variables
-AWS_REGION = os.getenv("AWS_REGION", "ap-south-1")
-EC2_INSTANCE_ID = os.getenv("EC2_INSTANCE_ID")
-SSH_KEY_PATH = os.getenv("SSH_KEY_PATH")
-SSH_USERNAME = os.getenv("SSH_USERNAME", "ec2-user")
-AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
-AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
+SERVER = os.getenv("DEPLOY_SERVER", "hacker@100.92.21.31")
+APP_DIR = os.getenv("DEPLOY_APP_DIR", "~/StockAnalysis")
+REPO_ROOT = Path(__file__).resolve().parent.parent
 
-# Validate required environment variables
-required_vars = {
-    "EC2_INSTANCE_ID": EC2_INSTANCE_ID,
-    "SSH_KEY_PATH": SSH_KEY_PATH,
-    "AWS_ACCESS_KEY_ID": AWS_ACCESS_KEY_ID,
-    "AWS_SECRET_ACCESS_KEY": AWS_SECRET_ACCESS_KEY
-}
+SSH_OPTS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]
 
-missing_vars = [var for var, value in required_vars.items() if not value]
-if missing_vars:
-    raise EnvironmentError(
-        f"Missing required environment variables: {', '.join(missing_vars)}\n"
-        f"Please set them in your .env file or environment."
-    )
+# Restart order: dependencies first, monolith (stockanalysis) last.
+# stockanalysis-auth is a timer-triggered oneshot — never restarted here.
+# stockanalysis-positional is timer-driven (20:00 IST EOD run) — also skipped.
+RESTART_SERVICES = [
+    "stockanalysis-notification",
+    "stockanalysis-data-gateway",
+    "stockanalysis-market-data",
+    "stockanalysis-analysis-engine",
+    "stockanalysis-signal-intelligence",
+    "stockanalysis-resource-monitor",
+    "stockanalysis-paper-trading",
+    "stockanalysis",
+]
 
-# EC2 client
-ec2 = boto3.client('ec2', region_name=AWS_REGION, aws_access_key_id=AWS_ACCESS_KEY_ID, aws_secret_access_key=AWS_SECRET_ACCESS_KEY)
 
-def get_instance_public_ip(instance_id):
-    response = ec2.describe_instances(InstanceIds=[instance_id])
-    return response['Reservations'][0]['Instances'][0]['PublicIpAddress']
+def run_local(args, timeout=60):
+    return subprocess.run(args, capture_output=True, text=True,
+                          cwd=REPO_ROOT, timeout=timeout)
 
-def ssh_connect(public_ip):
-    ssh = paramiko.SSHClient()
-    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    ssh.connect(public_ip, username=SSH_USERNAME, key_filename=SSH_KEY_PATH)
-    return ssh
 
-def ensure_instance_running(instance_id):
-    response = ec2.describe_instances(InstanceIds=[instance_id])
-    state = response['Reservations'][0]['Instances'][0]['State']['Name']
-    
-    if state == 'stopped':
-        print(f"Instance {instance_id} is stopped. Starting it...")
-        ec2.start_instances(InstanceIds=[instance_id])
-        waiter = ec2.get_waiter('instance_running')
-        print("Waiting for instance to start...")
-        waiter.wait(InstanceIds=[instance_id])
-        print("Instance started successfully.")
-    elif state != 'running':
-        raise Exception(f"Instance is in {state} state. Unable to proceed.")
-    else:
-        print("Instance is already running.")
+def ssh(command, timeout=120):
+    return subprocess.run(["ssh", *SSH_OPTS, SERVER, command],
+                          capture_output=True, text=True, timeout=timeout)
 
-def run_command(channel, command, timeout = 1):
-    channel.send(command + "\n")
-    time.sleep(timeout)  # Give some time for the command to execute
-    output = channel.recv(1024).decode()
-    print(output)
-    return output
+
+def die(msg):
+    print(f"ERROR: {msg}")
+    sys.exit(1)
+
+
+def check_local_state():
+    """Local HEAD must equal origin/master — unpushed commits can't deploy."""
+    run_local(["git", "fetch", "origin"])
+    head = run_local(["git", "rev-parse", "HEAD"]).stdout.strip()
+    origin_master = run_local(["git", "rev-parse", "origin/master"]).stdout.strip()
+    if not head or head != origin_master:
+        die(f"local HEAD {head[:7]} != origin/master {origin_master[:7]} — "
+            "commit and push first")
+    dirty = run_local(["git", "status", "--porcelain"]).stdout.strip()
+    if dirty:
+        print("WARNING: local working tree is dirty — "
+              "uncommitted changes will NOT be deployed:")
+        print(dirty)
+    return head
+
+
+def pull_on_server(expected_head):
+    print(f"Pulling latest master on {SERVER}:{APP_DIR} ...")
+    pull = ssh(f"cd {APP_DIR} && git pull --ff-only origin master", timeout=300)
+    output = (pull.stdout + pull.stderr).strip()
+    if output:
+        print(output)
+    if pull.returncode != 0:
+        die("git pull failed on server — check for a dirty tree or a stale "
+            ".git/index.lock (remove it only after verifying no git process "
+            "is running: pgrep -a git)")
+    server_head = ssh(f"cd {APP_DIR} && git rev-parse HEAD").stdout.strip()
+    if server_head != expected_head:
+        die(f"server is at {server_head[:7]}, expected {expected_head[:7]}")
+    print(f"Server at {server_head[:7]} [ok]")
+
+
+def sync_unit_files():
+    """Copy configs/stockanalysis*.service to the server — only units that
+    are already installed there. Never installs new units; that stays a
+    deliberate ops action."""
+    unit_files = sorted((REPO_ROOT / "configs").glob("stockanalysis*.service"))
+    installed = {
+        os.path.basename(p)
+        for p in ssh("ls /etc/systemd/system/stockanalysis*.service 2>/dev/null"
+                     ).stdout.split()
+    }
+    synced = []
+    for path in unit_files:
+        if path.name not in installed:
+            continue
+        remote_tmp = f"/tmp/{path.name}.deploy"
+        scp = subprocess.run(["scp", *SSH_OPTS, str(path), f"{SERVER}:{remote_tmp}"],
+                             capture_output=True, text=True, timeout=60)
+        if scp.returncode != 0:
+            die(f"scp {path.name} failed: {scp.stderr.strip()}")
+        install = ssh(f"sudo cp {remote_tmp} /etc/systemd/system/{path.name} "
+                      f"&& rm -f {remote_tmp}")
+        if install.returncode != 0:
+            die(f"installing {path.name} failed: {install.stderr.strip()}")
+        synced.append(path.name)
+    if not synced:
+        print("No installed unit files to sync.")
+        return
+    reload = ssh("sudo systemctl daemon-reload")
+    if reload.returncode != 0:
+        die(f"daemon-reload failed: {reload.stderr.strip()}")
+    print(f"Unit files synced: {', '.join(synced)}")
+
+
+def restart_services():
+    print("Restarting services ...")
+    failed = []
+    for svc in RESTART_SERVICES:
+        result = ssh(f"sudo systemctl restart {svc}", timeout=180)
+        if result.returncode != 0:
+            failed.append(svc)
+            print(f"  {svc}: FAILED — {result.stderr.strip()}")
+        else:
+            print(f"  {svc}: restarted")
+    if failed:
+        die(f"restart failed for: {', '.join(failed)} — check "
+            "journalctl -u <service>")
+
+
+def verify_statuses():
+    print("Waiting 15s for services to settle ...")
+    time.sleep(15)
+    result = ssh("systemctl is-active " + " ".join(RESTART_SERVICES))
+    states = result.stdout.split()
+    down = [svc for svc, state in zip(RESTART_SERVICES, states)
+            if state != "active"]
+    print("Service status:")
+    for svc, state in zip(RESTART_SERVICES, states):
+        print(f"  {svc}: {state}")
+    if down:
+        die(f"not active after restart: {', '.join(down)} — inspect with "
+            "'journalctl -u <service> -n 50' or 'make server-svcs-status'")
+    print("All services active. Deploy complete.")
+
 
 def main():
-    # Ensure the instance is running
-    ensure_instance_running(EC2_INSTANCE_ID)
-    # Get the public IP of the EC2 instance
-    public_ip = get_instance_public_ip(EC2_INSTANCE_ID)
-    print(f"Connecting to EC2 instance at {public_ip}")
+    head = check_local_state()
+    print(f"Deploying {head[:7]} to {SERVER}")
+    pull_on_server(head)
+    sync_unit_files()
+    restart_services()
+    verify_statuses()
 
-    # Record local commit being deployed
-    import subprocess as _sp
-    try:
-        local_sha = _sp.run(
-            ["git", "rev-parse", "--short", "HEAD"],
-            capture_output=True, text=True, timeout=5,
-        ).stdout.strip()
-        print(f"Deploying commit: {local_sha}")
-    except Exception:
-        local_sha = "unknown"
-
-    # Connect to the instance
-    ssh = ssh_connect(public_ip)
-
-    try:
-        # Stop the service
-         with ssh.invoke_shell() as channel:
-            print("Stopping stock_analysis.service...")
-            run_command(channel, "sudo systemctl stop stock_analysis.service")
-
-            print("Changing to StockAnalysis directory...")
-            run_command(channel, "cd /home/ec2-user/StockAnalysis")
-
-            print("Current directory:")
-            run_command(channel, "pwd")
-
-            print("Listing directory contents:")
-            run_command(channel, "ls -l")
-
-            print("Pulling latest changes from Git...")
-            run_command(channel, "git pull", timeout=5)
-
-            print("Recording deployed commit...")
-            run_command(channel, "git rev-parse --short HEAD", timeout=2)
-
-            # Start the service
-            print("Starting stock_analysis.service...")
-            run_command(channel, "sudo systemctl start stock_analysis.service")
-
-            # Check the status of the service
-            print("Checking service status...")
-            run_command(channel, "sudo systemctl status stock_analysis.service" ,timeout=5)
-
-    finally:
-        # Close the SSH connection
-        ssh.close()
 
 if __name__ == "__main__":
     main()

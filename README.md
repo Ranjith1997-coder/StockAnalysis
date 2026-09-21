@@ -233,7 +233,7 @@ When `ENABLE_NARRATOR=1` (requires `GEMINI_API_KEY`):
 |----------|---------|
 | `ZERODHA_USER` | Zerodha user ID |
 | `ZERODHA_PASS` | Zerodha password |
-| `ZERODHA_TOTP_SECRET` | Base-32 TOTP secret for automated 2FA login (`auth/auth_login.py`) |
+| `ZERODHA_TOTP_SECRET` | Base-32 TOTP secret for automated 2FA login (`services/auth_service/auth/auth_login.py`) |
 | `ZERODHA_ENC_TOKEN` | Enctoken for API auth (auto-refreshed by auth-service; also updatable via `/enctoken` bot command) |
 
 ### Sensibull
@@ -283,7 +283,7 @@ Log files (10 MB rotating, 3 backups each):
 | `logs/resource-monitor.log` | Resource monitor (system metrics + alerts) |
 | `logs/cycle-subscriber.log` | Cycle subscriber (internal) |
 
-Format: `28 13:26:31 | WARNING | SA.monolith | intraday_monitor.py:1234 | message`
+Format: `28 13:26:31 | WARNING | SA.orchestrator | main.py:1234 | message`
 
 Per-service log level override:
 
@@ -506,7 +506,6 @@ StockAnalysis/
 ├── fno/               # SensibullFetcher, sensibull_feed.py (OPTIONS_SOURCE=sensibull path)
 ├── intelligence/      # Signal, SignalCorrelator (+ wire format), MarketNarrator, GeminiClient
 ├── services/signal_intelligence/  # Standalone confluence-detection service (single instance)
-├── intraday/          # intraday_monitor.py — main entry point
 ├── ml_pipeline/       # ML prediction pipeline (XGBoost, LightGBM, RF, Ensemble)
 ├── notification/      # Telegram sender + bot commands (Command Router pattern)
 ├── nse/               # NSE API wrappers + market calendar helpers
@@ -619,7 +618,7 @@ All are sent as HTML-formatted Telegram messages to the positional channel.
 
 ### Crash & Health Layers (fail-silent)
 
-Three fail-silent layers injected in `intraday_monitor.py`:
+Three fail-silent layers injected in `services/orchestrator/main.py`:
 
 1. **Crash handler** (`sys.excepthook`): sends fatal tracebacks to Telegram with `html.escape()`
 2. **Heartbeat** (`HEALTHCHECK_URL`): pings dead-man's switch at end of every analysis cycle
