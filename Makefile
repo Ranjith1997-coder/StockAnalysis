@@ -32,7 +32,7 @@ help:
 	@echo "    run-dev-stop       Stop notification service (auto-stops with Ctrl+C on run-dev)"
 	@echo "    run-premarket      Global cues + pre-open reports (--premarket shortcut)"
 	@echo "    run-postmarket     Post-market analysis pipeline"
-	@echo "    deploy             Deploy to EC2 via SSH"
+	@echo "    deploy             Deploy to production server (git pull + unit sync + restarts)"
 	@echo "    service-stop       Start EC2 (if stopped), stop stock_analysis.service"
 	@echo "                        On holidays/weekends: exits if instance stopped, skips 15s wait if running"
 	@echo "    service-stop-force Dev: same but bypasses holiday guard (SSH retry-poll instead of fixed sleep)"
@@ -193,7 +193,7 @@ redis-config:
 # ──────────────────────────────────────────────────────────────────────────────
 .PHONY: run-prod
 run-prod:
-	PRODUCTION=1 PYTHONPATH=$(CURDIR) $(PYTHON) intraday/intraday_monitor.py
+	PRODUCTION=1 PYTHONPATH=$(CURDIR) $(PYTHON) -m services.orchestrator.main
 
 NOTIFICATION_PID_FILE := .notification.pid
 NOTIFICATION_LOG := logs/notification-service.log
@@ -232,7 +232,7 @@ run-dev:
 	fi; \
 	echo "Starting intraday monitor... Ctrl+C to stop everything."
 	@trap '' INT; \
-	DEV_INTRADAY=1 PYTHONPATH=$(CURDIR) $(PYTHON) intraday/intraday_monitor.py; \
+	DEV_INTRADAY=1 PYTHONPATH=$(CURDIR) $(PYTHON) -m services.orchestrator.main; \
 	EXIT_CODE=$$?; \
 	$(MAKE) run-dev-stop >/dev/null 2>&1; \
 	exit $$EXIT_CODE
@@ -269,7 +269,7 @@ run-dev-positional:
 	fi; \
 	echo "Running positional analysis..."
 	@trap '' INT; \
-	DEV_POSITIONAL=1 PYTHONPATH=$(CURDIR) $(PYTHON) intraday/intraday_monitor.py; \
+	DEV_POSITIONAL=1 PYTHONPATH=$(CURDIR) $(PYTHON) -m services.orchestrator.main; \
 	EXIT_CODE=$$?; \
 	$(MAKE) run-dev-stop >/dev/null 2>&1; \
 	exit $$EXIT_CODE
@@ -298,12 +298,12 @@ STOCK ?=
 .PHONY: run-dev-stock-intraday
 run-dev-stock-intraday:
 	@test -n "$(STOCK)" || { echo "ERROR: STOCK is required. Usage: make run-dev-stock-intraday STOCK=RELIANCE"; exit 1; }
-	PRODUCTION=0 DEV_INTRADAY=1 PYTHONPATH=$(CURDIR) $(PYTHON) intraday/intraday_monitor.py --stock $(STOCK)
+	PRODUCTION=0 DEV_INTRADAY=1 PYTHONPATH=$(CURDIR) $(PYTHON) -m services.orchestrator.main --stock $(STOCK)
 
 .PHONY: run-dev-stock-positional
 run-dev-stock-positional:
 	@test -n "$(STOCK)" || { echo "ERROR: STOCK is required. Usage: make run-dev-stock-positional STOCK=RELIANCE"; exit 1; }
-	PRODUCTION=0 DEV_POSITIONAL=1 PYTHONPATH=$(CURDIR) $(PYTHON) intraday/intraday_monitor.py --stock $(STOCK)
+	PRODUCTION=0 DEV_POSITIONAL=1 PYTHONPATH=$(CURDIR) $(PYTHON) -m services.orchestrator.main --stock $(STOCK)
 
 # Usage: make run-dev-index-intraday INDEX=NIFTY
 #        make run-dev-index-positional INDEX=NIFTY
@@ -311,14 +311,16 @@ INDEX ?=
 .PHONY: run-dev-index-intraday
 run-dev-index-intraday:
 	@test -n "$(INDEX)" || { echo "ERROR: INDEX is required. Usage: make run-dev-index-intraday INDEX=NIFTY"; exit 1; }
-	PRODUCTION=0 DEV_INTRADAY=1 PYTHONPATH=$(CURDIR) $(PYTHON) intraday/intraday_monitor.py --index $(INDEX)
+	PRODUCTION=0 DEV_INTRADAY=1 PYTHONPATH=$(CURDIR) $(PYTHON) -m services.orchestrator.main --index $(INDEX)
 
 .PHONY: run-dev-index-positional
 run-dev-index-positional:
 	@test -n "$(INDEX)" || { echo "ERROR: INDEX is required. Usage: make run-dev-index-positional INDEX=NIFTY"; exit 1; }
-	PRODUCTION=0 DEV_POSITIONAL=1 PYTHONPATH=$(CURDIR) $(PYTHON) intraday/intraday_monitor.py --index $(INDEX)
+	PRODUCTION=0 DEV_POSITIONAL=1 PYTHONPATH=$(CURDIR) $(PYTHON) -m services.orchestrator.main --index $(INDEX)
 
 .PHONY: run-premarket
+run-premarket:
+	PYTHONPATH=$(CURDIR) $(PYTHON) -m services.orchestrator.main --premarket
 
 .PHONY: run-postmarket
 run-postmarket:
@@ -337,7 +339,7 @@ service-stop:
 
 # Dev: bypass holiday guard — start instance even on weekends/holidays.
 # Uses SSH retry-poll to connect ASAP and stop the service before
-# intraday_monitor.py can trigger an OS shutdown.
+# services/orchestrator/main.py can trigger an OS shutdown.
 .PHONY: service-stop-force
 service-stop-force:
 	@echo "[DEV] Starting EC2 + stopping service (holiday guard bypassed)..."
@@ -632,17 +634,17 @@ update-enctoken:
 
 .PHONY: auth-run
 auth-run:
-	PYTHONPATH=$(CURDIR) $(PYTHON) auth/auth_login.py
+	PYTHONPATH=$(CURDIR) $(PYTHON) services/auth_service/auth/auth_login.py
 
 .PHONY: auth-force
 auth-force:
 	@echo "Force-refreshing Zerodha enctoken (bypassing once-per-day guard)..."
-	PYTHONPATH=$(CURDIR) $(PYTHON) auth/auth_login.py --force
+	PYTHONPATH=$(CURDIR) $(PYTHON) services/auth_service/auth/auth_login.py --force
 
 .PHONY: server-auth-force
 server-auth-force:
 	@echo "Force-refreshing enctoken on server (bypassing once-per-day guard)..."
-	ssh $(SERVER) "cd ~/StockAnalysis && .venv/bin/python auth/auth_login.py --force"
+	ssh $(SERVER) "cd ~/StockAnalysis && .venv/bin/python services/auth_service/auth/auth_login.py --force"
 
 # ─── Data Gateway ─────────────────────────────────────────────────────────────
 .PHONY: run-data-gateway

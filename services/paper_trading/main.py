@@ -551,7 +551,7 @@ def main():
     for t in threads:
         t.start()
 
-    logger.info("[paper-trading] Started, 5 worker threads running")
+    logger.info("[paper-trading] Started, %d worker threads running", len(threads))
 
     from lib.logging_util import refresh_level_from_redis
 
