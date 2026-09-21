@@ -37,6 +37,7 @@ from services.paper_trading.models import (
 )
 from services.paper_trading.signal_router import (
     check_entry_filters,
+    get_pinn_confirmation,
     parse_analysis_result,
     parse_confluence_message,
     parse_pinn_signal,
@@ -60,6 +61,13 @@ CONSUMER_NAME = "paper-trader-1"
 MARKET_OPEN = dtime(9, 15)
 MARKET_CLOSE = dtime(15, 30)
 MTM_CYCLE_SECONDS = 3
+
+# Design doc section 9.3's original thresholds -- never empirically
+# validated (no accepted PINN model has run against live composite signals
+# yet, see docs/pinn-volatility-engine.md 0.6.1), kept as documented pending
+# real data to tune against.
+PINN_CONFIRM_SUPPRESS_THRESHOLD = 0.5
+PINN_CONFIRM_BOOST_THRESHOLD = 1.0
 
 _running = True
 entry_queue: "queue.Queue" = queue.Queue()
@@ -345,6 +353,21 @@ def _handle_entry_signal(redis, span_calculator: SpanCalculator, signal) -> None
     if not passed:
         logger.debug("[paper-trading] Entry rejected for %s/%s: %s", signal.symbol, signal.strategy, reason)
         return
+
+    # ── PINN confirmation (design doc 9.3, only for non-PINN-sourced
+    # signals -- a PINN signal confirming itself would be circular) ──
+    if signal.signal_source != "PINN_MISPRICING":
+        pinn_z = get_pinn_confirmation(redis, signal)
+        if pinn_z is not None:
+            if pinn_z < PINN_CONFIRM_SUPPRESS_THRESHOLD:
+                logger.info("[paper-trading] %s %s suppressed by PINN (z=%.2f < %.1f)",
+                            signal.symbol, signal.strategy, pinn_z, PINN_CONFIRM_SUPPRESS_THRESHOLD)
+                return
+            if pinn_z > PINN_CONFIRM_BOOST_THRESHOLD:
+                logger.info("[paper-trading] %s %s boosted by PINN (z=%.2f > %.1f)",
+                            signal.symbol, signal.strategy, pinn_z, PINN_CONFIRM_BOOST_THRESHOLD)
+                signal.signal_context["pinn_confirmed"] = True
+                signal.signal_context["pinn_z"] = pinn_z
 
     # signal.mode comes straight from the analysis:results message for
     # composite setups (worker.py now echoes the job's actual intraday/
