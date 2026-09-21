@@ -90,6 +90,20 @@ class TestSelectStrikesCreditSpread:
                               signal_source="SKEW_FADE_SETUP")
         assert select_strikes(signal, strike_gap=50.0) == []
 
+    def test_pinn_mispricing_bullish_sells_put_spread(self):
+        """Regression guard: PINN_MISPRICING signals carry sr_level too (see
+        signal_router.parse_pinn_signal()), but the OLD code only checked
+        signal_source == "SKEW_FADE_SETUP" and silently fell through to the
+        CONFLUENCE atm_strike path for anything else -- the one-line fix is
+        checking sr_level's presence instead of the specific source string."""
+        signal = EntrySignal(strategy="CREDIT_SPREAD", symbol="NIFTY", direction="BULLISH",
+                              sr_level=24000.0, signal_source="PINN_MISPRICING")
+        legs = select_strikes(signal, strike_gap=50.0)
+        assert legs == [
+            PlannedLeg(24000.0, "PE", "SELL"),
+            PlannedLeg(23900.0, "PE", "BUY"),
+        ]
+
     def test_missing_atm_for_confluence_credit_spread_returns_empty(self):
         signal = EntrySignal(strategy="CREDIT_SPREAD", symbol="NIFTY", direction="BULLISH",
                               signal_source="CONFLUENCE")

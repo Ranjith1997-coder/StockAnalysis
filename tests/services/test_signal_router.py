@@ -1,6 +1,7 @@
 """Tests for services/paper_trading/signal_router.py."""
 
 import json
+from datetime import datetime
 from unittest.mock import MagicMock
 
 from lib.intelligence.correlator import Confluence
@@ -16,8 +17,11 @@ from services.paper_trading.signal_router import (
     has_duplicate_position,
     parse_analysis_result,
     parse_confluence_message,
+    parse_pinn_signal,
     portfolio_margin_exceeded,
 )
+from services.volatility_engine.comparator import PinnSignal
+from services.volatility_engine.signal_emitter import emit_signal
 
 
 def _fields(symbol="NIFTY", trend_found="true", priority_override="", analysis_json=None, mode=None):
@@ -180,6 +184,73 @@ class TestParseConfluenceMessage:
         fields = self._confluence_fields(symbol="RELIANCE")
         signal = parse_confluence_message(fields, indices=("NIFTY", "BANKNIFTY", "SENSEX"))
         assert signal is None
+
+
+class TestParsePinnSignal:
+    """Round-trips PinnSignal through the REAL emitter
+    (services/volatility_engine/signal_emitter.emit_signal) so these tests
+    catch any drift between the emitter's wire format and
+    parse_pinn_signal()'s expectations, instead of hand-writing a fixture
+    dict that could silently diverge from the real schema."""
+
+    def _emitted_fields(self, signal: PinnSignal) -> dict:
+        redis = MagicMock()
+        emit_signal(redis, signal)
+        args, _ = redis.xadd.call_args
+        return args[1]
+
+    def _skew_fade_signal(self, symbol="NIFTY", direction="BULLISH"):
+        return PinnSignal(
+            symbol=symbol, signal_type="SKEW_FADE_SETUP", strategy="CREDIT_SPREAD",
+            direction=direction, z_score=2.5, expiry="2026-09-22",
+            timestamp=datetime(2026, 9, 20, 10, 0),
+            sr_level=24000.0, overpriced_type="PE", fair_iv=0.12, live_iv=0.15,
+        )
+
+    def test_skew_fade_maps_to_credit_spread_with_sr_level(self):
+        fields = self._emitted_fields(self._skew_fade_signal())
+        entry = parse_pinn_signal(fields)
+        assert entry.strategy == "CREDIT_SPREAD"
+        assert entry.symbol == "NIFTY"
+        assert entry.direction == "BULLISH"
+        assert entry.sr_level == 24000.0
+        assert entry.signal_source == "PINN_MISPRICING"
+        assert entry.mode == "intraday"
+        assert entry.score == 2.5
+        assert entry.signal_context["overpriced_type"] == "PE"
+
+    def test_range_bound_maps_to_iron_condor_with_walls(self):
+        signal = PinnSignal(
+            symbol="BANKNIFTY", signal_type="RANGE_BOUND_SETUP", strategy="IRON_CONDOR",
+            direction="NEUTRAL", z_score=1.8, expiry="2026-09-22",
+            timestamp=datetime(2026, 9, 20, 10, 0),
+            put_wall_strike=51000.0, call_wall_strike=52000.0,
+            fair_iv_ce=0.13, fair_iv_pe=0.14, live_iv_ce=0.16, live_iv_pe=0.17,
+        )
+        fields = self._emitted_fields(signal)
+        entry = parse_pinn_signal(fields)
+        assert entry.strategy == "IRON_CONDOR"
+        assert entry.put_wall_strike == 51000.0
+        assert entry.call_wall_strike == 52000.0
+        assert entry.signal_source == "PINN_MISPRICING"
+        assert entry.mode == "intraday"
+
+    def test_non_index_symbol_is_ignored(self):
+        fields = self._emitted_fields(self._skew_fade_signal(symbol="RELIANCE"))
+        assert parse_pinn_signal(fields) is None
+
+    def test_missing_symbol_is_ignored(self):
+        assert parse_pinn_signal({"signal_type": "SKEW_FADE_SETUP"}) is None
+
+    def test_unknown_signal_type_returns_none(self):
+        assert parse_pinn_signal({"signal_type": "SOMETHING_ELSE", "symbol": "NIFTY"}) is None
+
+    def test_malformed_numeric_field_returns_none(self):
+        fields = {
+            "signal_type": "SKEW_FADE_SETUP", "symbol": "NIFTY", "strategy": "CREDIT_SPREAD",
+            "direction": "BULLISH", "sr_level": "not-a-number", "z_score": "1.0",
+        }
+        assert parse_pinn_signal(fields) is None
 
 
 class TestEntryFilterPredicates:

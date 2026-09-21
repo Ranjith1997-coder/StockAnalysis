@@ -7,6 +7,7 @@ plan, not unit tests here.
 """
 
 import json
+import time
 from datetime import datetime, time as dtime
 from unittest.mock import MagicMock, patch
 
@@ -266,6 +267,77 @@ class TestHandleEntrySignal:
 
         _, kwargs = mock_build.call_args
         assert kwargs["mode"] == "positional"
+
+    @patch("services.paper_trading.main.persist_new_position")
+    @patch("services.paper_trading.main.build_position")
+    @patch("services.paper_trading.main.check_entry_filters")
+    def test_low_pinn_confirmation_suppresses_non_pinn_signal(self, mock_filters, mock_build, mock_persist):
+        mock_filters.return_value = (True, "")
+        redis = MagicMock()
+        redis.hgetall.return_value = {"last_updated": str(time.time()), "zscore_24000.0_PE": "0.2"}
+        span = MagicMock()
+        signal = EntrySignal(strategy="CREDIT_SPREAD", symbol="NIFTY", direction="BULLISH",
+                              sr_level=24000.0, signal_source="SKEW_FADE_SETUP")
+
+        pt_main._handle_entry_signal(redis, span, signal)
+
+        mock_build.assert_not_called()
+        mock_persist.assert_not_called()
+
+    @patch("services.paper_trading.main.persist_new_position")
+    @patch("services.paper_trading.main.build_position")
+    @patch("services.paper_trading.main.check_entry_filters")
+    def test_high_pinn_confirmation_boosts_and_still_builds(self, mock_filters, mock_build, mock_persist):
+        mock_filters.return_value = (True, "")
+        mock_build.return_value = _position()
+        redis = MagicMock()
+        redis.hgetall.return_value = {"last_updated": str(time.time()), "zscore_24000.0_PE": "1.5"}
+        span = MagicMock()
+        signal = EntrySignal(strategy="CREDIT_SPREAD", symbol="NIFTY", direction="BULLISH",
+                              sr_level=24000.0, signal_source="SKEW_FADE_SETUP")
+
+        pt_main._handle_entry_signal(redis, span, signal)
+
+        mock_build.assert_called_once()
+        mock_persist.assert_called_once()
+        assert signal.signal_context["pinn_confirmed"] is True
+        assert signal.signal_context["pinn_z"] == 1.5
+
+    @patch("services.paper_trading.main.get_pinn_confirmation")
+    @patch("services.paper_trading.main.persist_new_position")
+    @patch("services.paper_trading.main.build_position")
+    @patch("services.paper_trading.main.check_entry_filters")
+    def test_pinn_sourced_signal_skips_self_confirmation(self, mock_filters, mock_build, mock_persist,
+                                                          mock_confirm):
+        """A PINN_MISPRICING signal never checks its own confirmation cache
+        -- that would be circular (see main.py's _handle_entry_signal)."""
+        mock_filters.return_value = (True, "")
+        mock_build.return_value = _position()
+        redis = MagicMock()
+        span = MagicMock()
+        signal = EntrySignal(strategy="CREDIT_SPREAD", symbol="NIFTY", direction="BULLISH",
+                              sr_level=24000.0, signal_source="PINN_MISPRICING")
+
+        pt_main._handle_entry_signal(redis, span, signal)
+
+        mock_confirm.assert_not_called()
+        mock_persist.assert_called_once()
+
+    @patch("services.paper_trading.main.persist_new_position")
+    @patch("services.paper_trading.main.build_position")
+    @patch("services.paper_trading.main.check_entry_filters")
+    def test_missing_pinn_cache_fails_open(self, mock_filters, mock_build, mock_persist):
+        mock_filters.return_value = (True, "")
+        mock_build.return_value = _position()
+        redis = MagicMock()
+        redis.hgetall.return_value = {}
+        span = MagicMock()
+        signal = EntrySignal(strategy="CREDIT_SPREAD", symbol="NIFTY", direction="BULLISH",
+                              sr_level=24000.0, signal_source="SKEW_FADE_SETUP")
+
+        pt_main._handle_entry_signal(redis, span, signal)
+
+        mock_persist.assert_called_once()
 
 
 class TestHandleCommand:

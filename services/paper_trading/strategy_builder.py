@@ -98,9 +98,9 @@ def select_strikes(signal: EntrySignal, strike_gap: float,
         return legs
 
     if strategy == "CREDIT_SPREAD":
-        if signal.signal_source == "SKEW_FADE_SETUP":
-            if signal.sr_level is None:
-                return []
+        if signal.sr_level is not None:
+            # Any signal with sr_level set (SKEW_FADE_SETUP or PINN_MISPRICING)
+            # uses the specific strike as the short leg.
             if signal.direction == "BULLISH":
                 return [
                     PlannedLeg(signal.sr_level, "PE", "SELL"),
