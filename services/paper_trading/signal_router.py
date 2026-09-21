@@ -23,7 +23,13 @@ logger = get_logger("paper-trading")
 from lib.intelligence.correlator import Confluence
 from lib.intelligence.signal import Direction
 from services.paper_trading.models import POSITIONS_OPEN_KEY, PaperAccount, PaperPosition, cooldown_key
-from services.volatility_engine.signal_emitter import ZSCORE_CACHE_TTL_SECONDS
+
+# Local copy of the pinn:zscore cache TTL — importing
+# services.volatility_engine.signal_emitter here would pull torch into the
+# paper-trading process (excluded from requirements.txt, and the systemd
+# unit's MemoryMax=200M cannot fit a torch import).  Keep the value in sync
+# with ZSCORE_CACHE_TTL_SECONDS in signal_emitter.py (design doc 8.7).
+PINN_ZSCORE_CACHE_TTL_SECONDS = 30
 
 MAX_POSITIONS = 8
 MAX_PORTFOLIO_MARGIN_PCT = 0.40
@@ -259,7 +265,7 @@ def get_pinn_confirmation(redis, signal: EntrySignal) -> Optional[float]:
         last_updated = float(raw.get("last_updated", 0))
     except (TypeError, ValueError):
         return None
-    if time.time() - last_updated > ZSCORE_CACHE_TTL_SECONDS:
+    if time.time() - last_updated > PINN_ZSCORE_CACHE_TTL_SECONDS:
         return None
 
     if signal.strategy == "CREDIT_SPREAD" and signal.sr_level is not None:

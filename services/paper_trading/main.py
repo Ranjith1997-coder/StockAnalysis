@@ -49,7 +49,13 @@ from services.paper_trading.span_calculator import (
     save_instruments_cache,
 )
 from services.paper_trading.strategy_builder import build_position
-from services.volatility_engine.signal_emitter import SIGNALS_STREAM as PINN_SIGNALS_STREAM
+
+# pinn:signals stream consumed by pinn_signal_consumer().  Defined locally
+# (must match SIGNALS_STREAM in services/volatility_engine/signal_emitter.py)
+# so this service never imports volatility_engine — that chain pulls torch,
+# which is excluded from requirements.txt and will not fit the unit's
+# MemoryMax=200M.  PINN's absence must leave paper-trading fail-open.
+PINN_SIGNALS_STREAM = "pinn:signals"
 
 ANALYSIS_GROUP = "paper-trader"
 CONFLUENCE_GROUP = "paper-trader-confluence"
