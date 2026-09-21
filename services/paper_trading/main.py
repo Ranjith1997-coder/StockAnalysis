@@ -37,8 +37,10 @@ from services.paper_trading.models import (
 )
 from services.paper_trading.signal_router import (
     check_entry_filters,
+    get_pinn_confirmation,
     parse_analysis_result,
     parse_confluence_message,
+    parse_pinn_signal,
 )
 from services.paper_trading.span_calculator import (
     SpanCalculator,
@@ -47,9 +49,11 @@ from services.paper_trading.span_calculator import (
     save_instruments_cache,
 )
 from services.paper_trading.strategy_builder import build_position
+from services.volatility_engine.signal_emitter import SIGNALS_STREAM as PINN_SIGNALS_STREAM
 
 ANALYSIS_GROUP = "paper-trader"
 CONFLUENCE_GROUP = "paper-trader-confluence"
+PINN_GROUP = "paper-trader-pinn"
 COMMANDS_STREAM = "paper:commands"
 COMMANDS_GROUP = "paper-trader-cmd"
 CONSUMER_NAME = "paper-trader-1"
@@ -57,6 +61,13 @@ CONSUMER_NAME = "paper-trader-1"
 MARKET_OPEN = dtime(9, 15)
 MARKET_CLOSE = dtime(15, 30)
 MTM_CYCLE_SECONDS = 3
+
+# Design doc section 9.3's original thresholds -- never empirically
+# validated (no accepted PINN model has run against live composite signals
+# yet, see docs/pinn-volatility-engine.md 0.6.1), kept as documented pending
+# real data to tune against.
+PINN_CONFIRM_SUPPRESS_THRESHOLD = 0.5
+PINN_CONFIRM_BOOST_THRESHOLD = 1.0
 
 _running = True
 entry_queue: "queue.Queue" = queue.Queue()
@@ -287,6 +298,39 @@ def confluence_consumer(redis):
                     logger.debug("[paper-trading] xack confluence %s: %s", msg_id, e)
 
 
+def pinn_signal_consumer(redis):
+    try:
+        redis.xgroup_create(PINN_GROUP, PINN_SIGNALS_STREAM, mkstream=True)
+    except Exception as e:
+        logger.debug("[paper-trading] xgroup_create %s: %s", PINN_GROUP, e)
+
+    while _running:
+        try:
+            messages = redis.xreadgroup(
+                PINN_GROUP, CONSUMER_NAME,
+                {PINN_SIGNALS_STREAM: ">"}, count=10, block=5000,
+            )
+        except Exception as e:
+            logger.error("[paper-trading] pinn consumer error: %s", e, exc_info=True)
+            time.sleep(2)
+            continue
+        if not messages:
+            continue
+        entries = messages[0][1] if isinstance(messages, list) and messages else []
+        for msg_id, fields in entries:
+            try:
+                signal = parse_pinn_signal(fields)
+                if signal:
+                    entry_queue.put(signal)
+            except Exception as e:
+                logger.exception("[paper-trading] Error parsing pinn signal %s: %s", msg_id, e)
+            finally:
+                try:
+                    redis.xack(PINN_SIGNALS_STREAM, PINN_GROUP, msg_id)
+                except Exception as e:
+                    logger.debug("[paper-trading] xack pinn %s: %s", msg_id, e)
+
+
 def _handle_exit_signal(redis, signal) -> None:
     for position in load_open_positions(redis):
         if position.symbol != signal.symbol:
@@ -309,6 +353,21 @@ def _handle_entry_signal(redis, span_calculator: SpanCalculator, signal) -> None
     if not passed:
         logger.debug("[paper-trading] Entry rejected for %s/%s: %s", signal.symbol, signal.strategy, reason)
         return
+
+    # ── PINN confirmation (design doc 9.3, only for non-PINN-sourced
+    # signals -- a PINN signal confirming itself would be circular) ──
+    if signal.signal_source != "PINN_MISPRICING":
+        pinn_z = get_pinn_confirmation(redis, signal)
+        if pinn_z is not None:
+            if pinn_z < PINN_CONFIRM_SUPPRESS_THRESHOLD:
+                logger.info("[paper-trading] %s %s suppressed by PINN (z=%.2f < %.1f)",
+                            signal.symbol, signal.strategy, pinn_z, PINN_CONFIRM_SUPPRESS_THRESHOLD)
+                return
+            if pinn_z > PINN_CONFIRM_BOOST_THRESHOLD:
+                logger.info("[paper-trading] %s %s boosted by PINN (z=%.2f > %.1f)",
+                            signal.symbol, signal.strategy, pinn_z, PINN_CONFIRM_BOOST_THRESHOLD)
+                signal.signal_context["pinn_confirmed"] = True
+                signal.signal_context["pinn_z"] = pinn_z
 
     # signal.mode comes straight from the analysis:results message for
     # composite setups (worker.py now echoes the job's actual intraday/
@@ -478,6 +537,7 @@ def main():
     threads = [
         threading.Thread(target=analysis_consumer, args=(redis,), name="analysis-consumer", daemon=True),
         threading.Thread(target=confluence_consumer, args=(redis,), name="confluence-consumer", daemon=True),
+        threading.Thread(target=pinn_signal_consumer, args=(redis,), name="pinn-consumer", daemon=True),
         threading.Thread(target=strategy_processor, args=(redis, span_calculator), name="strategy-processor", daemon=True),
         threading.Thread(target=mtm_engine, args=(redis,), name="mtm-engine", daemon=True),
         threading.Thread(target=command_listener, args=(redis,), name="command-listener", daemon=True),
