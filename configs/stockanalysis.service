@@ -11,7 +11,7 @@ WorkingDirectory=/home/hacker/StockAnalysis
 EnvironmentFile=/home/hacker/StockAnalysis/.env
 Environment=PYTHONPATH=/home/hacker/StockAnalysis
 Environment=REDIS_URL=redis://localhost:6379
-ExecStart=/home/hacker/StockAnalysis/.venv/bin/python intraday/intraday_monitor.py
+ExecStart=/home/hacker/StockAnalysis/.venv/bin/python services/orchestrator/main.py
 Restart=always
 RestartSec=30
 StandardOutput=journal
