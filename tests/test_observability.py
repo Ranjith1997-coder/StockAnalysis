@@ -1,5 +1,5 @@
 """
-Unit tests for the 3-Layer Observability Architecture in intraday/intraday_monitor.py
+Unit tests for the 3-Layer Observability Architecture in services/orchestrator/main.py
 
 Layer 1: Global Exception Catcher  (_crash_handler / sys.excepthook)
 Layer 2: Heartbeat                 (_ping_healthcheck)
@@ -23,13 +23,13 @@ class TestCrashHandler(unittest.TestCase):
 
     def setUp(self):
         # Import here so the module-level sys.excepthook assignment runs
-        import intraday.intraday_monitor as im
+        import services.orchestrator.main as im
         self.im = im
         # Re-install in case other test suites (e.g. crash_handler) stole sys.excepthook.
         # Module-level assignment only runs on first import; Python caches imports.
         sys.excepthook = im._crash_handler
 
-    @patch("intraday.intraday_monitor.TELEGRAM_NOTIFICATIONS")
+    @patch("services.orchestrator.main.TELEGRAM_NOTIFICATIONS")
     def test_sends_telegram_on_uncaught_exception(self, mock_tg):
         """A ValueError should produce a Telegram message with the traceback."""
         try:
@@ -45,7 +45,7 @@ class TestCrashHandler(unittest.TestCase):
         self.assertIn("test crash", msg)
         self.assertIn("<pre>", msg)  # HTML formatting
 
-    @patch("intraday.intraday_monitor.TELEGRAM_NOTIFICATIONS")
+    @patch("services.orchestrator.main.TELEGRAM_NOTIFICATIONS")
     def test_html_parse_mode(self, mock_tg):
         """Message must be sent with parse_mode='HTML'."""
         try:
@@ -57,7 +57,7 @@ class TestCrashHandler(unittest.TestCase):
         _, kwargs = mock_tg.send_notification.call_args
         self.assertEqual(kwargs.get("parse_mode"), "HTML")
 
-    @patch("intraday.intraday_monitor.TELEGRAM_NOTIFICATIONS")
+    @patch("services.orchestrator.main.TELEGRAM_NOTIFICATIONS")
     def test_keyboard_interrupt_not_sent(self, mock_tg):
         """KeyboardInterrupt should be forwarded to the default hook, not Telegram."""
         try:
@@ -70,7 +70,7 @@ class TestCrashHandler(unittest.TestCase):
 
         mock_tg.send_notification.assert_not_called()
 
-    @patch("intraday.intraday_monitor.TELEGRAM_NOTIFICATIONS")
+    @patch("services.orchestrator.main.TELEGRAM_NOTIFICATIONS")
     def test_truncates_long_tracebacks(self, mock_tg):
         """A traceback exceeding 3500 chars must be truncated."""
         # Simulate a very long exception message to force truncation
@@ -86,7 +86,7 @@ class TestCrashHandler(unittest.TestCase):
         self.assertLess(len(msg), 4096)
         self.assertIn("truncated", msg)
 
-    @patch("intraday.intraday_monitor.TELEGRAM_NOTIFICATIONS")
+    @patch("services.orchestrator.main.TELEGRAM_NOTIFICATIONS")
     def test_survives_telegram_failure(self, mock_tg):
         """If Telegram itself is down, the handler must not raise."""
         mock_tg.send_notification.side_effect = Exception("network dead")
@@ -102,7 +102,7 @@ class TestCrashHandler(unittest.TestCase):
         """sys.excepthook must point to our crash handler after import."""
         self.assertIs(sys.excepthook, self.im._crash_handler)
 
-    @patch("intraday.intraday_monitor.TELEGRAM_NOTIFICATIONS")
+    @patch("services.orchestrator.main.TELEGRAM_NOTIFICATIONS")
     def test_angle_brackets_in_traceback_are_html_escaped(self, mock_tg):
         """Repr strings like <urllib3.HTTPSConnection object> must be escaped so
         Telegram's HTML parser doesn't return 400 'Unsupported start tag'."""
@@ -133,7 +133,7 @@ class TestHeartbeat(unittest.TestCase):
     """Verify _ping_healthcheck sends a GET to the configured URL."""
 
     def setUp(self):
-        import intraday.intraday_monitor as im
+        import services.orchestrator.main as im
         self.im = im
 
     @patch.dict(os.environ, {"HEALTHCHECK_URL": "https://hc-ping.com/test-uuid"})
@@ -196,7 +196,7 @@ class TestZombieDataWatchdog(unittest.TestCase):
     """Verify check_data_freshness correctly identifies stale vs fresh data."""
 
     def setUp(self):
-        import intraday.intraday_monitor as im
+        import services.orchestrator.main as im
         self.im = im
         # Reset the per-session alert tracker between tests
         self.im._stale_alerts_sent.clear()
@@ -211,8 +211,8 @@ class TestZombieDataWatchdog(unittest.TestCase):
             fake_now = datetime(2026, 3, 30, 16, 0, 0)   # Monday 4:00 PM
 
         patches = [
-            patch("intraday.intraday_monitor.datetime", wraps=datetime),
-            patch("intraday.intraday_monitor.isNowInTimePeriod", return_value=in_hours),
+            patch("services.orchestrator.main.datetime", wraps=datetime),
+            patch("services.orchestrator.main.isNowInTimePeriod", return_value=in_hours),
             patch("common.market_calendar.is_trading_day", return_value=is_trading),
         ]
         return patches, fake_now
@@ -229,7 +229,7 @@ class TestZombieDataWatchdog(unittest.TestCase):
 
     # ── Fresh data → no alert ─────────────────────────────────────────────
 
-    @patch("intraday.intraday_monitor.TELEGRAM_NOTIFICATIONS")
+    @patch("services.orchestrator.main.TELEGRAM_NOTIFICATIONS")
     def test_fresh_data_returns_true(self, mock_tg):
         """Data updated 30s ago (< 120s threshold) → True, no Telegram alert."""
         fake_now = self._apply_patches(in_hours=True)
@@ -241,7 +241,7 @@ class TestZombieDataWatchdog(unittest.TestCase):
 
     # ── Stale data → alert ────────────────────────────────────────────────
 
-    @patch("intraday.intraday_monitor.TELEGRAM_NOTIFICATIONS")
+    @patch("services.orchestrator.main.TELEGRAM_NOTIFICATIONS")
     def test_stale_data_returns_false_and_alerts(self, mock_tg):
         """Data updated 200s ago (> 120s threshold) → False + Telegram warning."""
         fake_now = self._apply_patches(in_hours=True)
@@ -254,7 +254,7 @@ class TestZombieDataWatchdog(unittest.TestCase):
         self.assertIn("STALE DATA", msg)
         self.assertIn("NIFTY", msg)
 
-    @patch("intraday.intraday_monitor.TELEGRAM_NOTIFICATIONS")
+    @patch("services.orchestrator.main.TELEGRAM_NOTIFICATIONS")
     def test_stale_alert_sent_only_once_per_symbol(self, mock_tg):
         """Duplicate stale alerts for the same symbol must be suppressed."""
         fake_now = self._apply_patches(in_hours=True)
@@ -264,7 +264,7 @@ class TestZombieDataWatchdog(unittest.TestCase):
         self.im.check_data_freshness(stock)  # second call
         self.assertEqual(mock_tg.send_notification.call_count, 1)
 
-    @patch("intraday.intraday_monitor.TELEGRAM_NOTIFICATIONS")
+    @patch("services.orchestrator.main.TELEGRAM_NOTIFICATIONS")
     def test_different_symbols_both_alerted(self, mock_tg):
         """Each stale symbol gets its own alert."""
         fake_now = self._apply_patches(in_hours=True)
@@ -277,7 +277,7 @@ class TestZombieDataWatchdog(unittest.TestCase):
 
     # ── Outside market hours → skip ───────────────────────────────────────
 
-    @patch("intraday.intraday_monitor.TELEGRAM_NOTIFICATIONS")
+    @patch("services.orchestrator.main.TELEGRAM_NOTIFICATIONS")
     def test_outside_market_hours_returns_true(self, mock_tg):
         """After 3:30 PM, stale data should be ignored (market closed)."""
         self._apply_patches(in_hours=False)
@@ -289,7 +289,7 @@ class TestZombieDataWatchdog(unittest.TestCase):
 
     # ── Holiday → skip ────────────────────────────────────────────────────
 
-    @patch("intraday.intraday_monitor.TELEGRAM_NOTIFICATIONS")
+    @patch("services.orchestrator.main.TELEGRAM_NOTIFICATIONS")
     def test_holiday_returns_true(self, mock_tg):
         """On a market holiday, stale data should not trigger an alert."""
         self._apply_patches(in_hours=True, is_trading=False)
@@ -301,7 +301,7 @@ class TestZombieDataWatchdog(unittest.TestCase):
 
     # ── No options_aggregate → skip ───────────────────────────────────────
 
-    @patch("intraday.intraday_monitor.TELEGRAM_NOTIFICATIONS")
+    @patch("services.orchestrator.main.TELEGRAM_NOTIFICATIONS")
     def test_no_options_aggregate_returns_true(self, mock_tg):
         """Stock without options_aggregate (non-index equity) → pass through."""
         self._apply_patches(in_hours=True)
@@ -312,7 +312,7 @@ class TestZombieDataWatchdog(unittest.TestCase):
         self.assertTrue(result)
         mock_tg.send_notification.assert_not_called()
 
-    @patch("intraday.intraday_monitor.TELEGRAM_NOTIFICATIONS")
+    @patch("services.orchestrator.main.TELEGRAM_NOTIFICATIONS")
     def test_no_last_updated_field_returns_true(self, mock_tg):
         """options_aggregate exists but last_updated not yet set → pass."""
         self._apply_patches(in_hours=True)
@@ -325,7 +325,7 @@ class TestZombieDataWatchdog(unittest.TestCase):
 
     # ── Custom threshold ──────────────────────────────────────────────────
 
-    @patch("intraday.intraday_monitor.TELEGRAM_NOTIFICATIONS")
+    @patch("services.orchestrator.main.TELEGRAM_NOTIFICATIONS")
     def test_custom_threshold(self, mock_tg):
         """With a 60s threshold, 90s-old data should be stale."""
         fake_now = self._apply_patches(in_hours=True)
@@ -337,7 +337,7 @@ class TestZombieDataWatchdog(unittest.TestCase):
 
     # ── datetime-typed last_updated ───────────────────────────────────────
 
-    @patch("intraday.intraday_monitor.TELEGRAM_NOTIFICATIONS")
+    @patch("services.orchestrator.main.TELEGRAM_NOTIFICATIONS")
     def test_datetime_typed_last_updated_fresh(self, mock_tg):
         """last_updated as a datetime object (not epoch) should also work."""
         fake_now = self._apply_patches(in_hours=True)

@@ -14,7 +14,7 @@ class TestDoRefresh:
 
     @patch("services.auth_service.main.load_dotenv")
     @patch("services.auth_service.main.os.getenv")
-    @patch("auth.auth_login.generate_enctoken")
+    @patch("services.auth_service.auth.auth_login.generate_enctoken")
     def test_success_publishes_enctoken(self, mock_gen, mock_getenv, mock_load):
         from services.auth_service.main import _do_refresh, AUTH_HASH, AUTH_CHANNEL
 
@@ -42,7 +42,7 @@ class TestDoRefresh:
         pub_args = redis.publish.call_args
         assert pub_args[0][0] == AUTH_CHANNEL
 
-    @patch("auth.auth_login.generate_enctoken")
+    @patch("services.auth_service.auth.auth_login.generate_enctoken")
     def test_failure_sends_alert(self, mock_gen):
         from services.auth_service.main import _do_refresh
 
@@ -59,7 +59,7 @@ class TestDoRefresh:
         xadd_args = redis.xadd.call_args
         assert xadd_args[0][0] == "notification:jobs"
 
-    @patch("auth.auth_login.generate_enctoken")
+    @patch("services.auth_service.auth.auth_login.generate_enctoken")
     def test_exception_handled(self, mock_gen):
         from services.auth_service.main import _do_refresh
 
@@ -74,7 +74,7 @@ class TestDoRefresh:
 
     @patch("services.auth_service.main.load_dotenv")
     @patch("services.auth_service.main.os.getenv")
-    @patch("auth.auth_login.generate_enctoken")
+    @patch("services.auth_service.auth.auth_login.generate_enctoken")
     def test_missing_enctoken_after_login(self, mock_gen, mock_getenv, mock_load):
         from services.auth_service.main import _do_refresh
 
@@ -95,7 +95,7 @@ class TestDoRefresh:
 
     @patch("services.auth_service.main.load_dotenv")
     @patch("services.auth_service.main.os.getenv")
-    @patch("auth.auth_login.generate_enctoken")
+    @patch("services.auth_service.auth.auth_login.generate_enctoken")
     def test_publishes_correct_hash_fields(self, mock_gen, mock_getenv, mock_load):
         from services.auth_service.main import _do_refresh, AUTH_HASH
 
@@ -115,7 +115,7 @@ class TestDoRefresh:
 
     @patch("services.auth_service.main.load_dotenv")
     @patch("services.auth_service.main.os.getenv")
-    @patch("auth.auth_login.generate_enctoken")
+    @patch("services.auth_service.auth.auth_login.generate_enctoken")
     def test_publishes_pubsub_channel(self, mock_gen, mock_getenv, mock_load):
         from services.auth_service.main import _do_refresh, AUTH_CHANNEL
 
@@ -172,6 +172,7 @@ class TestHeartbeat:
         from services.auth_service.main import _update_heartbeat
 
         redis = MagicMock()
+        redis.get.return_value = None
         _update_heartbeat(redis)
 
         redis.hset.assert_called_once()
@@ -187,6 +188,7 @@ class TestHeartbeat:
         from services.auth_service.main import _update_heartbeat
 
         redis = MagicMock()
+        redis.get.return_value = None
         _update_heartbeat(redis)
         redis.expire.assert_called_once_with("service:registry:auth-service", 120)
 
