@@ -13,6 +13,7 @@ See docs/PAPER_TRADING_DESIGN.md sections 2 and 6 for the full spec.
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -22,6 +23,7 @@ logger = get_logger("paper-trading")
 from lib.intelligence.correlator import Confluence
 from lib.intelligence.signal import Direction
 from services.paper_trading.models import POSITIONS_OPEN_KEY, PaperAccount, PaperPosition, cooldown_key
+from services.volatility_engine.signal_emitter import ZSCORE_CACHE_TTL_SECONDS
 
 MAX_POSITIONS = 8
 MAX_PORTFOLIO_MARGIN_PCT = 0.40
@@ -228,6 +230,65 @@ def parse_pinn_signal(fields: dict) -> Optional[EntrySignal]:
     except (TypeError, ValueError) as e:
         logger.warning("[signal_router] Malformed pinn signal for %s: %s", symbol, e)
         return None
+
+    return None
+
+
+# ── PINN confirmation (design doc section 9.3) ──────────────────────────────
+
+def get_pinn_confirmation(redis, signal: EntrySignal) -> Optional[float]:
+    """Read pinn:zscore:{symbol} (written by
+    services/volatility_engine/signal_emitter.write_fair_iv_to_redis) and
+    return the PINN-side z-score for this signal's specific strike(s).
+
+    Returns None -- fail open, i.e. don't block the trade -- if PINN isn't
+    running, has no cached data for this symbol, or the cache is stale.
+    Absence of PINN confirmation is not itself a rejection reason; it only
+    matters when a z-score IS available (see _handle_entry_signal()).
+
+    Key format must match write_fair_iv_to_redis's `f"{strike}_{option_type}"`
+    exactly -- relies on both sides formatting the same strike value (a
+    round number for NIFTY/BANKNIFTY, e.g. 24000.0) identically via Python's
+    default float-to-str conversion.
+    """
+    raw = redis.hgetall(f"pinn:zscore:{signal.symbol}")
+    if not raw:
+        return None
+
+    try:
+        last_updated = float(raw.get("last_updated", 0))
+    except (TypeError, ValueError):
+        return None
+    if time.time() - last_updated > ZSCORE_CACHE_TTL_SECONDS:
+        return None
+
+    if signal.strategy == "CREDIT_SPREAD" and signal.sr_level is not None:
+        # SKEW_FADE-style: check the z-score on the side being sold --
+        # BULLISH fades by selling puts (PE), BEARISH by selling calls (CE).
+        option_type = "PE" if signal.direction == "BULLISH" else "CE"
+        z = raw.get(f"zscore_{signal.sr_level}_{option_type}")
+        if z is None:
+            return None
+        try:
+            return float(z)
+        except (TypeError, ValueError):
+            return None
+
+    if signal.strategy in ("IRON_CONDOR", "STRANGLE"):
+        # RANGE_BOUND-style: both wings are being sold -- confirmation cares
+        # about whichever wing PINN thinks is MOST overpriced (max positive
+        # z), not an average across both.
+        z_scores = []
+        for key, value in raw.items():
+            if not key.startswith("zscore_"):
+                continue
+            try:
+                zv = float(value)
+            except (TypeError, ValueError):
+                continue
+            if zv > 0:
+                z_scores.append(zv)
+        return max(z_scores) if z_scores else None
 
     return None
 
