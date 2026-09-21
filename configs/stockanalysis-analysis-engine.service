@@ -11,7 +11,7 @@ WorkingDirectory=/home/hacker/StockAnalysis
 EnvironmentFile=/home/hacker/StockAnalysis/.env
 Environment=PYTHONPATH=/home/hacker/StockAnalysis
 Environment=REDIS_URL=redis://localhost:6379
-ExecStart=/home/hacker/StockAnalysis/.venv/bin/python services/analysis_engine/main.py --worker-name prod-1
+ExecStart=/home/hacker/StockAnalysis/.venv/bin/python -m services.analysis_engine.main --worker-name prod-1
 Restart=always
 RestartSec=10
 StandardOutput=journal
