@@ -65,20 +65,62 @@ def _failure_result(symbol: str, reason: str) -> TrainingRunResult:
     return TrainingRunResult(symbol=symbol, accepted=False, reasons=[reason])
 
 
+def _write_model_status(redis, symbol: str, result: TrainingRunResult) -> None:
+    """Write pinn:model:{symbol} (design doc section 11.1) -- the source of
+    truth for both the /pinn_status bot command and
+    services/pinn_trainer/main.py's day-idempotency check.
+
+    `train_date` is set ONLY once training has actually reached the
+    acceptance gate (result.holdout_date is not None) -- an early failure
+    (no Bhavcopy data yet, too few samples) must NOT count as "trained
+    today", so the scheduler keeps retrying it later the same day. A
+    genuine gate verdict (accepted OR rejected) IS terminal for the day
+    either way, so both set train_date.
+    """
+    mapping = {
+        "accepted": str(result.accepted),
+        "reasons": "; ".join(result.reasons),
+        "last_attempt": date.today().isoformat(),
+    }
+    if result.holdout_date is not None:
+        mapping.update({
+            "train_date": date.today().isoformat(),
+            "holdout_date": result.holdout_date,
+            "overall_mae": str(result.overall_mae),
+            "atm_mae": str(result.atm_mae),
+            "wings_mae": str(result.wings_mae),
+            "butterfly_violation_rate": str(result.butterfly_violation_rate),
+            "calendar_violation_rate": str(result.calendar_violation_rate),
+        })
+    redis.hset(f"pinn:model:{symbol}", mapping=mapping)
+
+
 def train_one_symbol(
     symbol: str,
     config: PINNConfig,
     model_dir: str | None = None,
     end_date: date | None = None,
+    redis=None,
 ) -> TrainingRunResult:
     """Run the full pipeline for one symbol: fetch -> dataset -> train ->
     gate -> save/fallback. Never raises on ordinary failure modes (no data,
     too little data, gate rejection) -- those are reported in the returned
     result so a caller training multiple symbols can continue past one
     failure; only genuinely unexpected errors propagate.
+
+    Args:
+        redis: optional Redis client. When given, every return path writes
+            pinn:model:{symbol} via _write_model_status() -- None (default)
+            skips it entirely, e.g. for validation scripts that call this
+            directly outside any service context.
     """
     model_dir = model_dir or config.model_dir
     end_date = end_date or date.today()
+
+    def _finish(result: TrainingRunResult) -> TrainingRunResult:
+        if redis is not None:
+            _write_model_status(redis, symbol, result)
+        return result
 
     logger.info("[pinn] === Training %s (end_date=%s) ===", symbol, end_date)
 
@@ -88,7 +130,7 @@ def train_one_symbol(
         n_days=config.training_window_days + 1, end_date=end_date, symbols=[symbol],
     )
     if bhavcopy.empty:
-        return _failure_result(symbol, "no Bhavcopy data available for the requested window")
+        return _finish(_failure_result(symbol, "no Bhavcopy data available for the requested window"))
 
     # 2. Dataset
     samples = build_training_samples(
@@ -97,15 +139,15 @@ def train_one_symbol(
         max_tau=config.max_tau,
     )
     if len(samples) < 50:
-        return _failure_result(symbol, f"too few training samples after filtering ({len(samples)})")
+        return _finish(_failure_result(symbol, f"too few training samples after filtering ({len(samples)})"))
 
     try:
         train_samples, holdout_samples, holdout_date = split_by_holdout_date(samples)
     except ValueError as e:
-        return _failure_result(symbol, str(e))
+        return _finish(_failure_result(symbol, str(e)))
 
     if len(holdout_samples) < 10:
-        return _failure_result(symbol, f"too few holdout samples on {holdout_date} ({len(holdout_samples)})")
+        return _finish(_failure_result(symbol, f"too few holdout samples on {holdout_date} ({len(holdout_samples)})"))
 
     k_train, tau_train, w_train = samples_to_tensors(train_samples)
     k_hold, tau_hold, w_hold = samples_to_tensors(holdout_samples)
@@ -160,7 +202,7 @@ def train_one_symbol(
         logger.warning("[pinn] %s: REJECTED (%s) -- previous accepted model stays live",
                         symbol, "; ".join(acceptance.reasons))
 
-    return TrainingRunResult(
+    return _finish(TrainingRunResult(
         symbol=symbol,
         accepted=acceptance.accepted,
         reasons=acceptance.reasons,
@@ -172,7 +214,7 @@ def train_one_symbol(
         butterfly_violation_rate=acceptance.audit.butterfly_violation_rate,
         calendar_violation_rate=acceptance.audit.calendar_violation_rate,
         model_path=model_path,
-    )
+    ))
 
 
 def main(argv: list | None = None) -> int:
@@ -191,7 +233,17 @@ def main(argv: list | None = None) -> int:
     model_dir = args.model_dir or config.model_dir
     end_date = date.fromisoformat(args.end_date) if args.end_date else None
 
-    results = [train_one_symbol(symbol, config, model_dir, end_date=end_date) for symbol in symbols]
+    redis = None
+    try:
+        from services.common.redis_proxy import RedisProxy
+        redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
+        redis = RedisProxy(redis_url)
+        redis.get("ping")
+    except Exception as e:
+        logger.warning("[pinn] Redis unavailable (%s) -- pinn:model:{symbol} status will not be written", e)
+        redis = None
+
+    results = [train_one_symbol(symbol, config, model_dir, end_date=end_date, redis=redis) for symbol in symbols]
 
     logger.info("[pinn] === Training run summary ===")
     for r in results:
