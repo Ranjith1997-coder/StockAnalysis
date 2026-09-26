@@ -20,7 +20,7 @@ from tools.pinn_volatility.config import PINNConfig
 from tools.pinn_volatility.training.validate import AcceptanceResult, HoldoutMetrics, ArbitrageAudit
 import tools.pinn_volatility.training.run_training as run_training_module
 from tools.pinn_volatility.training.run_training import (
-    train_one_symbol, main, _update_symlink, TrainingRunResult,
+    train_one_symbol, main, _update_symlink, _write_model_status, TrainingRunResult,
 )
 
 R, Q = 0.07, 0.0
@@ -99,6 +99,18 @@ class TestTrainOneSymbolFailureModes:
         assert "no Bhavcopy data" in result.reasons[0]
         assert not os.path.exists(tmp_path / "NIFTY_latest.pt")
 
+    def test_no_bhavcopy_data_does_not_set_train_date(self, tmp_path):
+        """Regression guard for services/pinn_trainer's day-idempotency check:
+        an early failure (no data yet) must be retry-eligible, not
+        permanently marked 'trained today'."""
+        redis = MagicMock()
+        with patch.object(run_training_module, "fetch_recent_bhavcopies", return_value=pd.DataFrame()):
+            train_one_symbol("NIFTY", _tiny_config(), model_dir=str(tmp_path), redis=redis)
+
+        redis.hset.assert_called_once()
+        _, kwargs = redis.hset.call_args
+        assert "train_date" not in kwargs["mapping"]
+
     def test_too_few_samples_returns_failure(self, tmp_path):
         # Only one row -- far below the 50-sample minimum.
         bhavcopy = _synthetic_bhavcopy(["2026-08-14"], n_strikes=1)
@@ -125,13 +137,13 @@ class TestTrainOneSymbolAcceptFallback:
     deterministically to test save/symlink logic, independent of whether a
     5-epoch toy training run happens to produce a genuinely good model."""
 
-    def _run(self, tmp_path, accepted: bool, reasons=None):
+    def _run(self, tmp_path, accepted: bool, reasons=None, redis=None):
         bhavcopy = _synthetic_bhavcopy(["2026-08-11", "2026-08-12", "2026-08-13", "2026-08-14"])
         with patch.object(run_training_module, "fetch_recent_bhavcopies", return_value=bhavcopy), \
              patch.object(run_training_module, "check_acceptance_criteria",
                            return_value=_fake_acceptance(accepted, reasons)):
             return train_one_symbol("NIFTY", _tiny_config(), model_dir=str(tmp_path),
-                                     end_date=date(2026, 8, 14))
+                                     end_date=date(2026, 8, 14), redis=redis)
 
     def test_accepted_saves_model_and_creates_symlink(self, tmp_path):
         result = self._run(tmp_path, accepted=True)
@@ -185,6 +197,40 @@ class TestTrainOneSymbolAcceptFallback:
         assert os.readlink(link) == os.path.basename(result.model_path)
         assert os.readlink(link) != old_model.name
 
+    def test_accepted_writes_train_date_to_redis(self, tmp_path):
+        redis = MagicMock()
+        result = self._run(tmp_path, accepted=True, redis=redis)
+
+        redis.hset.assert_called_once_with(
+            "pinn:model:NIFTY", mapping={k: v for k, v in {
+                "accepted": "True",
+                "reasons": "",
+                "last_attempt": date.today().isoformat(),
+                "train_date": date.today().isoformat(),
+                "holdout_date": result.holdout_date,
+                "overall_mae": str(result.overall_mae),
+                "atm_mae": str(result.atm_mae),
+                "wings_mae": str(result.wings_mae),
+                "butterfly_violation_rate": str(result.butterfly_violation_rate),
+                "calendar_violation_rate": str(result.calendar_violation_rate),
+            }.items()}
+        )
+
+    def test_rejected_still_writes_train_date_to_redis(self, tmp_path):
+        """A genuine gate rejection IS terminal for the day (unlike an
+        early no-data failure) -- the scheduler must not retry it."""
+        redis = MagicMock()
+        self._run(tmp_path, accepted=False, reasons=["wings MAE 3.00% >= 2.50% threshold"], redis=redis)
+
+        redis.hset.assert_called_once()
+        _, kwargs = redis.hset.call_args
+        assert kwargs["mapping"]["train_date"] == date.today().isoformat()
+        assert kwargs["mapping"]["accepted"] == "False"
+
+    def test_no_redis_skips_write_entirely(self, tmp_path):
+        # redis=None is the default -- must not raise or attempt any write.
+        self._run(tmp_path, accepted=True)
+
 
 class TestMainCli:
     def test_all_accepted_returns_exit_code_zero(self, tmp_path):
@@ -194,7 +240,7 @@ class TestMainCli:
         assert exit_code == 0
 
     def test_any_rejected_returns_nonzero_exit_code(self, tmp_path):
-        def fake_train(symbol, config, model_dir, end_date=None):
+        def fake_train(symbol, config, model_dir, end_date=None, redis=None):
             accepted = symbol == "NIFTY"
             return TrainingRunResult(symbol=symbol, accepted=accepted,
                                       reasons=[] if accepted else ["wings MAE too high"])
@@ -206,7 +252,7 @@ class TestMainCli:
     def test_default_symbols_come_from_config(self, tmp_path):
         calls = []
 
-        def fake_train(symbol, config, model_dir, end_date=None):
+        def fake_train(symbol, config, model_dir, end_date=None, redis=None):
             calls.append(symbol)
             return TrainingRunResult(symbol=symbol, accepted=True, reasons=[])
 
@@ -218,7 +264,7 @@ class TestMainCli:
     def test_seed_override_reaches_config(self, tmp_path):
         captured_configs = []
 
-        def fake_train(symbol, config, model_dir, end_date=None):
+        def fake_train(symbol, config, model_dir, end_date=None, redis=None):
             captured_configs.append(config)
             return TrainingRunResult(symbol=symbol, accepted=True, reasons=[])
 
@@ -230,7 +276,7 @@ class TestMainCli:
     def test_end_date_parsed_from_string(self, tmp_path):
         captured_end_dates = []
 
-        def fake_train(symbol, config, model_dir, end_date=None):
+        def fake_train(symbol, config, model_dir, end_date=None, redis=None):
             captured_end_dates.append(end_date)
             return TrainingRunResult(symbol=symbol, accepted=True, reasons=[])
 
