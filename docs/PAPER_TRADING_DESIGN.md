@@ -48,7 +48,7 @@ An automated paper trading microservice that consumes option-seller signals from
 ### What It Does NOT Do (v1)
 
 - No live broker integration (Zerodha `place_order` exists in `zerodha_connect.py` but is never called)
-- No PINN volatility surface (planned as Phase 2 — third signal source via `vol:mispricing` stream)
+- ~~No PINN volatility surface~~ — **done**: the `pinn:signals` stream is now a third signal source, consumed via `signal_router.parse_pinn_signal()`. See `docs/pinn-volatility-engine.md` section 0.4.3 (this doc's "v1" scope predates that work — Last Updated above is stale for this specific bullet).
 - No stock F&O (limited to 3 indices where live option LTP is available)
 - No portfolio-level delta hedging (each position is independent)
 - No historical backtesting with option premiums (existing `backtest/` is directional equity only)
@@ -245,12 +245,14 @@ This also resolves the old "Bug 3" — `intelligence:signals` published but neve
 |--------|---------|----------|-----------|
 | 1. analysis consumer | `XREADGROUP` on `analysis:results` -- parses NEUTRAL bucket only (composite setups + GAMMA_TRAP) | 5s block | Yes |
 | 2. confluence consumer | `XREADGROUP` on `intelligence:confluence` (own consumer group) -- reconstructs via `Confluence.from_stream_fields()`, no local correlation needed | 5s block | Yes |
-| 3. strategy builder | Processes EntrySignal queue from threads 1+2 | Event-driven | No (queue poll) |
+| 2b. pinn consumer *(added post-v1, see below)* | `XREADGROUP` on `pinn:signals` (own consumer group `paper-trader-pinn`) -- `signal_router.parse_pinn_signal()` | 5s block | Yes |
+| 3. strategy builder | Processes EntrySignal queue from threads 1, 2, and 2b | Event-driven | No (queue poll) |
 | 4. MTM engine | Read `data:options_live`, compute P&L, check exits | 3s sleep | No |
 | 5. command listener | `XREADGROUP` on `paper:commands` | 5s block | Yes |
-| 6. heartbeat | Write to `service:registry:paper-trading` | 30s | No |
 
-Threads 1 and 2 feed `EntrySignal`/`ExitSignal` objects into a thread-safe `queue.Queue`. Thread 3 drains this queue and processes entries (strike selection, SPAN margin, position opening). This avoids blocking the stream consumers. Unlike the original design, thread 2 no longer needs to reconstruct raw `Signal` objects or run a `SignalCorrelator` -- confluence detection already happened upstream in the standalone `signal-intelligence` service (see §2.4); this thread only deserializes the already-detected `Confluence`.
+Heartbeat (`service:registry:paper-trading`, 30s) runs in `main()`'s own loop, not a separate thread -- this table's original "6. heartbeat" row was never accurate to the actual code.
+
+Threads 1, 2, and 2b feed `EntrySignal`/`ExitSignal` objects into a thread-safe `queue.Queue`. Thread 3 drains this queue and processes entries (strike selection, SPAN margin, position opening). This avoids blocking the stream consumers. Unlike the original design, thread 2 no longer needs to reconstruct raw `Signal` objects or run a `SignalCorrelator` -- confluence detection already happened upstream in the standalone `signal-intelligence` service (see §2.4); this thread only deserializes the already-detected `Confluence`. Thread 2b (PINN) was added later, once `docs/pinn-volatility-engine.md` section 0.4.3's paper-trading integration was built -- the diagram above this table still only shows the original two sources and predates it.
 
 ### Confluence Consumption (no local SignalCorrelator)
 
@@ -606,6 +608,7 @@ class EntrySignal:
     # Common
     signal_source: str = ""
     signal_context: dict = field(default_factory=dict)
+    mode: str = "intraday"   # "intraday" | "positional" -- which analysis cycle produced this
 
 @dataclass
 class ExitSignal:
@@ -1075,9 +1078,9 @@ WantedBy=multi-user.target
 
 **Total: ~22h** (1h saved on task 3 now that confluence detection is already handled upstream by `signal-intelligence`)
 
-### Phase 2: PINN Volatility Surface (future, 7 tasks)
+### Phase 2: PINN Volatility Surface — done, see `docs/pinn-volatility-engine.md`
 
-Tasks 8-14 from the original plan (collector, model, loss, training, inference, service, tests). Requires `torch` installation. Adds third signal source (`vol:mispricing` stream) to the signal router.
+Tasks 8-14 from the original plan (collector, model, loss, training, inference, service, tests) are built — full status lives in `docs/pinn-volatility-engine.md` section 0, not here. Two corrections to this section's original assumptions: the third signal source is the `pinn:signals` stream (not `vol:mispricing` as originally planned here), and it's consumed via `signal_router.parse_pinn_signal()`, not a change to `parse_analysis_result`/`parse_confluence_message`.
 
 ### Prerequisites
 

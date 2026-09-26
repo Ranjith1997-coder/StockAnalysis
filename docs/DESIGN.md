@@ -1400,7 +1400,7 @@ Result namedtuple `PANIC_EXHAUSTION`: `(panic_direction, conditions_met, conditi
 
 ### Expiry Selection
 
-- **Weekly expiry**: nearest Thursday (or Tuesday/Wednesday when Thursday is a holiday)
+- **Weekly expiry**: whichever weekday NSE currently lists as nearest for that index — resolved dynamically from the Zerodha instruments API (`expiry_dates[0]`), never hardcoded to a specific weekday. **Not Thursday**: confirmed from real 2026-09 Bhavcopy data that NIFTY's weekly expiry day is Tuesday — see `docs/pinn-volatility-engine.md` section 0.4.2. This line previously assumed Thursday; that assumption was wrong, though it never affected any actual code (see below).
 - Only the **current weekly expiry** is subscribed for live ticks
 - Monthly expiry OI is much larger but weekly expiry is what matters for intraday trading
 - Zerodha instruments API returns all active contracts; `expiry_dates[0]` (earliest) = current weekly
