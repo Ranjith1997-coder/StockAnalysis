@@ -5,6 +5,9 @@
 #   optuna, alembic, SQLAlchemy, Mako, colorlog, vaderSentiment, ta, nltk,
 #   click, entire Jupyter/IPython stack, and other ML/dev-only packages
 #
+# torch + scipy (PINN training/inference only) now live in requirements-ml.txt,
+# installed solely on hosts that run that pipeline (see its header).
+#
 # Moved to requirements-deploy.txt (deploy laptop only, NOT on EC2):
 #   boto3, botocore, s3transfer, jmespath   -- AWS EC2 client (scripts/deploy.py)
 #   paramiko, PyNaCl, bcrypt                -- SSH client (scripts/deploy.py)

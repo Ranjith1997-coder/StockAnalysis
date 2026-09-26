@@ -1,0 +1,21 @@
+# ML requirements — install ONLY on hosts that run PINN training/inference.
+#
+# torch and scipy are deliberately absent from requirements.txt (see its
+# header): they are large, and only the PINN volatility engine needs them
+# (tools/pinn_volatility/, services/volatility_engine/, services/pinn_trainer/).
+#
+# Currently needed on: the production server, for
+# stockanalysis-pinn-trainer.service (nightly training at 21:00).
+#
+# CPU-only torch: the server has no GPU and the default PyPI linux wheel
+# bundles CUDA (~2.5 GB). An --extra-index-url alone is NOT enough — pip
+# would prefer the plain `2.8.0` CUDA wheel from PyPI over the CPU one, so
+# the requirement pins torch's `+cpu` local version explicitly.
+#
+# Usage:
+#   make install-ml      # or: .venv/bin/pip install -r requirements-ml.txt
+
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+torch==2.8.0+cpu
+scipy==1.16.1

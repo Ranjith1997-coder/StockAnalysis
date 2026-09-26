@@ -24,6 +24,7 @@ import time
 from datetime import date, datetime, time as dtime, timedelta
 
 import common.constants as constant
+from common.market_calendar import is_trading_day
 from lib.logging_util import get_logger
 logger = get_logger("pinn-trainer")
 from lib.notification.Notification import TELEGRAM_NOTIFICATIONS
@@ -128,6 +129,7 @@ def _run_schedule(redis, config: PINNConfig) -> None:
     schedule_date = datetime.now().date()
     started_today = False
     gave_up_today = False
+    error_alerted_today = False
 
     while _running:
         now = datetime.now()
@@ -135,7 +137,17 @@ def _run_schedule(redis, config: PINNConfig) -> None:
             schedule_date = now.date()
             started_today = False
             gave_up_today = False
+            error_alerted_today = False
             logger.info("[pinn-trainer] New day %s -- flags reset", schedule_date)
+
+        # No Bhavcopy is published on weekends/holidays, and end_date's
+        # backward walk would just re-train the previous session's data
+        # (3x the same run per week) while pinging Telegram each day.  Gate
+        # on the repo's shared trading-day calendar instead.
+        if not is_trading_day(now.date()):
+            logger.debug("[pinn-trainer] %s is not a trading day -- idling", now.date())
+            _sleep_until_midnight()
+            continue
 
         if _all_trained_today(redis, config):
             _sleep_until_midnight()
@@ -154,7 +166,21 @@ def _run_schedule(redis, config: PINNConfig) -> None:
             _send_alert(f"\U0001F9EE <b>PINN training started</b> for {', '.join(config.symbols)}")
             started_today = True
 
-        all_done = run_training_cycle(redis, config)
+        # An unexpected error must not kill this scheduling thread -- the
+        # heartbeat loop would keep reporting "healthy" while training
+        # silently never ran again.  Alert once/day, then let the normal
+        # retry cadence below try again.
+        try:
+            all_done = run_training_cycle(redis, config)
+        except Exception as e:
+            logger.error("[pinn-trainer] Training cycle raised: %s", e, exc_info=True)
+            if not error_alerted_today:
+                _send_alert(f"⚠️ <b>PINN trainer</b>: unexpected error during training "
+                            f"({type(e).__name__}: {e}) -- see journalctl -u "
+                            f"stockanalysis-pinn-trainer. Retrying.")
+                error_alerted_today = True
+            all_done = False
+
         if all_done:
             continue
 
