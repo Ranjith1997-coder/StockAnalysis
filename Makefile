@@ -18,6 +18,7 @@ help:
 	@echo "    install        Install production dependencies (requirements.txt)"
 	@echo "    install-dev    Install prod + dev/test tools (requirements-dev.txt)"
 	@echo "    install-deploy Install deploy tools on laptop (requirements-deploy.txt)"
+	@echo "    install-ml     Install ML deps (CPU torch) — PINN hosts only (requirements-ml.txt)"
 	@echo "    env-check      Verify required .env variables are set"
 	@echo ""
 	@echo "  Run"
@@ -138,6 +139,12 @@ install-dev:
 install-deploy:
 	$(PIP) install --upgrade pip
 	$(PIP) install -r requirements-deploy.txt
+
+.PHONY: install-ml
+install-ml:
+	@echo "Installing ML deps (CPU torch) — PINN training/inference hosts only..."
+	$(PIP) install --upgrade pip
+	$(PIP) install -r requirements-ml.txt
 
 .PHONY: env-check
 env-check:

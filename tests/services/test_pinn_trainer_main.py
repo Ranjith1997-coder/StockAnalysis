@@ -6,7 +6,7 @@ functions (_run_schedule, main) are integration-level, same convention as
 tests/services/test_paper_trading_main.py -- not unit tested here.
 """
 
-from datetime import date
+from datetime import date, datetime
 from unittest.mock import MagicMock, patch
 
 from tools.pinn_volatility.config import PINNConfig
@@ -120,3 +120,58 @@ class TestRunTrainingCycle:
 
         mock_alert.assert_not_called()  # holdout_date=None -> no per-retry alert
         assert all_done is False
+
+
+class TestRunScheduleGuards:
+    """The scheduling loop itself is integration-level (see module docstring),
+    but its two safety guards exist to prevent silent failure modes and are
+    worth driving deterministically: weekend/holiday alert noise, and a dead
+    schedule thread while the heartbeat keeps reporting healthy."""
+
+    FAKE_NOW = datetime(2026, 9, 25, 21, 30)  # Friday, just after TRAIN_TIME
+
+    def _drive(self, redis, *, trading_day, cycle_side_effect, iterations):
+        """Run _run_schedule at FAKE_NOW, stopping the loop after `iterations`
+        sleeps so the test terminates."""
+        sleeps = {"n": 0}
+
+        def stop_after(*args, **kwargs):
+            sleeps["n"] += 1
+            if sleeps["n"] >= iterations:
+                pinn_trainer_main._running = False
+
+        mock_cycle = MagicMock(side_effect=cycle_side_effect)
+        with patch.object(pinn_trainer_main, "is_trading_day", return_value=trading_day), \
+             patch.object(pinn_trainer_main, "_all_trained_today", return_value=False), \
+             patch.object(pinn_trainer_main, "run_training_cycle", mock_cycle), \
+             patch.object(pinn_trainer_main, "_send_alert") as mock_alert, \
+             patch.object(pinn_trainer_main, "_sleep_until_midnight", side_effect=stop_after), \
+             patch.object(pinn_trainer_main, "_sleep_responsive", side_effect=stop_after), \
+             patch.object(pinn_trainer_main, "datetime") as mock_dt:
+            mock_dt.now.return_value = self.FAKE_NOW
+            pinn_trainer_main._running = True
+            try:
+                pinn_trainer_main._run_schedule(redis, _config(symbols=["NIFTY"]))
+            finally:
+                pinn_trainer_main._running = True
+        return mock_cycle, mock_alert
+
+    def test_non_trading_day_skips_training_and_alerts(self):
+        redis = MagicMock()
+        mock_cycle, mock_alert = self._drive(
+            redis, trading_day=False, cycle_side_effect=None, iterations=1,
+        )
+        mock_cycle.assert_not_called()
+        mock_alert.assert_not_called()
+
+    def test_training_exception_alerts_once_and_keeps_retrying(self):
+        redis = MagicMock()
+        mock_cycle, mock_alert = self._drive(
+            redis, trading_day=True,
+            cycle_side_effect=RuntimeError("torch exploded"), iterations=2,
+        )
+        assert mock_cycle.call_count == 2  # the loop survived and retried
+        error_alerts = [
+            c.args[0] for c in mock_alert.call_args_list if "unexpected error" in c.args[0]
+        ]
+        assert len(error_alerts) == 1  # once/day, not once per retry

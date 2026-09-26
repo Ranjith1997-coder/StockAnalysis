@@ -19,7 +19,12 @@ StandardError=journal
 # No CPUQuota -- unlike the other services, this one needs full CPU during
 # its ~10-15 min/symbol nightly training burst (see docs/pinn-volatility-engine.md
 # section 7.5); throttling would materially slow training down.
-MemoryMax=512M
+#
+# 2G, not the 512M this unit started at: the training path imports torch
+# (~250-300MB RSS on CPU wheels) and holds the sample/collocation tensors for
+# the run.  Sized with headroom against the box's ~6GB free at 21:00 rather
+# than from a measured peak -- revisit if a nightly run ever OOMs.
+MemoryMax=2G
 
 [Install]
 WantedBy=multi-user.target
