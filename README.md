@@ -360,8 +360,9 @@ All services run 24/7 with `Restart=always`. `scripts/system_config` contains th
 | `stockanalysis-resource-monitor.service` | 24/7 | Polls psutil + Redis metrics every 30s → sys:latest:* + sys:ts:* + proactive alerts → notification:jobs |
 | `stockanalysis-auth.service` | 24/7 (self-scheduling) | Zerodha TOTP login (09:00 + 18:50) + Sensibull OAuth auto-login + reactive refresh via auth:commands stream |
 | `stockanalysis.service` | 24/7 (self-scheduling) | Main orchestrator — `services/orchestrator/main.py` (python -m). Pre-market, intraday loop, positional analysis, EOD reports. Reads from Redis, dispatches to analysis-engine, consumes intelligence:confluence for LLM narrator |
+| `stockanalysis-pinn-trainer.service` | 24/7 (self-scheduling) | **Not yet deployed to the server.** PINN volatility model training — self-schedules once/day at 21:00 (after positional analysis), retries every 15 min until 23:00 if Bhavcopy isn't published yet, writes `pinn:model:{symbol}` + Telegram alerts. See `docs/pinn-volatility-engine.md` section 0.4.4 |
 
-No timers. All services self-schedule. The auth-service handles both Zerodha enctoken and Sensibull access_token lifecycle.
+No timers. All services self-schedule. The auth-service handles both Zerodha enctoken and Sensibull access_token lifecycle; the PINN trainer follows the same fixed-time pattern for its nightly run.
 
 ---
 

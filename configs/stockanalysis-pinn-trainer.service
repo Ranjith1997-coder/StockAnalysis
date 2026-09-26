@@ -1,0 +1,25 @@
+[Unit]
+Description=StockAnalysis PINN Trainer (self-scheduled nightly training)
+After=redis-server.service network-online.target
+Wants=network-online.target
+Requires=redis-server.service
+
+[Service]
+Type=simple
+User=hacker
+WorkingDirectory=/home/hacker/StockAnalysis
+EnvironmentFile=/home/hacker/StockAnalysis/.env
+Environment=PYTHONPATH=/home/hacker/StockAnalysis
+Environment=REDIS_URL=redis://localhost:6379
+ExecStart=/home/hacker/StockAnalysis/.venv/bin/python services/pinn_trainer/main.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+# No CPUQuota -- unlike the other services, this one needs full CPU during
+# its ~10-15 min/symbol nightly training burst (see docs/pinn-volatility-engine.md
+# section 7.5); throttling would materially slow training down.
+MemoryMax=512M
+
+[Install]
+WantedBy=multi-user.target
