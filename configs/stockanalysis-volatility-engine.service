@@ -1,0 +1,27 @@
+[Unit]
+Description=StockAnalysis Volatility Engine (PINN inference)
+After=redis-server.service stockanalysis-market-data.service stockanalysis-data-gateway.service
+Wants=network-online.target
+Requires=redis-server.service
+
+[Service]
+Type=simple
+User=hacker
+WorkingDirectory=/home/hacker/StockAnalysis
+EnvironmentFile=/home/hacker/StockAnalysis/.env
+Environment=PYTHONPATH=/home/hacker/StockAnalysis
+Environment=REDIS_URL=redis://localhost:6379
+ExecStart=/home/hacker/StockAnalysis/.venv/bin/python -m services.volatility_engine.main
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+# Steady-state load is a 3s inference tick over the live strike set plus a 30s
+# arbitrage audit -- no training burst, so unlike the trainer this one is
+# throttled like its siblings. Memory is dominated by the torch import
+# (~250-300MB; the trainer measured 194MB cgroup current idle-with-torch).
+CPUQuota=30%
+MemoryMax=1G
+
+[Install]
+WantedBy=multi-user.target
