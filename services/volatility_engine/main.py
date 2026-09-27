@@ -18,8 +18,10 @@ import sys
 import time
 from datetime import datetime, time as dtime
 
+import common.constants as constant
 from lib.logging_util import get_logger
 logger = get_logger("volatility-engine")
+from lib.notification.Notification import TELEGRAM_NOTIFICATIONS
 from services.common.redis_proxy import RedisProxy
 from services.common.version import BUILD_LABEL, GIT_COMMIT, GIT_DIRTY
 from services.volatility_engine.comparator import (
@@ -35,10 +37,42 @@ from tools.pinn_volatility.data.collocation import sample_collocation
 MARKET_OPEN = dtime(9, 15)
 MARKET_CLOSE = dtime(15, 30)
 INFERENCE_INTERVAL_SECONDS = 3
+OUTSIDE_HOURS_SLEEP_SECONDS = 30
 ARBITRAGE_CHECK_INTERVAL_SECONDS = 30
 ARBITRAGE_AUDIT_POINTS = 2000
+ALERT_COOLDOWN_SECONDS = 3600  # at most one Telegram alert per key per hour
 
 _running = True
+
+# Last-alert timestamps, keyed by failure site. Written from both the
+# inference and arbitrage threads; worst case under a race is one duplicate
+# alert, so no lock.
+_last_alert_at: dict[str, float] = {}
+
+
+def _sleep(seconds: float) -> None:
+    """Indirection so tests can drive the loops deterministically."""
+    time.sleep(seconds)
+
+
+def _send_alert(message: str) -> None:
+    TELEGRAM_NOTIFICATIONS.is_intraday = True
+    TELEGRAM_NOTIFICATIONS.send_notification(message, parse_mode="HTML")
+
+
+def _alert_throttled(key: str, message: str, now: float | None = None) -> bool:
+    """Send a Telegram alert at most once per ALERT_COOLDOWN_SECONDS per key.
+
+    Repeated identical failures (a broken data contract, a dead feed) would
+    otherwise either spam Telegram or -- given the loops log-and-swallow --
+    go unnoticed entirely. Returns True if the alert was sent.
+    """
+    now = time.time() if now is None else now
+    if now - _last_alert_at.get(key, 0.0) < ALERT_COOLDOWN_SECONDS:
+        return False
+    _last_alert_at[key] = now
+    _send_alert(message)
+    return True
 
 
 def signal_handler(signum, frame):
@@ -86,62 +120,105 @@ def evaluate_symbol(symbol: str, model, redis, now: datetime) -> tuple[list, flo
     return signals, tau
 
 
+def _run_inference_iteration(redis, model_manager: ModelManager, now: datetime) -> None:
+    model_manager.hot_reload_check()
+
+    for symbol in model_manager.symbols:
+        model = model_manager.get_model(symbol)
+        if model is None:
+            continue
+        try:
+            signals, _tau = evaluate_symbol(symbol, model, redis, now)
+            for sig in signals:
+                emit_signal(redis, sig)
+                logger.info("[vol-engine] %s %s z=%.2f dir=%s",
+                            symbol, sig.signal_type, sig.z_score, sig.direction)
+        except Exception as e:
+            logger.error("[vol-engine] Error evaluating %s", symbol, e, exc_info=True)
+            _alert_throttled(
+                f"eval:{symbol}",
+                f"⚠️ <b>Vol-engine</b>: evaluation failing for {symbol} "
+                f"({type(e).__name__}: {e}) -- see journalctl -u "
+                f"stockanalysis-volatility-engine",
+            )
+
+
 def inference_loop(redis, model_manager: ModelManager) -> None:
     while _running:
         now = datetime.now()
         if not is_market_hours(now):
-            time.sleep(30)
+            _sleep(OUTSIDE_HOURS_SLEEP_SECONDS)
             continue
 
-        model_manager.hot_reload_check()
+        # Last-resort guard: an exception here (e.g. the _latest.pt symlink
+        # repointed between exists() and readlink() in hot_reload_check) must
+        # not kill this thread -- the heartbeat loop would keep reporting
+        # "healthy" while no signal was ever produced again.
+        try:
+            _run_inference_iteration(redis, model_manager, now)
+        except Exception as e:
+            logger.error("[vol-engine] Inference iteration failed: %s", e, exc_info=True)
+            _alert_throttled(
+                "inference-iteration",
+                f"⚠️ <b>Vol-engine</b>: inference iteration failed "
+                f"({type(e).__name__}: {e}) -- see journalctl -u "
+                f"stockanalysis-volatility-engine",
+            )
 
-        for symbol in model_manager.symbols:
-            model = model_manager.get_model(symbol)
-            if model is None:
-                continue
-            try:
-                signals, _tau = evaluate_symbol(symbol, model, redis, now)
-                for sig in signals:
-                    emit_signal(redis, sig)
-                    logger.info("[vol-engine] %s %s z=%.2f dir=%s",
-                                symbol, sig.signal_type, sig.z_score, sig.direction)
-            except Exception:
-                logger.error("[vol-engine] Error evaluating %s", symbol, exc_info=True)
+        _sleep(INFERENCE_INTERVAL_SECONDS)
 
-        time.sleep(INFERENCE_INTERVAL_SECONDS)
+
+def audit_model_surface(redis, symbol: str, model) -> float:
+    """One Durrleman-density audit of a loaded model's own surface.
+
+    Catches model degradation live (training converged badly but still slipped
+    past the offline gate), distinct from that offline gate. Raises on
+    failure -- the caller guards.
+    """
+    points = sample_collocation(ARBITRAGE_AUDIT_POINTS, k_range=K_RANGE, tau_range=TAU_RANGE)
+    wrapped = RawInputModel(model)
+    g = durrleman_density(wrapped, points).detach()
+    violation_rate = (g < 0).float().mean().item()
+    if violation_rate > 0:
+        redis.hset(f"pinn:arbitrage_status:{symbol}", mapping={
+            "violation_rate": str(violation_rate),
+            "min_g": str(g.min().item()),
+            "checked_at": str(time.time()),
+        })
+        if violation_rate >= 0.05:
+            logger.warning("[vol-engine] %s live model shows %.2f%% butterfly-arbitrage "
+                            "violation on a fresh audit sample -- model may have degraded "
+                            "since the offline gate accepted it", symbol, violation_rate * 100)
+    return violation_rate
 
 
 def arbitrage_monitor(redis, model_manager: ModelManager) -> None:
-    """Independent, periodic no-arbitrage check on each loaded model's own
-    surface -- catches model degradation live (training converged badly but
-    still slipped past the offline gate), distinct from that offline gate."""
+    """Independent, periodic no-arbitrage check on each loaded model's surface.
+
+    Gated to market hours: it audits the surface that is only served during
+    the session, so running it all night is pure waste on a 2-core box.
+    """
     while _running:
-        time.sleep(ARBITRAGE_CHECK_INTERVAL_SECONDS)
+        _sleep(ARBITRAGE_CHECK_INTERVAL_SECONDS)
+        if not is_market_hours(datetime.now()):
+            continue
         for symbol in model_manager.symbols:
             model = model_manager.get_model(symbol)
             if model is None:
                 continue
             try:
-                points = sample_collocation(ARBITRAGE_AUDIT_POINTS, k_range=K_RANGE, tau_range=TAU_RANGE)
-                wrapped = RawInputModel(model)
-                g = durrleman_density(wrapped, points).detach()
-                violation_rate = (g < 0).float().mean().item()
-                if violation_rate > 0:
-                    redis.hset(f"pinn:arbitrage_status:{symbol}", mapping={
-                        "violation_rate": str(violation_rate),
-                        "min_g": str(g.min().item()),
-                        "checked_at": str(time.time()),
-                    })
-                    if violation_rate >= 0.05:
-                        logger.warning("[vol-engine] %s live model shows %.2f%% butterfly-arbitrage "
-                                        "violation on a fresh audit sample -- model may have degraded "
-                                        "since the offline gate accepted it", symbol, violation_rate * 100)
-            except Exception:
-                logger.error("[vol-engine] Arbitrage check failed for %s", symbol, exc_info=True)
+                audit_model_surface(redis, symbol, model)
+            except Exception as e:
+                logger.error("[vol-engine] Arbitrage check failed for %s", symbol, e, exc_info=True)
+                _alert_throttled(
+                    f"arbitrage:{symbol}",
+                    f"⚠️ <b>Vol-engine</b>: arbitrage audit failing for {symbol} "
+                    f"({type(e).__name__}: {e})",
+                )
 
 
-def update_heartbeat(redis) -> None:
-    redis.hset("service:registry:volatility-engine", mapping={
+def update_heartbeat(redis, model_manager: ModelManager | None = None) -> None:
+    mapping = {
         "name": "volatility-engine",
         "pid": str(os.getpid()),
         "status": "healthy",
@@ -149,7 +226,15 @@ def update_heartbeat(redis) -> None:
         "version": BUILD_LABEL,
         "commit": GIT_COMMIT,
         "dirty": str(GIT_DIRTY),
-    })
+    }
+    # `models` makes a "healthy but serving nothing" state visible at a glance
+    # (no accepted model yet is a real, expected state -- see design doc 0.6.1).
+    if model_manager is not None:
+        loaded = sorted(model_manager.models)
+        mapping["models"] = ",".join(
+            f"{s}@{model_manager.train_dates.get(s, 'unknown')}" for s in loaded
+        ) or "none"
+    redis.hset("service:registry:volatility-engine", mapping=mapping)
     redis.expire("service:registry:volatility-engine", 120)
 
 
@@ -173,6 +258,8 @@ def main():
     from services.common.crash_handler import install_crash_handler
     install_crash_handler("volatility-engine")
 
+    TELEGRAM_NOTIFICATIONS.is_production = os.getenv(constant.ENV_PRODUCTION, "0") == "1"
+
     model_manager = ModelManager()
     if not model_manager.models:
         logger.warning("[vol-engine] No models loaded at startup -- "
@@ -190,7 +277,7 @@ def main():
     from lib.logging_util import refresh_level_from_redis
 
     while _running:
-        update_heartbeat(redis)
+        update_heartbeat(redis, model_manager)
         refresh_level_from_redis(redis, "volatility-engine")
         time.sleep(30)
 

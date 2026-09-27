@@ -12,7 +12,7 @@
 
 # Architecture & Constraints
 - Indian NSE/BSE equity & derivatives analysis.
-- **Always-running services**: monolith + data-gateway + market-data + analysis-engine + signal-intelligence + notification-service + auth-service + resource-monitor (all 24/7, `Restart=always`).
+- **Always-running services**: monolith + data-gateway + market-data + analysis-engine + signal-intelligence + notification-service + auth-service + resource-monitor + paper-trading + pinn-trainer + volatility-engine (all 24/7, `Restart=always`).
 - **Data flow**: data-gateway fetches yfinance + Sensibull → Redis hashes → monolith reads from Redis → writes notifications to Redis stream → notification-service sends Telegram/Discord.
 - **Cycle sync**: data-gateway publishes `data:cycle_ready` (Pub/Sub) + `data:cycle_stream` (durable stream) after each fetch. Monolith's `CycleSubscriber` blocks until signal arrives.
 - Zerodha KiteConnect WebSocket + Sensibull REST (via data-gateway) + yfinance (via data-gateway) + Telegram.
