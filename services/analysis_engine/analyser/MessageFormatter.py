@@ -41,7 +41,7 @@ class MessageFormatter:
         fn = cls._registry.get(analysis_type)
         if fn:
             try:
-                return fn(data, trend)
+                return fn(_attr_view(data), trend)
             except Exception as exc:
                 logger.error(f"MessageFormatter error for '{analysis_type}': {exc}")
                 return [f"  {analysis_type}: (format error)"]
@@ -55,6 +55,28 @@ class MessageFormatter:
 
 
 # ── Shared helpers ────────────────────────────────────────────────────────────
+
+class _AttrDict(dict):
+    """dict that also supports attribute access (missing attrs → AttributeError,
+    so getattr(d, k, default) and hasattr() behave like on a namedtuple)."""
+
+    def __getattr__(self, name):
+        try:
+            return self[name]
+        except KeyError:
+            raise AttributeError(name) from None
+
+
+def _attr_view(data):
+    """Wrap dict payloads (e.g. composite setups stored via ``_asdict()``) so
+    formatters written for namedtuple attribute access work unchanged.
+    Lists are wrapped element-wise; every other type passes through."""
+    if isinstance(data, dict) and not isinstance(data, _AttrDict):
+        return _AttrDict(data)
+    if isinstance(data, list):
+        return [_AttrDict(d) if isinstance(d, dict) and not isinstance(d, _AttrDict) else d
+                for d in data]
+    return data
 
 _CONF_EMOJI = {"HIGH": "🔥", "MEDIUM": "📈", "LOW": "📊", "VERY_LOW": "⚪"}
 
@@ -450,6 +472,13 @@ def _fmt_iv_spike(data, trend):
             for d in items]
 
 
+@MessageFormatter.register("IV_CRUSH")
+def _fmt_iv_crush(data, trend):
+    items = data if isinstance(data, list) else [data]
+    return [f"  IV Crush: {d.expiry} ATM IV=<code>{d.iv:.1f}%</code> Δ=<code>{d.iv_change:+.2f}%</code>"
+            for d in items]
+
+
 @MessageFormatter.register("IV_TREND")
 def _fmt_iv_trend(data, trend):
     items = data if isinstance(data, list) else [data]
@@ -718,7 +747,7 @@ def _fmt_gamma_trap(data, trend):
             # Map trigger key back to conditions_detail label fragments
             _detail_map = {
                 "G1 Wall Breach": ("OI_CAPITULATION", "OI_WALL_MIGRATION", "GEX_WALL_BREACH"),
-                "G2 Volume":      ("VOLUME_BREAKOUT", "VOLUME_CLIMAX"),
+                "G2 Volume":      ("VOLUME_BREAKOUT", "VOLUME_CLIMAX", "FUTURES_VOLUME_SURGE"),
                 "G3 Futures":     ("FUTURES(",),
                 "G4 IV Spike":    ("IV_SPIKE",),
             }

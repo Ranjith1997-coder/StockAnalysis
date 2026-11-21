@@ -460,3 +460,34 @@ class TestAnalysePanicExhaustion:
                 assert sig.confidence == expected_conf, (
                     f"extra_conds={extra_conds}: expected {expected_conf}, got {sig.confidence}"
                 )
+
+
+class TestPanicLiveHooksRemoved:
+    def test_dead_live_keys_do_not_count(self):
+        from collections import namedtuple
+        from services.analysis_engine.analyser.PanicModeAnalyser import PanicModeAnalyser
+        Nt = namedtuple("Nt", ["signal"])
+        ctx = MagicMock()
+        ctx.mode = shared.Mode.INTRADAY
+        ctx.india_vix_ltp = None
+        with patch("common.shared.app_ctx", ctx):
+            s = make_stock()
+            s.ltp_change_perc = -2.0
+            # Only keys nothing in analysis-engine writes — must not reach 4/6
+            s.analysis["NEUTRAL"]["IV_EXPANDING"] = Nt("x")
+            s.analysis["BEARISH"]["CE_WALL_BREACH"] = Nt("x")
+            s.analysis["BEARISH"]["PCR_CROSSOVER_BEARISH"] = Nt("x")
+            assert PanicModeAnalyser().analyse_panic_mode(s) is False
+
+    def test_vix_threshold_uses_app_ctx_value(self):
+        from services.analysis_engine.analyser.PanicModeAnalyser import PanicModeAnalyser
+        ctx = MagicMock()
+        ctx.mode = shared.Mode.INTRADAY
+        with patch("common.shared.app_ctx", ctx):
+            a = PanicModeAnalyser()
+            ctx.india_vix_ltp = 25.0
+            assert a._price_threshold() == pytest.approx(max(1.5 * 0.7, 1.0))
+            ctx.india_vix_ltp = 11.0
+            assert a._price_threshold() == pytest.approx(1.5 * 1.3)
+            ctx.india_vix_ltp = None
+            assert a._price_threshold() == 1.5

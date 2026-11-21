@@ -408,3 +408,25 @@ class TestLoadEquityTickWiring:
 
         assert "BUY_SELL" in stock.analysis["BULLISH"]
         assert stock.analysis["BULLISH"]["BUY_SELL"].buy_quantity == 90000.0
+
+
+class TestLoadIndiaVix:
+    def test_reads_last_price(self):
+        from services.analysis_engine.worker import _load_india_vix
+        redis = MagicMock()
+        redis.hgetall.return_value = {"last_price": "14.25"}
+        assert _load_india_vix(redis) == 14.25
+        redis.hgetall.assert_called_once_with("data:tick:INDIA_VIX")
+
+    @pytest.mark.parametrize("raw", [{}, None, {"last_price": "0"}, {"last_price": "bad"}])
+    def test_missing_or_invalid_returns_none(self, raw):
+        from services.analysis_engine.worker import _load_india_vix
+        redis = MagicMock()
+        redis.hgetall.return_value = raw
+        assert _load_india_vix(redis) is None
+
+    def test_redis_error_returns_none(self):
+        from services.analysis_engine.worker import _load_india_vix
+        redis = MagicMock()
+        redis.hgetall.side_effect = ConnectionError("down")
+        assert _load_india_vix(redis) is None

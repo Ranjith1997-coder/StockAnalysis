@@ -188,3 +188,41 @@ class TestAnalyseIVRank:
             a.reset_constants()
             s = self._stock_with_percentile(50.0)
             assert a.analyse_iv_rank(s) is False
+
+
+class TestIvSpikeDirectionSplit:
+    def test_iv_drop_emits_crush_not_spike(self):
+        with patch("common.shared.app_ctx", _positional_ctx()):
+            a = IVAnalyser()
+            a.reset_constants()
+            # atm_iv=14, change=-6 → prev 20 → -30%
+            s = _stock_with_iv(atm_iv=14.0, atm_iv_change=-6.0)
+            assert a.analyse_spike_in_ATM_IV(s) is True
+            neutral = s.analysis["NEUTRAL"]
+            assert "IV_SPIKE" not in neutral
+            assert neutral["IV_CRUSH"].direction == "DOWN"
+            assert neutral["IV_CRUSH"].iv_change < 0
+
+    def test_iv_rise_is_spike_with_up_direction(self):
+        with patch("common.shared.app_ctx", _positional_ctx()):
+            a = IVAnalyser()
+            a.reset_constants()
+            s = _stock_with_iv(atm_iv=20.0, atm_iv_change=6.0)
+            a.analyse_spike_in_ATM_IV(s)
+            assert s.analysis["NEUTRAL"]["IV_SPIKE"].direction == "UP"
+
+    def test_index_scores_only_nearest_expiry(self):
+        with patch("common.shared.app_ctx", _positional_ctx()):
+            a = IVAnalyser()
+            a.reset_constants()
+            s = make_stock(index=True)
+            s.sensibull_ctx = make_sensibull_ctx(atm_iv=20.0, atm_iv_change=6.0, expiry="2024-01-25")
+            pem = s.sensibull_ctx["current"]["stats"]["per_expiry_map"]
+            base = next(iter(pem.values()))
+            pem["2024-02-01"] = dict(base)
+            pem["2024-02-29"] = dict(base)
+            assert a.analyse_spike_in_ATM_IV(s) is True
+            spike = s.analysis["NEUTRAL"]["IV_SPIKE"]
+            assert not isinstance(spike, list)   # one entry, not one per expiry
+            assert spike.expiry == "2024-01-25"
+            assert s.analysis["NoOfTrends"] == 1

@@ -3,7 +3,7 @@ logger = get_logger("analyser")
 import common.constants as constant
 from common.scoring import (
     calculate_score, should_notify, format_score_message,
-    NotificationPriority, ScoreResult
+    NotificationPriority, ScoreResult, get_analysis_weight
 )
 from .MessageFormatter import MessageFormatter
 from lib.intelligence.signal import Signal, Direction, Layer, SignalStrength, weight_to_strength
@@ -114,9 +114,7 @@ class AnalyserOrchestrator:
         for sentiment in ("BULLISH", "BEARISH"):
             direction = Direction[sentiment]
             for analysis_type in stock.analysis.get(sentiment, {}):
-                weight = constant.ANALYSIS_WEIGHTS.get(
-                    analysis_type, constant.ANALYSIS_WEIGHTS.get("DEFAULT", 10)
-                )
+                weight = get_analysis_weight(analysis_type)
                 bus.emit(Signal(
                     symbol=stock.stock_symbol,
                     direction=direction,

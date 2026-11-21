@@ -348,7 +348,16 @@ class ContextBuilder:
     def _refresh_from_redis(self, stock):
         """Refresh live tick data from Redis (market-data service snapshots)."""
         try:
-            from intraday.intraday_monitor import redis_proxy
+            # The monolith's RedisProxy lives on services.orchestrator.main (set in
+            # its startup). Look it up via sys.modules so this never imports the
+            # orchestrator (and its side effects) into other processes; when it is
+            # not loaded / not connected, this is a no-op and the in-memory
+            # Stock data is used as-is.
+            import sys
+            orch = sys.modules.get("services.orchestrator.main")
+            redis_proxy = getattr(orch, "redis_proxy", None) if orch else None
+            if redis_proxy is None:
+                return
             from services.common.stock_loader import load_tick_from_redis
             load_tick_from_redis(redis_proxy, stock)
         except Exception as e:
@@ -362,13 +371,32 @@ class ContextBuilder:
         return None
 
     def _get_max_pain(self, stock) -> float | None:
+        """max_pain_strike of the nearest expiry in Sensibull stats.per_expiry_map."""
         try:
-            stats = stock.sensibull_ctx.get("current", {}).get("stats")
-            if stats and "max_pain" in stats:
-                return stats["max_pain"]
-        except (AttributeError, TypeError) as e:
+            stats = stock.sensibull_ctx.get("current", {}).get("stats") or {}
+            per_expiry = stats.get("per_expiry_map") or {}
+            if per_expiry:
+                nearest = self._nearest_expiry(per_expiry.keys())
+                mp = (per_expiry.get(nearest) or {}).get("max_pain_strike")
+                return float(mp) if mp else None
+        except (AttributeError, TypeError, ValueError) as e:
             logger.debug("[ContextBuilder] _get_max_pain failed for %s: %s", stock.stock_symbol, e)
         return None
+
+    @staticmethod
+    def _nearest_expiry(keys) -> str | None:
+        """Nearest not-yet-passed YYYY-MM-DD expiry key; smallest key as fallback."""
+        keys = sorted(keys)
+        if not keys:
+            return None
+        today = datetime.now().date()
+        for k in keys:
+            try:
+                if datetime.strptime(str(k)[:10], "%Y-%m-%d").date() >= today:
+                    return k
+            except ValueError:
+                continue
+        return keys[0]
 
     def _get_expiry(self, stock) -> str | None:
         try:
@@ -395,8 +423,7 @@ class ContextBuilder:
             per_expiry = stats.get("per_expiry_map", {})
             if not per_expiry:
                 return None
-            # Use the nearest expiry (first key when sorted)
-            nearest = sorted(per_expiry.keys())[0]
+            nearest = self._nearest_expiry(per_expiry.keys())
             return per_expiry[nearest].get("atm_iv_percentile")
         except (AttributeError, TypeError, IndexError) as e:
             logger.debug("[ContextBuilder] _get_atm_iv_percentile failed for %s: %s", stock.stock_symbol, e)
@@ -419,10 +446,11 @@ class ContextBuilder:
         Returns [(strike, oi), ...] sorted descending by OI.
         """
         try:
-            oi_chain = stock.sensibull_ctx.get("oi_chain", {})
-            per_strike = oi_chain.get("per_strike_data", {})
+            oi_chain = stock.sensibull_ctx.get("oi_chain") or {}
+            per_strike = oi_chain.get("per_strike_data") or {}
             if per_strike:
-                oi_key = f"{side}_oi"
+                # Sensibull per_strike_data uses call_oi / put_oi (see OIChainAnalyser)
+                oi_key = {"ce": "call_oi", "pe": "put_oi"}[side.lower()]
                 pairs = [
                     (float(strike), data.get(oi_key, 0))
                     for strike, data in per_strike.items()

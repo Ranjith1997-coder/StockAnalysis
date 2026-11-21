@@ -106,6 +106,23 @@ def _persist_gex_state(redis: RedisProxy, stock) -> None:
     redis.hset(f"data:gex_state:{stock.stock_symbol}", mapping=mapping)
 
 
+def _load_india_vix(redis: RedisProxy) -> float | None:
+    """INDIA_VIX last_price from Redis `data:tick:INDIA_VIX` (published by market-data).
+
+    Returns None when the hash is missing, empty, or non-positive — PanicModeAnalyser
+    then falls back to its base (non-VIX-adjusted) price threshold.
+    """
+    try:
+        raw = redis.hgetall("data:tick:INDIA_VIX")
+        if not isinstance(raw, dict) or not raw:
+            return None
+        vix = float(raw.get("last_price") or 0)
+        return vix if vix > 0 else None
+    except Exception as e:
+        logger.debug(f"[worker] INDIA_VIX | SOURCE data:tick:INDIA_VIX read failed: {e}")
+        return None
+
+
 def _record_metrics(sym: str, result: str, duration_ms: int, trend: bool = False, error: str = ""):
     """Record per-stock + system analysis metrics for one job result."""
     incr_stock(sym, "analysis_count")
@@ -213,6 +230,9 @@ def process_job(
     if is_index and symbol in constant.LIVE_OPTIONS_INDICES:
         load_options_live_from_redis(redis, stock)
         _load_gex_state(redis, orchestrator, stock)
+
+    shared.app_ctx.india_vix_ltp = _load_india_vix(redis)
+    logger.debug(f"[worker] {symbol} | SOURCE india_vix_ltp={shared.app_ctx.india_vix_ltp}")
 
     orchestrator.reset_all_constants()
 

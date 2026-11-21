@@ -8,7 +8,12 @@ import common.shared as shared
 from collections import namedtuple
 
 # ── module-level namedtuples ──────────────────────────────────────────────────
-IV_SPIKE_NT    = namedtuple("IV_SPIKE",   ["expiry", "iv", "iv_change", "source"])
+# IV_SPIKE is emitted for IV rises only; IV_CRUSH (same shape) for IV drops.
+# `direction` is "UP" | "DOWN" so consumers never need to inspect the sign.
+IV_SPIKE_NT    = namedtuple("IV_SPIKE",   ["expiry", "iv", "iv_change", "source", "direction"],
+                            defaults=("UP",))
+IV_CRUSH_NT    = namedtuple("IV_CRUSH",   ["expiry", "iv", "iv_change", "source", "direction"],
+                            defaults=("DOWN",))
 IV_TREND_NT    = namedtuple("IV_TREND",   ["expiry", "trend", "iv_change_pct", "atm_iv"])
 IV_RANK_NT     = namedtuple("IV_RANK",    ["expiry", "atm_iv", "iv_percentile", "category", "ivp_type"])
 IV_PREMIUM_NT  = namedtuple("IV_PREMIUM", [
@@ -21,6 +26,26 @@ IV_PREMIUM_NT  = namedtuple("IV_PREMIUM", [
 def _to_pct(v: float) -> float:
     """Sensibull returns IV / IVP on a 0-1 scale. Convert to percentage (0-100)."""
     return v * 100 if v < 1.0 else v
+
+
+def nearest_expiry(expiries) -> str | None:
+    """Nearest expiry key (YYYY-MM-DD) that has not passed yet.
+
+    Falls back to the lexicographically smallest key when no key parses as a
+    future/today date (e.g. stale fixtures or non-ISO keys).
+    """
+    keys = sorted(expiries)
+    if not keys:
+        return None
+    from datetime import date, datetime
+    today = date.today()
+    for k in keys:
+        try:
+            if datetime.strptime(str(k)[:10], "%Y-%m-%d").date() >= today:
+                return k
+        except ValueError:
+            continue
+    return keys[0]
 
 
 class IVAnalyser(BaseAnalyzer):
@@ -79,6 +104,21 @@ class IVAnalyser(BaseAnalyzer):
 
     # ── analyse_spike_in_ATM_IV ───────────────────────────────────────────────
 
+    @staticmethod
+    def _emit_iv_move(stock, expiry, iv, iv_change_pct, source, window_label) -> None:
+        """Emit IV_SPIKE for rises, IV_CRUSH for drops (both NEUTRAL)."""
+        if iv_change_pct >= 0:
+            key, nt = "IV_SPIKE", IV_SPIKE_NT(expiry=expiry, iv=iv, iv_change=iv_change_pct,
+                                              source=source, direction="UP")
+        else:
+            key, nt = "IV_CRUSH", IV_CRUSH_NT(expiry=expiry, iv=iv, iv_change=iv_change_pct,
+                                              source=source, direction="DOWN")
+        stock.set_analysis("NEUTRAL", key, nt)
+        logger.info(
+            f"[{key}] {stock.stock_symbol} | SOURCE expiry={expiry} atm_iv={iv:.1f}% "
+            f"{window_label}_change={iv_change_pct:+.2f}% — EMITTED"
+        )
+
     @BaseAnalyzer.both
     @BaseAnalyzer.index_both
     def analyse_spike_in_ATM_IV(self, stock: Stock):
@@ -106,20 +146,17 @@ class IVAnalyser(BaseAnalyzer):
 
             is_intraday = shared.app_ctx.mode.name == shared.Mode.INTRADAY.name
 
-            # Expiry selection strategy:
-            #   Stocks  — nearest expiry only (both modes).
-            #             Far-expiry IV data for stocks is thin and unreliable.
-            #   Indices — all available expiries (both modes).
-            #             NIFTY/BANKNIFTY have deep liquidity across weeklies and
-            #             monthlies; a spike on the far leg signals event positioning.
-            #             The prev_iv <= 0 guard below handles any corrupt entries.
-            if not stock.is_index:
-                nearest = sorted(per_expiry.keys())[0]
-                per_expiry = {nearest: per_expiry[nearest]}
+            # Expiry selection: nearest live expiry only, for stocks AND indices.
+            # Previously indices looped over every expiry, so one market-wide IV
+            # move emitted N IV_SPIKE entries and inflated the score N-fold.
+            # Far-expiry moves are logged at DEBUG as context only.
+            nearest = nearest_expiry(per_expiry.keys())
+            far_expiries = [k for k in per_expiry if k != nearest]
+            per_expiry = {nearest: per_expiry[nearest]}
 
             logger.debug(
                 f"[IV_SPIKE] {stock.stock_symbol} ({'index' if stock.is_index else 'stock'}) — "
-                f"source: {len(per_expiry)} expir(ies): {list(per_expiry.keys())}"
+                f"source: nearest expiry={nearest} (context-only expiries: {far_expiries})"
             )
 
             res = False
@@ -186,15 +223,8 @@ class IVAnalyser(BaseAnalyzer):
                     )
 
                     if abs(iv_change_pct) >= IVAnalyser.IV_PERCENTAGE_CHANGE:
-                        stock.set_analysis("NEUTRAL", "IV_SPIKE", IV_SPIKE_NT(
-                            expiry=expiry, iv=display_iv,
-                            iv_change=iv_change_pct, source="sensibull_5min",
-                        ))
-                        logger.info(
-                            f"[IV_SPIKE] {stock.stock_symbol} expiry={expiry} — "
-                            f"SIGNAL EMITTED | ATM IV={display_iv:.1f}% "
-                            f"5-min change={iv_change_pct:+.2f}%"
-                        )
+                        self._emit_iv_move(stock, expiry, display_iv, iv_change_pct,
+                                           "sensibull_5min", "5-min")
                         res = True
 
                 else:
@@ -242,19 +272,12 @@ class IVAnalyser(BaseAnalyzer):
                     )
 
                     if abs(iv_change_pct) >= IVAnalyser.IV_PERCENTAGE_CHANGE:
-                        stock.set_analysis("NEUTRAL", "IV_SPIKE", IV_SPIKE_NT(
-                            expiry=expiry, iv=atm_iv,
-                            iv_change=iv_change_pct, source="sensibull_change",
-                        ))
-                        logger.info(
-                            f"[IV_SPIKE] {stock.stock_symbol} expiry={expiry} — "
-                            f"SIGNAL EMITTED | ATM IV={atm_iv:.1f}% "
-                            f"daily change={iv_change_pct:+.2f}%"
-                        )
+                        self._emit_iv_move(stock, expiry, atm_iv, iv_change_pct,
+                                           "sensibull_change", "daily")
                         res = True
 
             if not res:
-                logger.debug(f"[IV_SPIKE] {stock.stock_symbol} — no spike detected across all expiries")
+                logger.debug(f"[IV_SPIKE] {stock.stock_symbol} — no spike/crush detected on nearest expiry")
             return res
 
         except Exception as e:

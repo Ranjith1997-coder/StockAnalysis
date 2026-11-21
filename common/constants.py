@@ -24,8 +24,9 @@ ENV_OPTIONS_SOURCE      = "OPTIONS_SOURCE"         # "zerodha" (default) or "sen
 # SENSEX uses BFO segment on Zerodha (BSE derivatives); NIFTY/BANKNIFTY use NFO (NSE derivatives).
 LIVE_OPTIONS_INDICES = ["NIFTY", "BANKNIFTY", "SENSEX"]
 
-# Lot sizes per index for GEX computation (gamma × OI × lot_size × spot²/100).
-# Used by GEXAnalyser. Fallback = 1 (relative GEX, not absolute) for unknown symbols.
+# Lot sizes per index (contract multiplier). NOT used by GEXAnalyser: options OI
+# from Zerodha ticks is already in units/shares, so GEX = gamma × OI × spot² × 0.01
+# needs no lot multiplier. Kept for consumers that convert units ↔ contracts.
 INDEX_LOT_SIZES = {
     "NIFTY":     75,
     "BANKNIFTY": 15,
@@ -164,7 +165,8 @@ ANALYSIS_WEIGHTS = {
     "PCR_REVERSAL": 16,          # PCR zone crossover or trend reversal (intraday)
     "PCR_POS_REVERSAL": 17,      # Multi-day PCR reversal using 3-day averages (positional)
     "PCR_DIVERGENCE": 14,
-    "IV_SPIKE": 12,
+    "IV_SPIKE": 12,               # ATM IV rise beyond threshold (direction="UP")
+    "IV_CRUSH": 12,               # ATM IV drop beyond threshold (direction="DOWN") — split from IV_SPIKE
     "IV_TREND": 10,
     "IV_RANK": 15,           # IV rank (percentile) — high/low signals option selling/buying edge
     "IV_RANK_EXTREME": 18,   # IV percentile at extremes (< 10 or > 85) — very high conviction
@@ -278,7 +280,7 @@ OPTIONS_ANALYSES = {"MAX_PAIN", "MAX_PAIN_TREND", "MAX_PAIN_ALIGNMENT",
                     "GEX_FLIP_PROXIMITY", "GEX_WALL", "GEX_WALL_BREACH", "GEX_IMBALANCE",
                     "PCR_EXTREME", "PCR_BIAS", "PCR_TREND", "PCR_INTRADAY_TREND",
                     "PCR_REVERSAL", "PCR_POS_REVERSAL", "PCR_DIVERGENCE",
-                    "IV_SPIKE", "IV_TREND", "IV_RANK", "IV_RANK_EXTREME",
+                    "IV_SPIKE", "IV_CRUSH", "IV_TREND", "IV_RANK", "IV_RANK_EXTREME",
                     "OI_BUILDUP", "OI_SUPPORT_RESISTANCE", "OI_WALL", "OI_SHIFT",
                     "OI_INTRADAY_TREND", "OI_SR_SHIFT",
                     "OI_CAPITULATION", "OI_WALL_MIGRATION",
@@ -337,3 +339,18 @@ NseOptionChainURL = "https://www.nseindia.com/option-chain"
 
 
 
+# ── OptionSellerCompositeAnalyser thresholds ────────────────────────────────
+# R2 (RANGE_BOUND ceiling & floor) — walls derived directly from the OI chain:
+#   floor   = max put-OI strike below spot, ceiling = max call-OI strike above spot,
+#   each must be >= MIN_OI_MULT × average OI of its side and within [MIN, MAX] % of spot.
+COMPOSITE_RB_WALL_MIN_OI_MULT  = 1.5
+COMPOSITE_RB_WALL_MIN_DIST_PCT = 0.5
+COMPOSITE_RB_WALL_MAX_DIST_PCT = 5.0
+# S2 (SKEW_FADE brick wall) — nearest dominant OI support/resistance that is holding:
+#   OI >= MIN_OI_MULT × side average and OI not dropped more than MAX_OI_DROP_PCT vs prev day.
+COMPOSITE_SR_MIN_OI_MULT       = 1.5
+COMPOSITE_SR_MAX_OI_DROP_PCT   = 15.0
+# G2 / R3 for indices — index spot has no volume, so the volume surge is read from
+# the current-month FUTURES bars: last bar volume >= SURGE_MULT × mean of LOOKBACK prior bars.
+COMPOSITE_FUT_VOL_SURGE_MULT   = 1.5
+COMPOSITE_FUT_VOL_LOOKBACK     = 20

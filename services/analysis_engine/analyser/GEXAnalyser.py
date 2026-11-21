@@ -253,7 +253,7 @@ class GEXAnalyser(BaseAnalyzer):
         Compute net GEX and emit regime signal. Always fires when gamma is available.
         Detects regime flips (positive→negative or vice versa) via options_aggregate.
 
-        SOURCE DATA (DEBUG):    options_live[strike][CE/PE] gamma + oi, spot, lot_size
+        SOURCE DATA (DEBUG):    options_live[strike][CE/PE] gamma + oi (shares), spot
         ANALYSER INPUT (DEBUG): gex_total, gex_ce, gex_pe, flip_level, prev_regime
         CONDITION (DEBUG):      gamma present + index in LIVE_OPTIONS_INDICES
         """
@@ -264,12 +264,14 @@ class GEXAnalyser(BaseAnalyzer):
                 return False
 
             spot = stock.ltp or 0.0
-            lot_size = constant.INDEX_LOT_SIZES.get(stock.stock_symbol, 1)
             n_strikes = len(stock.options_live)
 
+            # No lot-size multiplier: options_live OI comes from Zerodha ticks, which
+            # report F&O open interest in units/shares (not contracts), so
+            # gamma × OI already gives per-share exposure × total shares.
             logger.debug(
                 f"[GEX_REGIME] {stock.stock_symbol} | "
-                f"SOURCE strikes={n_strikes}, spot={spot}, lot_size={lot_size}"
+                f"SOURCE strikes={n_strikes}, spot={spot}, oi_units=shares"
             )
 
             gex_total, gex_ce, gex_pe, gex_by_strike, flip_level = self._compute_gex(stock)

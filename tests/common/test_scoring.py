@@ -346,3 +346,18 @@ class TestFormatScoreMessage:
     def test_contains_confidence_value(self):
         result = format_score_message("X", self._make_result(confidence=80.0))
         assert "80.0" in result
+
+
+class TestGetAnalysisWeightCaseInsensitive:
+    def test_mixed_case_key_exact(self):
+        assert get_analysis_weight("Double_candle_stick_pattern") == \
+            constants.ANALYSIS_WEIGHTS["Double_candle_stick_pattern"]
+
+    def test_mixed_case_key_any_case(self):
+        assert get_analysis_weight("DOUBLE_CANDLE_STICK_PATTERN") == \
+            constants.ANALYSIS_WEIGHTS["Double_candle_stick_pattern"]
+        assert get_analysis_weight("double_candle_stick_pattern") == \
+            constants.ANALYSIS_WEIGHTS["Double_candle_stick_pattern"]
+
+    def test_lowercase_upper_key(self):
+        assert get_analysis_weight("rsi_divergence") == constants.ANALYSIS_WEIGHTS["RSI_DIVERGENCE"]

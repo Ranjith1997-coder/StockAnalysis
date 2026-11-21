@@ -48,11 +48,16 @@ def get_analysis_weight(analysis_type: str) -> int:
     Returns:
         Weight value for the analysis type
     """
+    if analysis_type in constants.ANALYSIS_WEIGHTS:
+        return constants.ANALYSIS_WEIGHTS[analysis_type]
+    # Case-insensitive match. ANALYSIS_WEIGHTS contains mixed-case keys
+    # ("Double_candle_stick_pattern", "52-week-high"), so compare upper-cased
+    # forms on both sides instead of upper-casing only the query.
     normalised = analysis_type.upper()
-    return constants.ANALYSIS_WEIGHTS.get(
-        normalised,
-        constants.ANALYSIS_WEIGHTS.get("DEFAULT", 10)
-    )
+    for key, weight in constants.ANALYSIS_WEIGHTS.items():
+        if key.upper() == normalised:
+            return weight
+    return constants.ANALYSIS_WEIGHTS.get("DEFAULT", 10)
 
 
 def calculate_alignment_bonus(analysis: Dict) -> Tuple[float, str]:

@@ -16,7 +16,13 @@ Changes from v1:
   - VIX-adaptive price threshold (degrades gracefully when VIX unavailable)
   - Confidence tiers: MODERATE / HIGH / EXTREME on both signals
   - namedtuples defined at module level (not recreated each call)
-  - Live signal hooks: IV_EXPANDING, CE/PE_WALL_BREACH, PCR_SUSTAINED / PCR_CROSSOVER
+  - Removed dead "live hooks" (IV_EXPANDING, IV_TREND_RISING, CE/PE_WALL_BREACH,
+    PCR_CROSSOVER_*/PCR_SUSTAINED_*): those keys are only emitted by the market-data
+    LiveOptionsEngine to the SignalBus and are never written into stock.analysis.
+    Replaced with analysis-engine keys that do exist: GEX_WALL_BREACH (C3) and
+    PCR_INTRADAY_TREND (C6, intraday).
+  - VIX threshold reads app_ctx.india_vix_ltp, set per job by the analysis worker
+    from Redis data:tick:INDIA_VIX.
 """
 
 import traceback
@@ -50,17 +56,16 @@ class PanicModeAnalyser(BaseAnalyzer):
     PANIC_MODE (active panic) — fires when >= PANIC_MIN_CONDITIONS (4/6) align:
         C1  Price momentum    ltp_change_perc >= VIX-adaptive threshold
         C2  IV expanding      IV_SPIKE / IV_TREND(UPWARD) / IV_RANK HIGH+ /
-                              IV_RANK_EXTREME VERY_HIGH / IV_PREMIUM EXPENSIVE+ /
-                              live IV_EXPANDING / live IV_TREND_RISING
+                              IV_RANK_EXTREME VERY_HIGH / IV_PREMIUM EXPENSIVE+
         C3  OI confirming     OI_INTRADAY_TREND / OI_BUILDUP / OI_SHIFT /
                               OI_SUPPORT_RESISTANCE breach / OI_WALL / OI_SR_SHIFT /
-                              live CE_WALL_BREACH (bearish) or PE_WALL_BREACH (bullish)
+                              GEX_WALL_BREACH
         C4  Futures confirm   FUTURE_ACTION_SHORT/LONG_BUILDUP / FUTURE_ACTION /
                               FUTURE_SIGNAL_SCORE_HIGH/MEDIUM /
                               FUTURE_BREAKOUT_CONFIRMED / FUTURE_BREAKOUT_MTF_ALIGNED
         C5  Volume surge      VOLUME_BREAKOUT / VOLUME_CLIMAX / OBV_DIVERGENCE
         C6  PCR directional   PCR_BIAS / PCR_TREND / PCR_REVERSAL /
-                              live PCR_CROSSOVER / live PCR_SUSTAINED
+                              PCR_INTRADAY_TREND (intraday)
                               [PCR_EXTREME deliberately excluded — it is contrarian]
 
     Confidence tiers: 4/6 → MODERATE, 5/6 → HIGH, 6/6 → EXTREME
@@ -118,7 +123,7 @@ class PanicModeAnalyser(BaseAnalyzer):
                 else self.POSITIONAL_PRICE_THRESHOLD)
         try:
             vix = getattr(shared.app_ctx, "india_vix_ltp", None)
-            if vix is not None:
+            if isinstance(vix, (int, float)) and vix > 0:
                 if vix > 20:
                     return max(base * 0.7, 1.0)
                 if vix < 13:
@@ -189,13 +194,6 @@ class PanicModeAnalyser(BaseAnalyzer):
                                 iv_label = f"IV_EXPANDING(HV_zone={getattr(i, 'zone', '')})"
                                 break
 
-                # Live straddle signals (stored by options engine into stock.analysis)
-                if not iv_ok and self._get(stock, "NEUTRAL", "IV_EXPANDING"):
-                    iv_ok = True
-                    iv_label = "IV_EXPANDING(live)"
-                if not iv_ok and self._get(stock, "NEUTRAL", "IV_TREND_RISING"):
-                    iv_ok = True
-                    iv_label = "IV_TREND_RISING(live)"
 
             if iv_ok:
                 conditions_met.append(iv_label)
@@ -215,10 +213,9 @@ class PanicModeAnalyser(BaseAnalyzer):
                 oi_ok = bool(self._get(stock, direction, "OI_WALL"))
             if not oi_ok and self._check_intraday_mode():
                 oi_ok = bool(self._get(stock, direction, "OI_SR_SHIFT"))
-            # Live wall breach signals (stored by options engine)
             if not oi_ok:
-                wall_key = "CE_WALL_BREACH" if direction == "BEARISH" else "PE_WALL_BREACH"
-                oi_ok = bool(self._get(stock, direction, wall_key))
+                # Dealer gamma wall broken in the panic direction (GEXAnalyser, indices)
+                oi_ok = bool(self._get(stock, direction, "GEX_WALL_BREACH"))
             if oi_ok:
                 conditions_met.append("OI_CONFIRM")
 
@@ -263,16 +260,10 @@ class PanicModeAnalyser(BaseAnalyzer):
                 self._get(stock, direction, "PCR_BIAS")
                 or self._get(stock, direction, "PCR_TREND")
                 or self._get(stock, direction, "PCR_REVERSAL")
+                or (self._check_intraday_mode()
+                    and self._get(stock, direction, "PCR_INTRADAY_TREND"))
             )
-            if not pcr_ok:
-                # Live PCR signals (stored by options engine)
-                pcr_ok = (
-                    self._get(stock, direction, f"PCR_CROSSOVER_{direction}")
-                    or self._get(stock, direction, f"PCR_SUSTAINED_{direction}")
-                )
-                if pcr_ok:
-                    conditions_met.append("PCR_CONFIRM(live)")
-            else:
+            if pcr_ok:
                 conditions_met.append("PCR_CONFIRM")
 
             # ── Gate ──────────────────────────────────────────────────────────

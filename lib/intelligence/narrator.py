@@ -23,7 +23,7 @@ import common.shared as shared
 
 
 # Tradable index symbols that route to the options desk
-_INDEX_SYMBOLS = {"NIFTY 50", "NIFTY BANK", "FINNIFTY", "NIFTY", "BANKNIFTY"}
+_INDEX_SYMBOLS = {"NIFTY 50", "NIFTY BANK", "FINNIFTY", "NIFTY", "BANKNIFTY", "SENSEX"}
 
 # ── Options Desk (Index confluences) ──────────────────────────────────────────
 _INDEX_SYSTEM_PROMPT = (

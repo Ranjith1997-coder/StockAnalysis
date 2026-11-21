@@ -181,3 +181,18 @@ class TestAnalyserOrchestrator:
         orch.register(_Tracker())
         orch.reset_all_constants()
         assert len(reset_called) == 2
+
+
+class TestEmitSignalsWeightLookup:
+    def test_mixed_case_analysis_key_gets_configured_strength(self):
+        from lib.intelligence.signal import Layer, SignalStrength
+        bus = MagicMock()
+        ctx = MagicMock()
+        ctx.signal_bus = bus
+        s = make_stock()
+        # weight 18 → STRONG; the old case-sensitive lookup hit DEFAULT(10) for some keys
+        s.analysis["BULLISH"]["double_candle_stick_pattern"] = object()
+        with patch("common.shared.app_ctx", ctx):
+            AnalyserOrchestrator._emit_signals(s, Layer.INTRADAY)
+        sig = bus.emit.call_args[0][0]
+        assert sig.strength == SignalStrength.STRONG

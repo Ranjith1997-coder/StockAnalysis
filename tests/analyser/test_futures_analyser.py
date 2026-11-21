@@ -188,3 +188,68 @@ class TestResetConstants:
             a.reset_constants()
             assert FuturesAnalyser.FUTURE_OI_INCREASE_PERCENTAGE == 0.10
             assert FuturesAnalyser.FUTURE_PRICE_CHANGE_PERCENTAGE == 0.15
+
+
+# ── Per-symbol session state ─────────────────────────────────────────────────
+
+def _orb_df(day="2024-01-02", breakout=True, base=20000.0, open_oi=1_000_000):
+    """09:15-start 5-min session: flat ORB, then a final bar breaking out with OI + volume."""
+    n = 12
+    idx = pd.date_range(f"{day} 09:15", periods=n, freq="5min")
+    closes = [base] * n
+    vols = [50_000] * n
+    ois = [open_oi + i * 1_000 for i in range(n)]
+    if breakout:
+        closes[-1] = base * 1.01
+        vols[-1] = 200_000
+        ois[-1] = ois[-2] * 1.02
+    return pd.DataFrame({
+        "open": closes, "high": [c * 1.0005 for c in closes], "low": [c * 0.9995 for c in closes],
+        "close": closes, "volume": vols, "oi": ois, "underlying_price": closes,
+    }, index=idx)
+
+
+class TestPerSymbolSessionState:
+    def setup_method(self):
+        FuturesAnalyser._session_state = {}
+
+    def test_orb_fired_for_one_symbol_does_not_block_another(self):
+        with patch("common.shared.app_ctx", _intraday_ctx()):
+            a = FuturesAnalyser()
+            a.reset_constants()
+            FuturesAnalyser._session_state = {}
+            s1 = _stock_with_futures(_orb_df())
+            s1.stock_symbol = "NIFTY"
+            s2 = _stock_with_futures(_orb_df())
+            s2.stock_symbol = "BANKNIFTY"
+            assert a.analyse_intraday_breakout_oi_confirmation(s1) is True
+            assert a.analyse_intraday_breakout_oi_confirmation(s2) is True
+            # Same symbol, same session → deduplicated
+            s1b = _stock_with_futures(_orb_df())
+            s1b.stock_symbol = "NIFTY"
+            assert a.analyse_intraday_breakout_oi_confirmation(s1b) is False
+
+    def test_orb_state_resets_on_new_session_date(self):
+        with patch("common.shared.app_ctx", _intraday_ctx()):
+            a = FuturesAnalyser()
+            a.reset_constants()
+            FuturesAnalyser._session_state = {}
+            s = _stock_with_futures(_orb_df(day="2024-01-02"))
+            assert a.analyse_intraday_breakout_oi_confirmation(s) is True
+            s_next = _stock_with_futures(_orb_df(day="2024-01-03"))
+            assert a.analyse_intraday_breakout_oi_confirmation(s_next) is True
+
+    def test_session_open_oi_is_per_symbol(self):
+        with patch("common.shared.app_ctx", _intraday_ctx()):
+            a = FuturesAnalyser()
+            a.reset_constants()
+            FuturesAnalyser._session_state = {}
+            s1 = _stock_with_futures(_orb_df(open_oi=1_000_000))
+            s1.stock_symbol = "NIFTY"
+            s2 = _stock_with_futures(_orb_df(open_oi=5_000_000))
+            s2.stock_symbol = "BANKNIFTY"
+            a.analyse_intraday_oi_buildup_from_open(s1)
+            a.analyse_intraday_oi_buildup_from_open(s2)
+            st = FuturesAnalyser._session_state
+            assert st["NIFTY"]["open_oi"] == 1_000_000
+            assert st["BANKNIFTY"]["open_oi"] == 5_000_000

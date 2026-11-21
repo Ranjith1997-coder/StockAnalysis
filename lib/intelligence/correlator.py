@@ -6,8 +6,15 @@ signals from OTHER layers align in the same direction within the time window.
 
 Confluence levels:
   - 2 layers aligned (e.g., live + intraday)        -> MODERATE
-  - 3 layers aligned (live + intraday + positional)  -> HIGH
+  - 3 layers aligned (live + intraday + positional)
+    AND >= 2 distinct signal families               -> HIGH
   - Contradicting layers present                     -> adds CAUTION flag
+
+Independence: the same metric re-appearing at several layers (e.g. PCR_BIAS at
+intraday + positional, PCR_CROSSOVER live) is one piece of evidence, not three.
+signal_family() buckets sources into families (pcr, oi, gex, iv, futures,
+max_pain, volume, panic, technical); HIGH requires at least
+MIN_FAMILIES_FOR_HIGH distinct families among the aligned signals.
 """
 
 from __future__ import annotations
@@ -21,6 +28,48 @@ from typing import Callable
 from .signal import Signal, Direction, Layer, SignalStrength
 from lib.logging_util import get_logger
 logger = get_logger("intelligence")
+
+
+MIN_FAMILIES_FOR_HIGH = 2
+
+# Ordered (prefix, family) rules; first match wins. Sources are lower-cased
+# analysis keys (analysis-engine / orchestrator) or live alert types.
+_FAMILY_PREFIXES: tuple[tuple[str, str], ...] = (
+    ("pcr", "pcr"),
+    ("gex", "gex"),
+    ("max_pain", "max_pain"),
+    ("future", "futures"),
+    ("oi_", "oi"),
+    ("ce_wall", "oi"),
+    ("pe_wall", "oi"),
+    ("iv_", "iv"),
+    ("skew", "iv"),
+    ("straddle", "iv"),
+    ("volume", "volume"),
+    ("obv", "volume"),
+    ("panic", "panic"),
+)
+
+_TECHNICAL_SOURCES = frozenset({
+    "rsi", "rsi_crossover", "rsi_divergence", "macd", "ema_crossover", "supertrend",
+    "stochastic", "pivot_points", "bollingerband", "vwap_deviation", "vwap_cross",
+    "atr", "buy_sell", "bid_ask_imbalance", "52-week-high", "52-week-low",
+})
+
+
+def signal_family(source: str) -> str:
+    """Map a signal source to its evidence family.
+
+    Unknown sources are their own family so unrelated new signals are never
+    collapsed together by accident.
+    """
+    src = (source or "").lower()
+    for prefix, fam in _FAMILY_PREFIXES:
+        if src.startswith(prefix):
+            return fam
+    if src in _TECHNICAL_SOURCES or "candle" in src or src.startswith("orb"):
+        return "technical"
+    return src
 
 
 @dataclass
@@ -39,8 +88,12 @@ class Confluence:
         return len(self.layers_involved)
 
     @property
+    def families(self) -> set[str]:
+        return {signal_family(s.source) for s in self.signals}
+
+    @property
     def level(self) -> str:
-        if self.layer_count >= 3:
+        if self.layer_count >= 3 and len(self.families) >= MIN_FAMILIES_FOR_HIGH:
             return "HIGH"
         return "MODERATE"
 
@@ -54,6 +107,7 @@ class Confluence:
             "score": str(self.score),
             "layer_count": str(self.layer_count),
             "layers": ",".join(sorted(l.name for l in self.layers_involved)),
+            "families": ",".join(sorted(self.families)),
             "has_contradiction": str(self.has_contradiction),
             "sources": json.dumps([
                 {
@@ -204,8 +258,9 @@ class SignalCorrelator:
             level = confluence.level
             caution = " [CAUTION: contradicting signals]" if has_contradiction else ""
             logger.info(
-                "[Correlator] %s %s %s confluence (%d layers, score=%.1f)%s",
-                symbol, direction.value, level, len(layers), score, caution
+                "[Correlator] %s %s %s confluence (%d layers, families=%s, score=%.1f)%s",
+                symbol, direction.value, level, len(layers),
+                ",".join(sorted(confluence.families)), score, caution
             )
 
             if self._on_confluence:

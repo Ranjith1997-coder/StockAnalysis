@@ -33,14 +33,13 @@ class FuturesAnalyser(BaseAnalyzer):
     # OI startup noise: skip rows where OI < this fraction of max contract OI
     OI_STARTUP_FRACTION = 0.05
 
-    # ORB deduplication: set per-session in analyse_intraday_breakout_oi_confirmation
-    _orb_fired_up:         bool = False
-    _orb_fired_down:       bool = False
-    _orb_open_time_warned: bool = False
-
-    # OI buildup from open: session open OI, set on first call each session
-    _session_open_oi: float = 0.0
-    _session_date:    str   = ""
+    # Per-symbol, per-session state. Keyed by stock_symbol; each entry carries
+    # the session date it belongs to and is reset when the date changes.
+    #   {"date": "YYYY-MM-DD", "orb_up": bool, "orb_down": bool,
+    #    "orb_warned": bool, "open_oi": float}
+    # Class-level so it survives across jobs in one worker process (each job
+    # builds a fresh Stock), but never shared between symbols.
+    _session_state: dict = {}
 
     # Tracks last mode reset to avoid repeated reset_constants calls in the same mode
     _last_reset_mode: str = ""
@@ -59,6 +58,33 @@ class FuturesAnalyser(BaseAnalyzer):
         self.analyserName = "Futures Analyser"
         super().__init__()
         self._dynamic_thresholds_cache = {}
+
+    @classmethod
+    def _get_session_state(cls, symbol: str, session_date: str) -> dict:
+        """Return the per-symbol session state, resetting it when the date changes."""
+        state = cls._session_state.get(symbol)
+        if state is None or state.get("date") != session_date:
+            state = {
+                "date": session_date,
+                "orb_up": False,
+                "orb_down": False,
+                "orb_warned": False,
+                "open_oi": 0.0,
+            }
+            cls._session_state[symbol] = state
+        return state
+
+    @staticmethod
+    def _session_date_of(df: pd.DataFrame) -> str:
+        """Session date (YYYY-MM-DD) of the last bar, falling back to today."""
+        try:
+            last = df.index[-1]
+            if hasattr(last, "strftime"):
+                return last.strftime("%Y-%m-%d")
+        except Exception:
+            pass
+        from datetime import datetime
+        return datetime.now().strftime("%Y-%m-%d")
     
     def reset_constants(self):
         """Reset constants based on trading mode (intraday vs positional).
@@ -88,11 +114,7 @@ class FuturesAnalyser(BaseAnalyzer):
             FuturesAnalyser.MIN_PRICE_THRESHOLD = 1.0
             FuturesAnalyser.MIN_OI_THRESHOLD    = 3.0
         # Reset per-session state on each mode switch
-        FuturesAnalyser._orb_fired_up        = False
-        FuturesAnalyser._orb_fired_down      = False
-        FuturesAnalyser._orb_open_time_warned = False
-        FuturesAnalyser._session_open_oi     = 0.0
-        FuturesAnalyser._session_date        = ""
+        FuturesAnalyser._session_state = {}
         logger.debug(
             f"[FuturesAnalyser] constants reset | mode={shared.app_ctx.mode.name} | "
             f"price_thresh={FuturesAnalyser.FUTURE_PRICE_CHANGE_PERCENTAGE}% "
@@ -845,17 +867,18 @@ class FuturesAnalyser(BaseAnalyzer):
             last_dt = fut_curr.index[-1]
             today_str = last_dt.strftime("%Y-%m-%d")
             fut_today = fut_curr[[d.strftime("%Y-%m-%d") == today_str for d in fut_curr.index]]
+            state = self._get_session_state(stock.stock_symbol, today_str)
 
             # Validate ORB starts at market open (9:15 IST) — log only once per session
             first_bar_time = fut_today.index[0]
             if hasattr(first_bar_time, 'hour'):
                 if not (first_bar_time.hour == 9 and first_bar_time.minute == 15):
-                    if not FuturesAnalyser._orb_open_time_warned:
+                    if not state["orb_warned"]:
                         logger.debug(
                             f"[FUT_ORB] {stock.stock_symbol} — first bar not at 09:15 "
                             f"({first_bar_time.strftime('%H:%M')}), ORB disabled for this session"
                         )
-                        FuturesAnalyser._orb_open_time_warned = True
+                        state["orb_warned"] = True
                     return False
 
             # Dynamic ORB period based on volatility
@@ -925,11 +948,11 @@ class FuturesAnalyser(BaseAnalyzer):
             pattern = None
             sentiment = "NEUTRAL"
 
-            if breakout_up and not FuturesAnalyser._orb_fired_up:
+            if breakout_up and not state["orb_up"]:
                 if oi_confirm and vol_confirm:
                     pattern = "orb_breakout_up_oi_confirmed"
                     sentiment = "BULLISH"
-            elif breakout_down and not FuturesAnalyser._orb_fired_down:
+            elif breakout_down and not state["orb_down"]:
                 if oi_confirm and vol_confirm:
                     pattern = "orb_breakout_down_oi_confirmed"
                     sentiment = "BEARISH"
@@ -937,7 +960,7 @@ class FuturesAnalyser(BaseAnalyzer):
             logger.debug(
                 f"[FUT_ORB] {stock.stock_symbol} | CONDITION "
                 f"breakout_up={breakout_up} breakout_down={breakout_down} "
-                f"already_fired_up={FuturesAnalyser._orb_fired_up} already_fired_down={FuturesAnalyser._orb_fired_down} "
+                f"already_fired_up={state['orb_up']} already_fired_down={state['orb_down']} "
                 f"oi_pct={oi_pct:+.2f}% (need>{OI_CONFIRM_PCT:.3f}%) oi_confirm={oi_confirm} "
                 f"vol={last_vol:,.0f} vol_avg={vol_avg:.0f} (need>{VOL_FACTOR}x) vol_confirm={vol_confirm} "
                 f"→ pattern={pattern or 'none'}"
@@ -1002,9 +1025,9 @@ class FuturesAnalyser(BaseAnalyzer):
 
             # Mark as fired so this direction doesn't re-fire every cycle
             if sentiment == "BULLISH":
-                FuturesAnalyser._orb_fired_up = True
+                state["orb_up"] = True
             else:
-                FuturesAnalyser._orb_fired_down = True
+                state["orb_down"] = True
 
             logger.info(
                 f"[FUT_ORB] {stock.stock_symbol} — {pattern} {sentiment} | "
@@ -1411,22 +1434,27 @@ class FuturesAnalyser(BaseAnalyzer):
                 logger.debug(f"[FUT_OI_OPEN] {stock.stock_symbol} — insufficient rows ({len(fut)} < 3), skip")
                 return False
 
-            from datetime import datetime
-            today_str = datetime.now().strftime("%Y-%m-%d")
+            today_str = self._session_date_of(fut)
+            try:
+                fut_today = fut[[d.strftime("%Y-%m-%d") == today_str for d in fut.index]]
+            except AttributeError:
+                fut_today = fut
+            if fut_today.empty:
+                fut_today = fut
 
-            # Cache session-open OI (first bar of today)
-            if FuturesAnalyser._session_date != today_str or FuturesAnalyser._session_open_oi <= 0:
-                open_oi = float(fut["oi"].iloc[0] or 0)
+            # Cache session-open OI (first bar of today) per symbol
+            state = self._get_session_state(stock.stock_symbol, today_str)
+            if state["open_oi"] <= 0:
+                open_oi = float(fut_today["oi"].iloc[0] or 0)
                 if open_oi <= 0:
                     logger.debug(f"[FUT_OI_OPEN] {stock.stock_symbol} — open OI is zero, skip")
                     return False
-                FuturesAnalyser._session_open_oi = open_oi
-                FuturesAnalyser._session_date    = today_str
+                state["open_oi"] = open_oi
 
-            open_oi    = FuturesAnalyser._session_open_oi
+            open_oi    = state["open_oi"]
             curr_oi    = float(fut["oi"].iloc[-1] or 0)
             curr_close = float(fut["close"].iloc[-1])
-            open_close = float(fut["close"].iloc[0])
+            open_close = float(fut_today["close"].iloc[0])
 
             if open_oi <= 0 or curr_oi <= 0:
                 logger.debug(f"[FUT_OI_OPEN] {stock.stock_symbol} — zero OI, skip")
