@@ -12,10 +12,12 @@ import os
 import queue
 import signal
 import sys
+import threading
 import time
 from datetime import date, datetime, time as dtime
 
 import common.constants as constant
+from common.market_calendar import is_trading_day
 from lib.logging_util import get_logger
 logger = get_logger("paper-trading")
 from lib.notification.Notification import TELEGRAM_NOTIFICATIONS
@@ -25,27 +27,33 @@ from services.paper_trading import engine, ledger
 from services.paper_trading.models import (
     ACCOUNT_KEY,
     CONFIG_KEY,
+    CONFIG_SCHEMA,
     COOLDOWN_TTL_SECONDS,
     POSITIONS_OPEN_KEY,
+    STOP_LOSS_COOLDOWN_TTL_SECONDS,
     TRADES_STREAM,
     TRADES_STREAM_MAXLEN,
     PaperAccount,
     PaperPosition,
     cooldown_key,
     daily_pnl_key,
+    parse_config_value,
     positions_closed_key,
 )
 from services.paper_trading.signal_router import (
+    MAX_POSITIONS,
     check_entry_filters,
     get_pinn_confirmation,
     parse_analysis_result,
     parse_confluence_message,
     parse_pinn_signal,
+    portfolio_margin_exceeded,
 )
 from services.paper_trading.span_calculator import (
     SpanCalculator,
     build_instruments_cache,
     load_instruments_cache,
+    load_instruments_fetched_at,
     save_instruments_cache,
 )
 from services.paper_trading.strategy_builder import build_position
@@ -66,6 +74,9 @@ CONSUMER_NAME = "paper-trader-1"
 
 MARKET_OPEN = dtime(9, 15)
 MARKET_CLOSE = dtime(15, 30)
+ENTRY_WINDOW_START = dtime(9, 20)
+ENTRY_WINDOW_END = dtime(15, 0)
+ENTRY_MAX_AGG_AGE_SECONDS = 10.0
 MTM_CYCLE_SECONDS = 3
 
 # Design doc section 9.3's original thresholds -- never empirically
@@ -78,6 +89,14 @@ PINN_CONFIRM_BOOST_THRESHOLD = 1.0
 _running = True
 entry_queue: "queue.Queue" = queue.Queue()
 exit_queue: "queue.Queue" = queue.Queue()
+
+# Guards every read-modify-write of paper:account and paper:positions:open.
+# MTM, strategy-processor and command-listener threads all mutate them; RLock
+# because persist_closed_position() is called from inside other locked paths.
+_state_lock = threading.RLock()
+
+# Validated /paper_config overrides (see models.CONFIG_SCHEMA).
+_runtime_config: dict = {}
 
 
 def signal_handler(signum, frame):
@@ -92,8 +111,14 @@ def is_market_hours(now: datetime) -> bool:
 
 # ── Account / position persistence ──────────────────────────────────────────
 
-def get_account(redis) -> PaperAccount:
-    return PaperAccount.from_redis_mapping(redis.hgetall(ACCOUNT_KEY))
+def get_account(redis, today: "str | None" = None) -> PaperAccount:
+    """Load the account, resetting daily_* counters if the trading day changed
+    (the caller's save_account persists the reset)."""
+    account = PaperAccount.from_redis_mapping(redis.hgetall(ACCOUNT_KEY))
+    today = today or date.today().isoformat()
+    if account.roll_day(today):
+        logger.debug(f"[paper-trading] ACCOUNT | SOURCE trading_day={today} — daily counters reset")
+    return account
 
 
 def save_account(redis, account: PaperAccount) -> None:
@@ -112,13 +137,12 @@ def load_open_positions(redis) -> list[PaperPosition]:
 
 
 def persist_new_position(redis, position: PaperPosition) -> None:
-    redis.hset(POSITIONS_OPEN_KEY, mapping={position.position_id: position.to_json()})
-    redis.set_with_ttl(cooldown_key(position.symbol, position.strategy), "1", ex=COOLDOWN_TTL_SECONDS)
-
-    account = get_account(redis)
-    account.margin_used += position.margin_blocked
-    account.open_positions += 1
-    save_account(redis, account)
+    with _state_lock:
+        redis.hset(POSITIONS_OPEN_KEY, mapping={position.position_id: position.to_json()})
+        account = get_account(redis)
+        account.margin_used += position.margin_blocked
+        account.open_positions += 1
+        save_account(redis, account)
 
     TELEGRAM_NOTIFICATIONS.send_live_options_notification(
         format_entry_notification(position), parse_mode="HTML", symbol=position.symbol
@@ -127,10 +151,24 @@ def persist_new_position(redis, position: PaperPosition) -> None:
                 position.symbol, position.strategy, position.entry_credit, position.margin_blocked)
 
 
-def persist_closed_position(redis, position: PaperPosition) -> None:
+def persist_closed_position(redis, position: PaperPosition) -> bool:
+    """Book a closed position. Returns False (no-op) if another thread already
+    removed it from paper:positions:open -- HDEL is the atomic claim."""
+    with _state_lock:
+        return _persist_closed_position_locked(redis, position)
+
+
+def _persist_closed_position_locked(redis, position: PaperPosition) -> bool:
     today = date.today().isoformat()
 
-    redis.hdel(POSITIONS_OPEN_KEY, position.position_id)
+    if redis.hdel(POSITIONS_OPEN_KEY, position.position_id) == 0:
+        logger.debug(f"[paper-trading] {position.symbol} | SOURCE position_id={position.position_id} "
+                     f"— already closed elsewhere, skipping")
+        return False
+    # Cooldown starts at EXIT so a stopped-out trade can't immediately re-enter.
+    ttl = (STOP_LOSS_COOLDOWN_TTL_SECONDS if position.exit_reason in ("STOP_LOSS", "GAMMA_TRAP")
+           else COOLDOWN_TTL_SECONDS)
+    redis.set_with_ttl(cooldown_key(position.symbol, position.strategy), "1", ex=ttl)
     redis.hset(positions_closed_key(today), mapping={position.position_id: position.to_json()})
     redis.xadd(TRADES_STREAM, {
         "position_id": position.position_id,
@@ -172,6 +210,7 @@ def persist_closed_position(redis, position: PaperPosition) -> None:
     )
     logger.info("[paper-trading] Closed %s %s reason=%s pnl=₹%.0f",
                 position.symbol, position.strategy, position.exit_reason, pnl)
+    return True
 
 
 def format_entry_notification(position: PaperPosition) -> str:
@@ -222,6 +261,9 @@ def try_load_instruments(redis) -> "dict | None":
 
 
 def wait_for_instruments(redis, retry_seconds: int = 30) -> dict:
+    """Redis copy if present (it carries a TTL, so it can't be stale forever),
+    else fetch from Zerodha. In-process staleness/misses are handled by
+    SpanCalculator.maybe_refresh()."""
     cache = load_instruments_cache(redis, constant.LIVE_OPTIONS_INDICES)
     if cache:
         return cache
@@ -337,25 +379,56 @@ def pinn_signal_consumer(redis):
                     logger.debug("[paper-trading] xack pinn %s: %s", msg_id, e)
 
 
+def _close_at_market(redis, position: PaperPosition, reason: str) -> bool:
+    options_live = redis.hgetall(f"data:options_live:{position.symbol}")
+    if options_live:
+        engine.update_leg_premiums(position, options_live)
+    engine.close_position(position, reason, now=time.time(), options_live=options_live)
+    return persist_closed_position(redis, position)
+
+
 def _handle_exit_signal(redis, signal) -> None:
-    for position in load_open_positions(redis):
-        if position.symbol != signal.symbol:
-            continue
-        if signal.position_id and position.position_id != signal.position_id:
-            continue
-        options_live = redis.hgetall(f"data:options_live:{position.symbol}")
-        if options_live:
-            engine.update_leg_premiums(position, options_live)
-        current_debit = engine.compute_current_debit(position)
-        engine.close_position(position, signal.reason, current_debit, now=time.time())
-        persist_closed_position(redis, position)
+    direction = getattr(signal, "direction", None)
+    with _state_lock:
+        for position in load_open_positions(redis):
+            if position.symbol != signal.symbol:
+                continue
+            if signal.position_id and position.position_id != signal.position_id:
+                continue
+            if direction and not engine.is_threatened_by_move(position, direction):
+                logger.debug(f"[{signal.reason}] {position.symbol} | SOURCE direction={direction} "
+                             f"— {position.strategy} {position.position_id} has no short leg on that side, kept")
+                continue
+            if not direction:
+                logger.debug(f"[{signal.reason}] {position.symbol} | SOURCE direction=None "
+                             f"— closing {position.strategy} {position.position_id} regardless of side")
+            _close_at_market(redis, position, signal.reason)
+
+
+def check_entry_gate(redis, symbol: str, now: "datetime | None" = None) -> str:
+    """Time/data-freshness gate for new entries. Returns '' if allowed, else reason."""
+    now = now or datetime.now()
+    if not (ENTRY_WINDOW_START <= now.time() <= ENTRY_WINDOW_END):
+        return "outside_entry_window"
+    if not is_trading_day(now.date()):
+        return "not_trading_day"
+    agg = redis.hgetall(f"data:options_agg:{symbol}")
+    if engine.is_agg_data_stale(agg, now=now.timestamp(), max_age_seconds=ENTRY_MAX_AGG_AGE_SECONDS):
+        return "stale_options_agg"
+    return ""
 
 
 def _handle_entry_signal(redis, span_calculator: SpanCalculator, signal) -> None:
+    gate_reason = check_entry_gate(redis, signal.symbol)
+    if gate_reason:
+        logger.debug("[paper-trading] Entry rejected for %s/%s: %s", signal.symbol, signal.strategy, gate_reason)
+        return
+
     account = get_account(redis)
     open_positions = load_open_positions(redis)
 
-    passed, reason = check_entry_filters(signal, redis, account, open_positions)
+    passed, reason = check_entry_filters(signal, redis, account, open_positions,
+                                         max_positions=int(_runtime_config.get("max_positions", MAX_POSITIONS)))
     if not passed:
         logger.debug("[paper-trading] Entry rejected for %s/%s: %s", signal.symbol, signal.strategy, reason)
         return
@@ -381,10 +454,17 @@ def _handle_entry_signal(redis, span_calculator: SpanCalculator, signal) -> None
     # defaults to "intraday" for CONFLUENCE signals, which can only ever
     # fire during market hours anyway (LIVE/INTRADAY layers don't exist
     # outside 09:15-15:30).
-    position = build_position(signal, redis, span_calculator, account, mode=signal.mode)
+    position = build_position(signal, redis, span_calculator, account, mode=signal.mode,
+                              risk_scale=float(_runtime_config.get("risk_scale", 1.0)))
     if position is None:
         return
-    persist_new_position(redis, position)
+    with _state_lock:
+        # Re-read: margin may have moved while SPAN was being called.
+        if portfolio_margin_exceeded(get_account(redis), new_margin=position.margin_blocked):
+            logger.debug("[paper-trading] Entry rejected for %s/%s: portfolio_margin_exceeded_with_new "
+                         "(new=₹%.0f)", signal.symbol, signal.strategy, position.margin_blocked)
+            return
+        persist_new_position(redis, position)
 
 
 def strategy_processor(redis, span_calculator: SpanCalculator):
@@ -406,38 +486,67 @@ def strategy_processor(redis, span_calculator: SpanCalculator):
             time.sleep(0.5)
 
 
+def apply_mtm_result(redis, result: PaperPosition) -> bool:
+    """Persist one MTM outcome. The write-back of a still-open position only
+    happens if it is still in paper:positions:open -- another thread (exit
+    signal / manual close) may have closed it while MTM was evaluating."""
+    with _state_lock:
+        if result.status == "CLOSED":
+            return persist_closed_position(redis, result)
+        if redis.hget(POSITIONS_OPEN_KEY, result.position_id) is None:
+            logger.debug(f"[paper-trading] {result.symbol} | SOURCE position_id={result.position_id} "
+                         f"— closed during MTM, not writing back")
+            return False
+        redis.hset(POSITIONS_OPEN_KEY, mapping={result.position_id: result.to_json()})
+        return True
+
+
+def settle_expired_positions(redis, now: datetime) -> None:
+    """Outside market hours MTM doesn't run; still settle anything past expiry."""
+    for position in load_open_positions(redis):
+        if engine.is_past_expiry(position, now):
+            result = engine.evaluate_position(position, redis, now=now)
+            if result is not None and result.status == "CLOSED":
+                apply_mtm_result(redis, result)
+
+
 def mtm_engine(redis):
+    spot_tracker = engine.SpotMoveTracker()
     while _running:
         now = datetime.now()
         if not is_market_hours(now):
+            try:
+                settle_expired_positions(redis, now)
+            except Exception as e:
+                logger.error("[paper-trading] expiry settlement error: %s", e, exc_info=True)
             time.sleep(MTM_CYCLE_SECONDS)
             continue
 
-        gamma_trap_checked: dict[str, bool] = {}
+        move_pct: dict[str, float] = {}
         total_unrealized = 0.0
 
         for position in load_open_positions(redis):
-            if position.symbol not in gamma_trap_checked:
-                spot_tick = redis.hgetall(f"data:tick:{position.symbol}")
-                gamma_trap_checked[position.symbol] = engine.check_gamma_trap_proxy(spot_tick)
+            if position.symbol not in move_pct:
+                spot = engine.read_spot(redis, position.symbol)
+                if spot is not None:
+                    spot_tracker.update(position.symbol, spot, now.timestamp())
+                move_pct[position.symbol] = spot_tracker.move_pct(position.symbol)
 
             result = engine.evaluate_position(
                 position, redis, now=now,
-                gamma_trap_triggered=gamma_trap_checked[position.symbol],
+                gamma_trap_triggered=engine.check_gamma_trap_proxy(position, move_pct[position.symbol]),
             )
             if result is None:
                 continue
-            if result.status == "CLOSED":
-                persist_closed_position(redis, result)
-            else:
-                redis.hset(POSITIONS_OPEN_KEY, mapping={result.position_id: result.to_json()})
+            if apply_mtm_result(redis, result) and result.status != "CLOSED":
                 total_unrealized += engine.compute_unrealized_pnl(
                     result, engine.compute_current_debit(result)
                 )
 
-        account = get_account(redis)
-        account.unrealized_pnl = total_unrealized
-        save_account(redis, account)
+        with _state_lock:
+            account = get_account(redis)
+            account.unrealized_pnl = total_unrealized
+            save_account(redis, account)
 
         time.sleep(MTM_CYCLE_SECONDS)
 
@@ -473,27 +582,54 @@ def command_listener(redis):
                     logger.debug("[paper-trading] xack command %s: %s", msg_id, e)
 
 
+def apply_config(overrides: dict) -> None:
+    """Apply validated config values to the running service."""
+    _runtime_config.update(overrides)
+    engine.set_exit_params(
+        stop_loss_multiple=overrides.get("stop_loss_multiple"),
+        profit_target_pct=overrides.get("profit_target_pct"),
+    )
+
+
+def load_config(redis) -> dict:
+    """Read paper:config at startup; ignore (and log) unsupported/invalid keys."""
+    valid = {}
+    for key, raw in (redis.hgetall(CONFIG_KEY) or {}).items():
+        parsed = parse_config_value(key, raw)
+        if parsed is None:
+            logger.warning("[paper-trading] Ignoring unsupported/invalid config %s=%s (supported: %s)",
+                           key, raw, ", ".join(CONFIG_SCHEMA))
+            continue
+        valid[key] = parsed
+    apply_config(valid)
+    return valid
+
+
 def _handle_command(redis, fields: dict) -> None:
     command = fields.get("command", "")
     if command == "close":
         target = fields.get("position_id") or "all"
-        for position in load_open_positions(redis):
-            if target != "all" and position.position_id != target:
-                continue
-            options_live = redis.hgetall(f"data:options_live:{position.symbol}")
-            if options_live:
-                engine.update_leg_premiums(position, options_live)
-            current_debit = engine.compute_current_debit(position)
-            engine.close_position(position, "MANUAL", current_debit, now=time.time())
-            persist_closed_position(redis, position)
+        with _state_lock:
+            for position in load_open_positions(redis):
+                if target != "all" and position.position_id != target:
+                    continue
+                _close_at_market(redis, position, "MANUAL")
     elif command == "reset":
-        for position in load_open_positions(redis):
-            redis.hdel(POSITIONS_OPEN_KEY, position.position_id)
-        save_account(redis, PaperAccount())
+        # Book open positions at market (reason RESET) so the ledger keeps a
+        # record, then restore a fresh account.
+        with _state_lock:
+            for position in load_open_positions(redis):
+                _close_at_market(redis, position, "RESET")
+            save_account(redis, PaperAccount(trading_day=date.today().isoformat()))
     elif command == "config_set":
         key, value = fields.get("key"), fields.get("value")
-        if key and value is not None:
-            redis.hset(CONFIG_KEY, mapping={key: value})
+        parsed = parse_config_value(key, value) if key else None
+        if parsed is None:
+            logger.warning("[paper-trading] Rejected config_set %s=%s (supported: %s)",
+                           key, value, ", ".join(CONFIG_SCHEMA))
+            return
+        redis.hset(CONFIG_KEY, mapping={key: value})
+        apply_config({key: parsed})
 
 
 def update_heartbeat(redis) -> None:
@@ -511,7 +647,6 @@ def update_heartbeat(redis) -> None:
 
 def main():
     global _running
-    import threading
 
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
@@ -535,7 +670,12 @@ def main():
     TELEGRAM_NOTIFICATIONS.is_intraday = True
 
     instruments = wait_for_instruments(redis)
-    span_calculator = SpanCalculator(instruments)
+    span_calculator = SpanCalculator(
+        instruments,
+        refresher=lambda: try_load_instruments(redis),
+        loaded_at=load_instruments_fetched_at(redis),
+    )
+    load_config(redis)
 
     if not redis.hgetall(ACCOUNT_KEY):
         save_account(redis, PaperAccount())

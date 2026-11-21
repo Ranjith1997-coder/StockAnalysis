@@ -12,7 +12,7 @@ import json
 import time
 import uuid
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, time as dtime
 from typing import Optional
 
 from lib.logging_util import get_logger
@@ -20,21 +20,18 @@ logger = get_logger("paper-trading")
 from services.paper_trading.models import (
     DEFAULT_BROKERAGE_PER_ORDER,
     DEFAULT_EXCHANGE_CHARGES_PCT,
-    DEFAULT_SLIPPAGE_BPS,
     DEFAULT_STAMP_DUTY_PCT,
     DEFAULT_STT_PCT,
     OptionLeg,
     PaperAccount,
     PaperPosition,
     apply_slippage,
-    compute_brokerage,
-    compute_exchange_charges,
-    compute_stamp_duty,
-    compute_stt,
     compute_strike_gap,
+    compute_transaction_costs,
+    exchange_charges_pct_for,
     select_expiry,
 )
-from services.paper_trading.signal_router import EntrySignal
+from services.paper_trading.signal_router import MAX_PORTFOLIO_MARGIN_PCT, EntrySignal
 from services.paper_trading.span_calculator import SpanCalculator, SpanLegRequest
 
 # Risk percentages by strategy — verified against real Zerodha SPAN margin
@@ -50,8 +47,14 @@ RISK_PCT = {
     "NAKED_PE": 0.16,
 }
 
-# "2 strikes OTM instead of 1" threshold for CONFLUENCE-sourced naked entries
+# HIGH-level CONFLUENCE credit spreads: short leg 2 strikes OTM (3 above this
+# score), protective wing HIGH_CONFLUENCE_WING_STRIKES further out.  These
+# replaced the old naked 1-strike-from-ATM NAKED_CE/NAKED_PE entries.
 HIGH_SCORE_OTM_THRESHOLD = 15
+HIGH_CONFLUENCE_WING_STRIKES = 2
+
+# No new entries on the position's own expiry day after this time.
+EXPIRY_DAY_ENTRY_CUTOFF = dtime(14, 0)
 
 
 @dataclass
@@ -115,28 +118,28 @@ def select_strikes(signal: EntrySignal, strike_gap: float,
         # sr_level for this strategy) -- inferred rule, built the same way as
         # the naked-directional case below but with one protective long leg,
         # since a MODERATE confluence is meant to be defined-risk, not naked.
-        if atm_strike is None:
+        # HIGH confluence: further OTM short + wider wing (defined risk).
+        if atm_strike is None or signal.direction not in ("BULLISH", "BEARISH"):
             return []
+        if signal.level == "HIGH":
+            otm = 3 if (signal.score or 0) > HIGH_SCORE_OTM_THRESHOLD else 2
+            wing = HIGH_CONFLUENCE_WING_STRIKES
+        else:
+            otm, wing = 1, 1
         if signal.direction == "BEARISH":
-            short_strike = atm_strike + strike_gap
+            short_strike = atm_strike + otm * strike_gap
             return [
                 PlannedLeg(short_strike, "CE", "SELL"),
-                PlannedLeg(short_strike + strike_gap, "CE", "BUY"),
+                PlannedLeg(short_strike + wing * strike_gap, "CE", "BUY"),
             ]
-        short_strike = atm_strike - strike_gap
+        short_strike = atm_strike - otm * strike_gap
         return [
             PlannedLeg(short_strike, "PE", "SELL"),
-            PlannedLeg(short_strike - strike_gap, "PE", "BUY"),
+            PlannedLeg(short_strike - wing * strike_gap, "PE", "BUY"),
         ]
 
-    if strategy in ("NAKED_CE", "NAKED_PE"):
-        if atm_strike is None:
-            return []
-        otm_multiplier = 2 if (signal.score or 0) > HIGH_SCORE_OTM_THRESHOLD else 1
-        if strategy == "NAKED_CE":
-            return [PlannedLeg(atm_strike + otm_multiplier * strike_gap, "CE", "SELL")]
-        return [PlannedLeg(atm_strike - otm_multiplier * strike_gap, "PE", "SELL")]
-
+    # NAKED_CE / NAKED_PE are no longer opened (unbounded risk 1 strike from
+    # ATM); CONFLUENCE now routes to defined-risk CREDIT_SPREAD instead.
     return []
 
 
@@ -159,13 +162,13 @@ def compute_entry_costs(legs: list[FilledLeg], qty: int,
                          stt_pct: float = DEFAULT_STT_PCT,
                          exchange_charges_pct: float = DEFAULT_EXCHANGE_CHARGES_PCT,
                          stamp_duty_pct: float = DEFAULT_STAMP_DUTY_PCT) -> float:
-    total = compute_brokerage(len(legs), brokerage_per_order)
-    for leg in legs:
-        total += compute_exchange_charges(leg.fill_price, qty, exchange_charges_pct)
-        if leg.side == "SELL":
-            total += compute_stt(leg.fill_price, qty, stt_pct)
-            total += compute_stamp_duty(leg.fill_price, qty, stamp_duty_pct)
-    return total
+    """Entry orders: STT on legs sold, stamp duty on legs bought, plus
+    exchange/SEBI/GST on all (models.compute_transaction_costs)."""
+    return compute_transaction_costs(
+        [(leg.fill_price, leg.side) for leg in legs], qty,
+        brokerage_per_order=brokerage_per_order, stt_pct=stt_pct,
+        exchange_charges_pct=exchange_charges_pct, stamp_duty_pct=stamp_duty_pct,
+    )
 
 
 def compute_entry_credit(legs: list[FilledLeg], qty: int, entry_costs: float) -> float:
@@ -189,6 +192,20 @@ def fetch_expiry(symbol: str, mode: str, redis, today: Optional[date] = None) ->
     except (json.JSONDecodeError, TypeError):
         return ""
     return select_expiry(keys, mode, today or date.today())
+
+
+def resolve_expiry(signal: EntrySignal, mode: str, redis, today: date) -> str:
+    """Use the signal's own expiry (PINN signals carry one) when it is a valid
+    ISO date not in the past; otherwise select from the sensibull chain."""
+    if signal.expiry:
+        try:
+            if date.fromisoformat(signal.expiry) >= today:
+                return signal.expiry
+        except ValueError:
+            pass
+        logger.debug(f"[strategy_builder] {signal.symbol} | SOURCE expiry={signal.expiry} invalid/past — "
+                     f"falling back to chain selection")
+    return fetch_expiry(signal.symbol, mode, redis, today=today)
 
 
 def fetch_strike_gap(symbol: str, redis) -> float:
@@ -219,7 +236,8 @@ def fetch_tick(symbol: str, strike: float, option_type: str, redis) -> Optional[
 # ── Full entry flow (docs/PAPER_TRADING_DESIGN.md section 7.6) ─────────────
 
 def build_position(signal: EntrySignal, redis, span_calculator: SpanCalculator,
-                    account: PaperAccount, mode: str = "intraday") -> Optional[PaperPosition]:
+                    account: PaperAccount, mode: str = "intraday",
+                    risk_scale: float = 1.0, now: Optional[datetime] = None) -> Optional[PaperPosition]:
     """Run the full strike-selection -> SPAN -> sizing pipeline for one signal.
 
     Returns None (with a logged reason) if the signal can't produce a valid,
@@ -227,10 +245,15 @@ def build_position(signal: EntrySignal, redis, span_calculator: SpanCalculator,
     filters already passed.
     """
     symbol = signal.symbol
+    now = now or datetime.now()
 
-    expiry = fetch_expiry(symbol, mode, redis)
+    expiry = resolve_expiry(signal, mode, redis, now.date())
     if not expiry:
         logger.warning(f"[strategy_builder] No expiry available for {symbol}")
+        return None
+    if expiry == now.date().isoformat() and now.time() >= EXPIRY_DAY_ENTRY_CUTOFF:
+        logger.debug(f"[strategy_builder] {symbol} | SOURCE expiry={expiry} — expiry day after "
+                     f"{EXPIRY_DAY_ENTRY_CUTOFF:%H:%M}, no new entries")
         return None
 
     strike_gap = fetch_strike_gap(symbol, redis)
@@ -277,15 +300,20 @@ def build_position(signal: EntrySignal, redis, span_calculator: SpanCalculator,
         logger.warning(f"[strategy_builder] SPAN margin unavailable for {symbol}/{signal.strategy} — skipping")
         return None
 
-    risk_pct = RISK_PCT.get(signal.strategy, 0.05)
+    risk_pct = RISK_PCT.get(signal.strategy, 0.05) * risk_scale
     lots = compute_lots(account.capital, margin_per_lot, risk_pct)
+    # Never size past the portfolio margin cap (signal_router filter only
+    # checks margin already used, not this trade's).
+    headroom = MAX_PORTFOLIO_MARGIN_PCT * account.capital - account.margin_used
+    lots = min(lots, max(int(headroom / margin_per_lot), 0))
     if lots == 0:
         logger.info(f"[strategy_builder] Skipping {symbol} {signal.strategy} — "
-                    f"insufficient capital for margin (₹{margin_per_lot:.0f}/lot)")
+                    f"insufficient capital/margin headroom (₹{margin_per_lot:.0f}/lot)")
         return None
 
     qty = lot_size * lots
-    entry_costs = compute_entry_costs(filled_legs, qty)
+    exchange_pct = exchange_charges_pct_for(symbol)
+    entry_costs = compute_entry_costs(filled_legs, qty, exchange_charges_pct=exchange_pct)
     entry_credit = compute_entry_credit(filled_legs, qty, entry_costs)
 
     legs = [
@@ -311,4 +339,5 @@ def build_position(signal: EntrySignal, redis, span_calculator: SpanCalculator,
         signal_source=signal.signal_source,
         signal_score=signal.score,
         signal_context=signal.signal_context,
+        exchange_charges_pct=exchange_pct,
     )

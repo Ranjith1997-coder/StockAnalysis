@@ -11,33 +11,47 @@ from __future__ import annotations
 
 import json
 import time
+from collections import deque
 from datetime import date, datetime, time as dtime
 from typing import Optional
 
 from lib.logging_util import get_logger
 logger = get_logger("paper-trading")
 from services.paper_trading.models import (
-    DEFAULT_EXCHANGE_CHARGES_PCT,
     DEFAULT_STAMP_DUTY_PCT,
-    DEFAULT_STT_PCT,
     PaperPosition,
-    compute_brokerage,
-    compute_exchange_charges,
-    compute_stamp_duty,
-    compute_stt,
+    apply_slippage,
+    compute_transaction_costs,
 )
 
 STALE_AGG_DATA_MAX_AGE_SECONDS = 10.0
-GAMMA_TRAP_PROXY_MOVE_PCT = 2.0
+# Fast-move gamma proxy: spot must move >= this % within the rolling window.
+GAMMA_TRAP_PROXY_MOVE_PCT = 1.0
+GAMMA_TRAP_PROXY_WINDOW_SECONDS = 300
 
-STOP_LOSS_MULTIPLE = 2.0        # 200% of entry credit
+STOP_LOSS_MULTIPLE = 2.0        # 200% of entry credit (naked / strangle)
+DEFINED_RISK_SL_MAX_LOSS_PCT = 0.6  # defined-risk SL: 60% of max loss, if tighter than 2x credit
 PROFIT_TARGET_PCT = 0.5         # 50% of entry credit
-THETA_DECAY_PCT = 0.25          # exit once only 25% of entry credit remains (75% decayed)
+# Theta-decay exit: near expiry, once at least this fraction of the entry
+# credit is banked (but the 50% TARGET hasn't hit), close rather than carry
+# rising gamma risk into the final sessions.
+THETA_DECAY_MIN_PROFIT_PCT = 0.25
 THETA_DECAY_INTRADAY_TIME = dtime(14, 0)
 INTRADAY_SQUAREOFF_TIME = dtime(15, 15)
 POSITIONAL_SQUAREOFF_TIME = dtime(15, 0)
 POSITIONAL_SQUAREOFF_DTE = 1
 POSITIONAL_THETA_DECAY_DTE = 3
+EXPIRY_SETTLEMENT_TIME = dtime(15, 30)
+
+
+def set_exit_params(stop_loss_multiple: Optional[float] = None,
+                    profit_target_pct: Optional[float] = None) -> None:
+    """Apply /paper_config overrides to the exit rules (main.py)."""
+    global STOP_LOSS_MULTIPLE, PROFIT_TARGET_PCT
+    if stop_loss_multiple is not None:
+        STOP_LOSS_MULTIPLE = float(stop_loss_multiple)
+    if profit_target_pct is not None:
+        PROFIT_TARGET_PCT = float(profit_target_pct)
 
 
 # ── Stale-data guards (docs/PAPER_TRADING_DESIGN.md section 8.1 steps 1-2) ──
@@ -102,18 +116,63 @@ def compute_unrealized_pnl(position: PaperPosition, current_debit: float) -> flo
 
 
 # ── GAMMA_TRAP proxy (docs/PAPER_TRADING_DESIGN.md section 8.3) ────────────
+#
+# The old proxy compared spot to the previous daily close (>=2%), which on a
+# trend day fired every MTM cycle and churned every new entry.  The proxy is
+# now a FAST-move detector (>=1% within 5 minutes, tracked in memory) and it
+# only closes positions whose short legs sit on the side of the move (short
+# CEs on a rally, short PEs on a sell-off) -- the side that is actually
+# exposed to the gamma blow-up.
 
-def check_gamma_trap_proxy(tick: dict, threshold_pct: float = GAMMA_TRAP_PROXY_MOVE_PCT) -> bool:
-    """Proxy for the 5-min-lagged real GAMMA_TRAP signal: force-close if spot
-    has moved more than threshold_pct since the last daily close."""
-    if not tick:
-        return False
-    last_price = float(tick.get("last_price", 0) or 0)
-    close = float(tick.get("close", 0) or 0)
-    if close <= 0:
-        return False
-    change_pct = abs((last_price - close) / close * 100)
-    return change_pct >= threshold_pct
+class SpotMoveTracker:
+    """Rolling in-memory spot history per symbol (MTM thread only)."""
+
+    def __init__(self, window_seconds: float = GAMMA_TRAP_PROXY_WINDOW_SECONDS):
+        self.window_seconds = window_seconds
+        self._history: dict[str, deque] = {}
+
+    def update(self, symbol: str, price: float, ts: float) -> None:
+        if price <= 0:
+            return
+        hist = self._history.setdefault(symbol, deque())
+        hist.append((ts, price))
+        while hist and ts - hist[0][0] > self.window_seconds:
+            hist.popleft()
+
+    def move_pct(self, symbol: str) -> float:
+        """Signed % move from the oldest price in the window to the latest."""
+        hist = self._history.get(symbol)
+        if not hist or len(hist) < 2:
+            return 0.0
+        first = hist[0][1]
+        return (hist[-1][1] - first) / first * 100
+
+
+def move_direction(move_pct: float, threshold_pct: float = GAMMA_TRAP_PROXY_MOVE_PCT) -> Optional[str]:
+    if move_pct >= threshold_pct:
+        return "BULLISH"
+    if move_pct <= -threshold_pct:
+        return "BEARISH"
+    return None
+
+
+def is_threatened_by_move(position: PaperPosition, direction: Optional[str]) -> bool:
+    """True if the position has a short leg on the side of a directional move."""
+    if direction == "BULLISH":
+        return any(leg.side == "SELL" and leg.option_type == "CE" for leg in position.legs)
+    if direction == "BEARISH":
+        return any(leg.side == "SELL" and leg.option_type == "PE" for leg in position.legs)
+    return False
+
+
+def check_gamma_trap_proxy(position: PaperPosition, move_pct: float,
+                            threshold_pct: float = GAMMA_TRAP_PROXY_MOVE_PCT) -> bool:
+    direction = move_direction(move_pct, threshold_pct)
+    triggered = is_threatened_by_move(position, direction)
+    if direction and not triggered:
+        logger.debug(f"[engine] {position.symbol} {position.position_id}: fast {direction} move "
+                     f"{move_pct:+.2f}% but no short leg on that side — gamma proxy not applied")
+    return triggered
 
 
 # ── Exit rules, priority order (docs/PAPER_TRADING_DESIGN.md section 8.2) ──
@@ -132,21 +191,59 @@ def check_gamma_trap_proxy(tick: dict, threshold_pct: float = GAMMA_TRAP_PROXY_M
 # life as a same-day trade or a multi-day hold, which is the behavior that
 # actually matters.
 
-def check_stop_loss(unrealized_pnl: float, entry_credit: float) -> bool:
-    return unrealized_pnl <= -STOP_LOSS_MULTIPLE * entry_credit
+def compute_max_loss(position: PaperPosition) -> Optional[float]:
+    """Max loss (rupees) of a defined-risk structure, or None if any short leg
+    is unhedged (naked / strangle).  For an iron condor only one side can
+    finish ITM, so max loss = widest wing * qty - credit."""
+    widths = []
+    for option_type in ("CE", "PE"):
+        shorts = [leg.strike for leg in position.legs if leg.side == "SELL" and leg.option_type == option_type]
+        longs = [leg.strike for leg in position.legs if leg.side == "BUY" and leg.option_type == option_type]
+        if not shorts:
+            continue
+        if len(longs) < len(shorts):
+            return None
+        width = (max(longs) - min(shorts)) if option_type == "CE" else (max(shorts) - min(longs))
+        if width <= 0:
+            return None
+        widths.append(width)
+    if not widths:
+        return None
+    return max(widths) * compute_qty(position) - position.entry_credit
+
+
+def stop_loss_amount(entry_credit: float, max_loss: Optional[float] = None) -> float:
+    """Loss (positive rupees) at which STOP_LOSS fires.
+
+    Naked/strangle: STOP_LOSS_MULTIPLE x credit.  Defined-risk: the tighter
+    of that and DEFINED_RISK_SL_MAX_LOSS_PCT x max loss -- on a narrow spread
+    2x credit can exceed the structure's max loss, making the SL unreachable.
+    """
+    sl = STOP_LOSS_MULTIPLE * entry_credit
+    if max_loss is not None and max_loss > 0:
+        sl = min(sl, DEFINED_RISK_SL_MAX_LOSS_PCT * max_loss)
+    return sl
+
+
+def check_stop_loss(unrealized_pnl: float, entry_credit: float,
+                     max_loss: Optional[float] = None) -> bool:
+    return unrealized_pnl <= -stop_loss_amount(entry_credit, max_loss)
 
 
 def check_profit_target(unrealized_pnl: float, entry_credit: float) -> bool:
     return unrealized_pnl >= PROFIT_TARGET_PCT * entry_credit
 
 
-def check_theta_decay(current_debit: float, entry_credit: float, dte: int, now: datetime) -> bool:
-    decayed_enough = current_debit <= THETA_DECAY_PCT * entry_credit
-    if not decayed_enough:
+def check_theta_decay(unrealized_pnl: float, entry_credit: float, dte: int, now: datetime) -> bool:
+    """Near-expiry time exit: profit banked >= THETA_DECAY_MIN_PROFIT_PCT of
+    credit (but below TARGET, which is checked first) and either dte in
+    1..POSITIONAL_THETA_DECAY_DTE, or expiry day after 14:00.  Stops a
+    mostly-decayed position from riding expiry gamma for the last few rupees."""
+    if entry_credit <= 0 or unrealized_pnl < THETA_DECAY_MIN_PROFIT_PCT * entry_credit:
         return False
     if dte == 0:
         return now.time() >= THETA_DECAY_INTRADAY_TIME
-    return dte <= POSITIONAL_THETA_DECAY_DTE
+    return 0 < dte <= POSITIONAL_THETA_DECAY_DTE
 
 
 def check_time_squareoff(dte: int, now: datetime) -> bool:
@@ -164,12 +261,12 @@ def determine_exit_reason(position: PaperPosition, unrealized_pnl: float, curren
     """Priority order: GAMMA_TRAP > stop loss > target > theta decay > square-off/expiry."""
     if gamma_trap_triggered:
         return "GAMMA_TRAP"
-    if check_stop_loss(unrealized_pnl, position.entry_credit):
+    if check_stop_loss(unrealized_pnl, position.entry_credit, compute_max_loss(position)):
         return "STOP_LOSS"
     if check_profit_target(unrealized_pnl, position.entry_credit):
         return "TARGET"
     dte = compute_dte(position.expiry, now.date())
-    if check_theta_decay(current_debit, position.entry_credit, dte, now):
+    if check_theta_decay(unrealized_pnl, position.entry_credit, dte, now):
         return "THETA_DECAY"
     if check_time_squareoff(dte, now):
         # Same 15:15 same-day gate either way; tag distinctly for the trade
@@ -178,19 +275,98 @@ def determine_exit_reason(position: PaperPosition, unrealized_pnl: float, curren
     return None
 
 
-# ── Exit costs / net P&L (docs/PAPER_TRADING_DESIGN.md sections 5.3, 8.1 step 6) ──
+# ── Expiry settlement (positions still open past expiry) ────────────────────
 
-def compute_exit_costs(position: PaperPosition, qty: int) -> float:
-    """Brokerage per leg + exchange charges on all legs + STT/stamp duty on
-    buy-back legs (legs that were originally SELL, now being bought to close)."""
-    total = compute_brokerage(len(position.legs), position.brokerage_per_order)
+def is_past_expiry(position: PaperPosition, now: datetime) -> bool:
+    dte = compute_dte(position.expiry, now.date())
+    return dte < 0 or (dte == 0 and now.time() >= EXPIRY_SETTLEMENT_TIME)
+
+
+def intrinsic_value(strike: float, option_type: str, spot: float) -> float:
+    if option_type == "CE":
+        return max(0.0, spot - strike)
+    return max(0.0, strike - spot)
+
+
+def read_spot(redis, symbol: str) -> Optional[float]:
+    tick = redis.hgetall(f"data:tick:{symbol}") or {}
+    try:
+        spot = float(tick.get("last_price", 0) or 0)
+    except (TypeError, ValueError):
+        return None
+    return spot if spot > 0 else None
+
+
+def settle_at_expiry(position: PaperPosition, spot: float, now: Optional[float] = None) -> PaperPosition:
+    """Cash-settle every leg at intrinsic value from spot.  No brokerage /
+    slippage on cash settlement.  NOTE: when settled a day or more after
+    expiry (service was down), the latest spot is used as the proxy for the
+    expiry-day closing spot."""
     for leg in position.legs:
-        exit_price = leg.current_premium
-        total += compute_exchange_charges(exit_price, qty, position.exchange_charges_pct)
-        if leg.side == "SELL":   # buy-back leg
-            total += compute_stt(exit_price, qty, position.stt_pct)
-            total += compute_stamp_duty(exit_price, qty, DEFAULT_STAMP_DUTY_PCT)
-    return total
+        leg.current_premium = intrinsic_value(leg.strike, leg.option_type, spot)
+    return close_position(position, "EXPIRY_SETTLEMENT", now=now, settlement=True)
+
+
+# ── Exit fills / costs / net P&L (design doc sections 5.3, 8.1 step 6) ──────
+
+def _exit_action(leg) -> str:
+    """Closing order: shorts are bought back, longs are sold."""
+    return "BUY" if leg.side == "SELL" else "SELL"
+
+
+def _touch_price(tick: Optional[dict], action: str) -> Optional[float]:
+    """Best ask for a BUY, best bid for a SELL: top-level bid/ask published by
+    market-data when present, else Zerodha market depth level 0."""
+    if not isinstance(tick, dict):
+        return None
+    try:
+        price = float(tick.get("ask" if action == "BUY" else "bid", 0) or 0)
+    except (TypeError, ValueError):
+        price = 0.0
+    if price > 0:
+        return price
+    depth = tick.get("depth")
+    if not isinstance(depth, dict):
+        return None
+    book = depth.get("sell" if action == "BUY" else "buy") or []
+    try:
+        price = float(book[0].get("price", 0) or 0)
+    except (IndexError, AttributeError, TypeError, ValueError):
+        return None
+    return price if price > 0 else None
+
+
+def compute_exit_fills(position: PaperPosition, options_live: Optional[dict] = None) -> list[float]:
+    """Per-leg exit fill: touch price from depth when available, else LTP
+    with the same flat slippage model used at entry."""
+    fills = []
+    for leg in position.legs:
+        action = _exit_action(leg)
+        tick = None
+        raw = (options_live or {}).get(f"{leg.strike}_{leg.option_type}")
+        if raw:
+            try:
+                tick = json.loads(raw) if isinstance(raw, (str, bytes)) else raw
+            except (json.JSONDecodeError, TypeError):
+                tick = None
+        touch = _touch_price(tick, action)
+        fills.append(touch if touch is not None
+                     else apply_slippage(leg.current_premium, action, position.slippage_bps))
+    return fills
+
+
+def compute_exit_costs(position: PaperPosition, qty: int, fills: Optional[list[float]] = None) -> float:
+    """Charges on the closing orders: STT on longs being sold, stamp duty on
+    shorts being bought back, exchange + SEBI + GST on all (models.py)."""
+    fills = fills if fills is not None else [leg.current_premium for leg in position.legs]
+    trades = [(fill, _exit_action(leg)) for leg, fill in zip(position.legs, fills)]
+    return compute_transaction_costs(
+        trades, qty,
+        brokerage_per_order=position.brokerage_per_order,
+        stt_pct=position.stt_pct,
+        exchange_charges_pct=position.exchange_charges_pct,
+        stamp_duty_pct=DEFAULT_STAMP_DUTY_PCT,
+    )
 
 
 def compute_exit_pnl(position: PaperPosition, current_debit: float, exit_costs: float) -> float:
@@ -206,14 +382,24 @@ def compute_exit_pnl(position: PaperPosition, current_debit: float, exit_costs: 
     return (position.entry_credit - current_debit) - exit_costs
 
 
-def close_position(position: PaperPosition, exit_reason: str, current_debit: float,
-                    now: Optional[float] = None) -> PaperPosition:
+def close_position(position: PaperPosition, exit_reason: str, now: Optional[float] = None,
+                    options_live: Optional[dict] = None, settlement: bool = False) -> PaperPosition:
+    """Close at realistic exit fills (slippage / touch price) or, for
+    settlement, at the legs' current (intrinsic) premiums with no costs."""
     qty = compute_qty(position)
-    exit_costs = compute_exit_costs(position, qty)
+    if settlement:
+        fills = [leg.current_premium for leg in position.legs]
+        exit_costs = 0.0
+    else:
+        fills = compute_exit_fills(position, options_live)
+        exit_costs = compute_exit_costs(position, qty, fills)
+    exit_debit = sum(
+        fill if leg.side == "SELL" else -fill for leg, fill in zip(position.legs, fills)
+    ) * qty
     position.status = "CLOSED"
     position.exit_timestamp = now if now is not None else time.time()
-    position.exit_premium = current_debit
-    position.pnl = compute_exit_pnl(position, current_debit, exit_costs)
+    position.exit_premium = exit_debit
+    position.pnl = compute_exit_pnl(position, exit_debit, exit_costs)
     position.exit_reason = exit_reason
     return position
 
@@ -230,6 +416,16 @@ def evaluate_position(position: PaperPosition, redis, now: Optional[datetime] = 
     tracked by the caller) if still open.
     """
     now = now or datetime.now()
+
+    # Past expiry: option data is gone/stale by definition, so settle at
+    # intrinsic from spot instead of waiting on fresh option ticks forever.
+    if is_past_expiry(position, now):
+        spot = read_spot(redis, position.symbol)
+        if spot is None:
+            logger.debug(f"[engine] {position.symbol} {position.position_id}: past expiry "
+                           f"{position.expiry} but no spot in data:tick — cannot settle yet")
+            return None
+        return settle_at_expiry(position, spot, now=now.timestamp())
 
     options_agg = redis.hgetall(f"data:options_agg:{position.symbol}")
     if is_agg_data_stale(options_agg, now=now.timestamp()):
@@ -248,6 +444,6 @@ def evaluate_position(position: PaperPosition, redis, now: Optional[datetime] = 
     exit_reason = determine_exit_reason(position, unrealized_pnl, current_debit, now,
                                          gamma_trap_triggered=gamma_trap_triggered)
     if exit_reason:
-        return close_position(position, exit_reason, current_debit, now=now.timestamp())
+        return close_position(position, exit_reason, now=now.timestamp(), options_live=options_live)
 
     return position

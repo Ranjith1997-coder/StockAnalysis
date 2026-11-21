@@ -280,7 +280,7 @@ async def cmd_paper_close(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
 
     if target == "all":
-        await _send_paper_command(rc, {"command": "close", "position_id": "all"})
+        _send_paper_command(rc, {"command": "close", "position_id": "all"})
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=f"📤 Closing <b>all {len(open_pos)}</b> positions — check /paper_pnl for results.",
@@ -298,7 +298,7 @@ async def cmd_paper_close(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
 
     pid = list(matched.keys())[0]
-    await _send_paper_command(rc, {"command": "close", "position_id": pid})
+    _send_paper_command(rc, {"command": "close", "position_id": pid})
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
         text=f"📤 Closing position <code>{pid[:16]}</code>...",
@@ -359,10 +359,26 @@ async def cmd_paper_config(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return
 
     key, value = args[0], args[1]
-    await _send_paper_command(rc, {"command": "config_set", "key": key, "value": value})
+    try:
+        from services.paper_trading.models import CONFIG_SCHEMA, parse_config_value
+    except Exception as e:
+        logger.debug("[paper_cmds] models import failed: %s", e)
+        CONFIG_SCHEMA, parse_config_value = {}, (lambda k, v: None)
+    if parse_config_value(key, value) is None:
+        supported = ", ".join(
+            f"{k} ({lo:g}-{hi:g})" for k, (_, lo, hi) in CONFIG_SCHEMA.items()
+        ) or "none"
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=(f"⚠️ Unsupported key or invalid value: <code>{key}</code> = <code>{value}</code>\n"
+                  f"Supported: {supported}"),
+            parse_mode="HTML",
+        )
+        return
+    _send_paper_command(rc, {"command": "config_set", "key": key, "value": value})
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
-        text=f"⚙ Set <code>{key}</code> = <code>{value}</code>",
+        text=f"⚙ Set <code>{key}</code> = <code>{value}</code> (applied live by paper-trading)",
         parse_mode="HTML",
     )
 
@@ -383,7 +399,7 @@ async def cmd_paper_reset(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     args = context.args or []
     if not args or args[0].lower() != "confirm":
         acct = rc.hgetall(ACCOUNT_KEY) or {}
-        capital = float(acct.get("capital", "1,000,000"))
+        capital = float(acct.get("capital", 1_000_000))
         total_pnl = float(acct.get("realized_pnl", 0)) + float(acct.get("unrealized_pnl", 0))
         open_n = len(rc.hgetall(POSITIONS_OPEN_KEY) or {})
         await context.bot.send_message(
@@ -399,10 +415,11 @@ async def cmd_paper_reset(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
         return
 
-    await _send_paper_command(rc, {"command": "reset"})
+    _send_paper_command(rc, {"command": "reset"})
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
-        text="🔄 Paper account reset — all positions closed, P&L zeroed, capital restored to ₹10,00,000.",
+        text=("🔄 Reset requested — open positions will be closed at market (exit reason RESET, "
+              "booked to the trade ledger), then P&L is zeroed and capital restored to ₹10,00,000."),
     )
 
 

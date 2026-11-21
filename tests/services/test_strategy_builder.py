@@ -110,20 +110,34 @@ class TestSelectStrikesCreditSpread:
         assert select_strikes(signal, strike_gap=50.0, atm_strike=None) == []
 
 
-class TestSelectStrikesNakedDirectional:
-    def test_naked_pe_one_strike_otm_for_moderate_score(self):
-        signal = EntrySignal(strategy="NAKED_PE", symbol="NIFTY", direction="BULLISH", score=8.0)
+class TestSelectStrikesHighConfluence:
+    def test_high_bullish_sells_put_spread_two_strikes_otm_with_wing(self):
+        signal = EntrySignal(strategy="CREDIT_SPREAD", symbol="NIFTY", direction="BULLISH",
+                              signal_source="CONFLUENCE", level="HIGH", score=12.0)
         legs = select_strikes(signal, strike_gap=50.0, atm_strike=24500.0)
-        assert legs == [PlannedLeg(24450.0, "PE", "SELL")]
+        assert legs == [
+            PlannedLeg(24400.0, "PE", "SELL"),
+            PlannedLeg(24300.0, "PE", "BUY"),
+        ]
 
-    def test_naked_ce_two_strikes_otm_for_high_score(self):
-        signal = EntrySignal(strategy="NAKED_CE", symbol="NIFTY", direction="BEARISH", score=21.0)
+    def test_high_bearish_very_high_score_goes_three_strikes_otm(self):
+        signal = EntrySignal(strategy="CREDIT_SPREAD", symbol="NIFTY", direction="BEARISH",
+                              signal_source="CONFLUENCE", level="HIGH", score=21.0)
         legs = select_strikes(signal, strike_gap=50.0, atm_strike=24500.0)
-        assert legs == [PlannedLeg(24600.0, "CE", "SELL")]
+        assert legs == [
+            PlannedLeg(24650.0, "CE", "SELL"),
+            PlannedLeg(24750.0, "CE", "BUY"),
+        ]
 
-    def test_missing_atm_returns_empty(self):
-        signal = EntrySignal(strategy="NAKED_PE", symbol="NIFTY")
-        assert select_strikes(signal, strike_gap=50.0, atm_strike=None) == []
+    def test_naked_strategies_no_longer_opened(self):
+        for strat in ("NAKED_PE", "NAKED_CE"):
+            signal = EntrySignal(strategy=strat, symbol="NIFTY", direction="BULLISH", score=8.0)
+            assert select_strikes(signal, strike_gap=50.0, atm_strike=24500.0) == []
+
+    def test_neutral_direction_confluence_returns_empty(self):
+        signal = EntrySignal(strategy="CREDIT_SPREAD", symbol="NIFTY", direction="NEUTRAL",
+                              signal_source="CONFLUENCE", level="HIGH")
+        assert select_strikes(signal, strike_gap=50.0, atm_strike=24500.0) == []
 
 
 class TestGetLtpAndGreeks:
@@ -145,6 +159,17 @@ class TestGetLtpAndGreeks:
 
 
 class TestCostAndCreditAccounting:
+    def test_entry_stt_on_sold_leg_stamp_on_bought_leg(self):
+        from services.paper_trading.models import DEFAULT_STAMP_DUTY_PCT, DEFAULT_STT_PCT
+        legs = [
+            FilledLeg(24000.0, "PE", "SELL", 84.18),
+            FilledLeg(23900.0, "PE", "BUY", 62.41),
+        ]
+        with_statutory = compute_entry_costs(legs, qty=65)
+        without = compute_entry_costs(legs, qty=65, stt_pct=0.0, stamp_duty_pct=0.0)
+        expected = DEFAULT_STT_PCT * 84.18 * 65 + DEFAULT_STAMP_DUTY_PCT * 62.41 * 65
+        assert abs((with_statutory - without) - expected) < 1e-6
+
     def test_entry_costs_include_brokerage_and_sell_side_charges(self):
         legs = [
             FilledLeg(24000.0, "PE", "SELL", 84.18),
@@ -322,6 +347,51 @@ class TestBuildPositionEndToEnd:
         with patch.object(span, "calculate_margin", return_value=68578.86):
             account = PaperAccount(capital=1000.0)  # tiny capital -> 0 lots
             assert build_position(self._signal(), redis, span, account) is None
+
+    @patch("services.paper_trading.strategy_builder.time.time", return_value=1000.0)
+    def test_lots_capped_by_portfolio_margin_headroom(self, _mock_time):
+        ticks = {
+            "24000.0_PE": {"ltp": 84.6, "iv": 18.4},
+            "23900.0_PE": {"ltp": 62.1, "iv": 18.0},
+            "25000.0_CE": {"ltp": 77.4, "iv": 17.5},
+            "25100.0_CE": {"ltp": 55.3, "iv": 17.0},
+        }
+        full_chain_keys = [f"{s}.0_CE" for s in range(23800, 25300, 50)]
+        redis = self._redis(ticks, strike_gap_keys=full_chain_keys)
+        span = SpanCalculator(_nifty_instruments())
+        with patch.object(span, "calculate_margin", return_value=60_000.0):
+            # risk sizing alone -> 1.33 -> 1 lot; but only 50k headroom under 40% cap
+            account = PaperAccount(capital=1_000_000.0, margin_used=350_000.0)
+            assert build_position(self._signal(), redis, span, account) is None
+
+    def test_expiry_day_after_cutoff_blocks_entry(self):
+        from datetime import datetime
+        redis = self._redis({}, expiry="2026-07-21")
+        span = SpanCalculator(_nifty_instruments())
+        account = PaperAccount(capital=1_000_000.0)
+        assert build_position(self._signal(), redis, span, account,
+                              now=datetime(2026, 7, 21, 14, 5)) is None
+
+    @patch("services.paper_trading.strategy_builder.time.time", return_value=1000.0)
+    def test_signal_expiry_used_when_present(self, _mock_time):
+        from datetime import datetime
+        ticks = {
+            "24000.0_PE": {"ltp": 84.6, "iv": 18.4},
+            "23900.0_PE": {"ltp": 62.1, "iv": 18.0},
+            "25000.0_CE": {"ltp": 77.4, "iv": 17.5},
+            "25100.0_CE": {"ltp": 55.3, "iv": 17.0},
+        }
+        full_chain_keys = [f"{s}.0_CE" for s in range(23800, 25300, 50)]
+        # chain would pick 2026-07-28; PINN signal says 2026-07-21
+        redis = self._redis(ticks, expiry="2026-07-28", strike_gap_keys=full_chain_keys)
+        span = SpanCalculator(_nifty_instruments())
+        signal = self._signal()
+        signal.expiry = "2026-07-21"
+        with patch.object(span, "calculate_margin", return_value=68578.86):
+            position = build_position(signal, redis, span, PaperAccount(capital=1_000_000.0),
+                                      now=datetime(2026, 7, 19, 10, 0))
+        assert position is not None
+        assert position.expiry == "2026-07-21"
 
     def test_skips_when_no_expiry(self):
         redis = MagicMock()

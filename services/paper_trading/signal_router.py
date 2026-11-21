@@ -52,6 +52,8 @@ class EntrySignal:
     # CONFLUENCE fields
     score: Optional[float] = None
     level: Optional[str] = None      # "HIGH" | "MODERATE"
+    # PINN signals carry the expiry they were evaluated on
+    expiry: Optional[str] = None
     # Common
     signal_source: str = ""
     signal_context: dict = field(default_factory=dict)
@@ -63,6 +65,7 @@ class ExitSignal:
     symbol: str
     reason: str                       # "GAMMA_TRAP" | "MANUAL"
     position_id: Optional[str] = None  # None = all positions on symbol
+    direction: Optional[str] = None    # GAMMA_TRAP move direction ("BULLISH"/"BEARISH"), if known
 
 
 # ── Source 1: composite setups from analysis:results ───────────────────────
@@ -97,7 +100,13 @@ def parse_analysis_result(fields: dict) -> tuple[list[EntrySignal], list[ExitSig
     neutral = analysis_json.get("NEUTRAL", {})
 
     if "GAMMA_TRAP" in neutral or neutral.get("GAMMA_TRAP_ACTIVE"):
-        exits.append(ExitSignal(symbol=symbol, reason="GAMMA_TRAP"))
+        trap = neutral.get("GAMMA_TRAP")
+        if isinstance(trap, list):
+            trap = trap[-1] if trap else None
+        direction = trap.get("direction") if isinstance(trap, dict) else None
+        if direction not in ("BULLISH", "BEARISH"):
+            direction = None
+        exits.append(ExitSignal(symbol=symbol, reason="GAMMA_TRAP", direction=direction))
 
     if "RANGE_BOUND_SETUP" in neutral:
         setup = neutral["RANGE_BOUND_SETUP"]
@@ -106,18 +115,25 @@ def parse_analysis_result(fields: dict) -> tuple[list[EntrySignal], list[ExitSig
         # wall strikes and IV percentile.
         if isinstance(setup, list):
             setup = setup[-1]
-        try:
-            entries.append(EntrySignal(
-                strategy=setup["setup_type"],   # "IRON_CONDOR" | "STRANGLE"
-                symbol=symbol,
-                put_wall_strike=float(setup["put_wall_strike"]),
-                call_wall_strike=float(setup["call_wall_strike"]),
-                iv_percentile=float(setup.get("iv_percentile", 0)),
-                signal_source="RANGE_BOUND_SETUP",
-                mode=mode,
-            ))
-        except (KeyError, TypeError, ValueError) as e:
-            logger.warning("[signal_router] Malformed RANGE_BOUND_SETUP for %s: %s", symbol, e)
+        put_wall = setup.get("put_wall_strike") if isinstance(setup, dict) else None
+        call_wall = setup.get("call_wall_strike") if isinstance(setup, dict) else None
+        if put_wall is None or call_wall is None:
+            # e.g. STRANGLE emitted with one wall missing -- float(None) used to raise here
+            logger.debug(f"[RANGE_BOUND_SETUP] {symbol} | SOURCE put_wall={put_wall} "
+                         f"call_wall={call_wall} — wall missing, skipping entry")
+        else:
+            try:
+                entries.append(EntrySignal(
+                    strategy=setup["setup_type"],   # "IRON_CONDOR" | "STRANGLE"
+                    symbol=symbol,
+                    put_wall_strike=float(put_wall),
+                    call_wall_strike=float(call_wall),
+                    iv_percentile=float(setup.get("iv_percentile", 0) or 0),
+                    signal_source="RANGE_BOUND_SETUP",
+                    mode=mode,
+                ))
+            except (KeyError, TypeError, ValueError) as e:
+                logger.warning("[signal_router] Malformed RANGE_BOUND_SETUP for %s: %s", symbol, e)
 
     if "SKEW_FADE_SETUP" in neutral:
         setup = neutral["SKEW_FADE_SETUP"]
@@ -151,13 +167,18 @@ def parse_confluence_message(fields: dict,
     confluence = Confluence.from_stream_fields(fields)
     if confluence.symbol not in indices:
         return None
+    if confluence.has_contradiction:
+        logger.debug(f"[CONFLUENCE] {confluence.symbol} | SOURCE has_contradiction=True — skipping")
+        return None
+    if confluence.direction not in (Direction.BULLISH, Direction.BEARISH):
+        logger.debug(f"[CONFLUENCE] {confluence.symbol} | SOURCE direction={confluence.direction.name} "
+                     f"— not directional, skipping")
+        return None
 
-    strategy = "NAKED_CE" if confluence.direction == Direction.BEARISH else "NAKED_PE"
-    if confluence.level == "MODERATE":
-        strategy = "CREDIT_SPREAD"   # defined risk for 2-layer confluence
-
+    # Always defined risk: MODERATE -> near-ATM spread, HIGH -> further-OTM
+    # spread with a wider wing (strategy_builder.select_strikes).  No naked shorts.
     return EntrySignal(
-        strategy=strategy,
+        strategy="CREDIT_SPREAD",
         symbol=confluence.symbol,
         direction=confluence.direction.name,
         score=confluence.score,
@@ -191,6 +212,7 @@ def parse_pinn_signal(fields: dict) -> Optional[EntrySignal]:
 
     strategy = fields.get("strategy", "")
     direction = fields.get("direction", "NEUTRAL")
+    expiry = fields.get("expiry") or None
 
     try:
         score = float(fields.get("z_score", 0) or 0)
@@ -207,6 +229,7 @@ def parse_pinn_signal(fields: dict) -> Optional[EntrySignal]:
                 signal_source="PINN_MISPRICING",
                 score=score,
                 mode="intraday",
+                expiry=expiry,
                 signal_context={
                     "fair_iv": float(fields.get("fair_iv", 0) or 0),
                     "live_iv": float(fields.get("live_iv", 0) or 0),
@@ -228,6 +251,7 @@ def parse_pinn_signal(fields: dict) -> Optional[EntrySignal]:
                 signal_source="PINN_MISPRICING",
                 score=score,
                 mode="intraday",
+                expiry=expiry,
                 signal_context={
                     "fair_iv_ce": float(fields.get("fair_iv_ce", 0) or 0),
                     "fair_iv_pe": float(fields.get("fair_iv_pe", 0) or 0),
@@ -282,18 +306,24 @@ def get_pinn_confirmation(redis, signal: EntrySignal) -> Optional[float]:
 
     if signal.strategy in ("IRON_CONDOR", "STRANGLE"):
         # RANGE_BOUND-style: both wings are being sold -- confirmation cares
-        # about whichever wing PINN thinks is MOST overpriced (max positive
-        # z), not an average across both.
-        z_scores = []
-        for key, value in raw.items():
-            if not key.startswith("zscore_"):
-                continue
+        # about whichever traded short strike PINN thinks is MOST overpriced
+        # (max z).  If neither short strike is cached, fall back to the max
+        # over the whole chain.  Non-positive z (everything underpriced or
+        # fair) is returned as-is so the caller suppresses the trade.
+        def _z(key):
             try:
-                zv = float(value)
+                return float(raw[key]) if key in raw else None
             except (TypeError, ValueError):
-                continue
-            if zv > 0:
-                z_scores.append(zv)
+                return None
+
+        traded = []
+        if signal.put_wall_strike is not None:
+            traded.append(_z(f"zscore_{signal.put_wall_strike}_PE"))
+        if signal.call_wall_strike is not None:
+            traded.append(_z(f"zscore_{signal.call_wall_strike}_CE"))
+        z_scores = [z for z in traded if z is not None]
+        if not z_scores:
+            z_scores = [z for z in (_z(k) for k in raw if k.startswith("zscore_")) if z is not None]
         return max(z_scores) if z_scores else None
 
     return None
@@ -311,8 +341,14 @@ def has_duplicate_position(open_positions: list[PaperPosition], symbol: str, str
     return any(p.symbol == symbol and p.strategy == strategy for p in open_positions)
 
 
-def portfolio_margin_exceeded(account: PaperAccount, max_pct: float = MAX_PORTFOLIO_MARGIN_PCT) -> bool:
-    return account.margin_used >= max_pct * account.capital
+def portfolio_margin_exceeded(account: PaperAccount, max_pct: float = MAX_PORTFOLIO_MARGIN_PCT,
+                               new_margin: float = 0.0) -> bool:
+    """Pre-check (new_margin=0): cap already reached.  Post-build check:
+    existing margin + the new position's margin must fit under the cap."""
+    cap = max_pct * account.capital
+    if new_margin > 0:
+        return account.margin_used + new_margin > cap
+    return account.margin_used >= cap
 
 
 def daily_loss_limit_hit(account: PaperAccount, limit_pct: float = DAILY_LOSS_LIMIT_PCT) -> bool:

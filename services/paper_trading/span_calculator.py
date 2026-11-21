@@ -11,18 +11,24 @@ import json
 import re
 import time
 from dataclasses import dataclass
-from typing import NamedTuple, Optional
+from typing import Callable, NamedTuple, Optional
 
 import requests
 
 from lib.logging_util import get_logger
 logger = get_logger("paper-trading")
-from services.paper_trading.models import instruments_key
+from services.paper_trading.models import (
+    INSTRUMENTS_CACHE_TTL_SECONDS,
+    INSTRUMENTS_FETCHED_AT_KEY,
+    instruments_key,
+)
 
 API_URL = "https://zerodha.com/margin-calculator/SPAN"
 CACHE_TTL_SECONDS = 300           # 5 minutes
 MIN_CALL_INTERVAL_SECONDS = 0.5   # rate-limit courtesy delay between live calls
 REQUEST_TIMEOUT = 5
+# Min gap between Zerodha instrument refresh attempts (stale cache or miss).
+INSTRUMENTS_REFRESH_MIN_INTERVAL_SECONDS = 300
 
 
 def derive_scrip(tradingsymbol: str, strike: float, option_type: str) -> str:
@@ -124,10 +130,24 @@ def deserialize_instruments_cache(mapping_by_symbol: dict[str, dict]) -> dict:
     return cache
 
 
-def save_instruments_cache(redis, cache: dict) -> None:
+def save_instruments_cache(redis, cache: dict, ttl_seconds: int = INSTRUMENTS_CACHE_TTL_SECONDS) -> None:
+    """Replace each symbol's hash (drops expired expiries) and apply the TTL
+    so a stale copy can never be served forever."""
     for symbol, mapping in serialize_instruments_cache(cache).items():
         if mapping:
-            redis.hset(instruments_key(symbol), mapping=mapping)
+            key = instruments_key(symbol)
+            redis.delete(key)
+            redis.hset(key, mapping=mapping)
+            redis.expire(key, ttl_seconds)
+    redis.set_with_ttl(INSTRUMENTS_FETCHED_AT_KEY, str(time.time()), ex=ttl_seconds)
+
+
+def load_instruments_fetched_at(redis) -> float:
+    """Epoch seconds the Redis instruments copy was fetched (0.0 if unknown)."""
+    try:
+        return float(redis.get(INSTRUMENTS_FETCHED_AT_KEY) or 0)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def load_instruments_cache(redis, symbols: list[str]) -> dict:
@@ -142,14 +162,49 @@ def load_instruments_cache(redis, symbols: list[str]) -> dict:
 class SpanCalculator:
     """Real SPAN margin calculation via Zerodha's public margin-calculator API."""
 
-    def __init__(self, instruments: dict):
+    def __init__(self, instruments: dict, refresher: Optional[Callable[[], Optional[dict]]] = None,
+                 loaded_at: Optional[float] = None, ttl_seconds: float = INSTRUMENTS_CACHE_TTL_SECONDS):
         self._instruments = instruments   # {symbol: {expiry: [InstrumentEntry, ...]}}
         self._cache: dict[str, float] = {}
         self._cache_times: dict[str, float] = {}
         self._last_call_time = 0.0
+        self._refresher = refresher       # fetches a fresh cache from Zerodha (None = disabled)
+        self._loaded_at = loaded_at if loaded_at is not None else time.time()
+        self._ttl_seconds = ttl_seconds
+        self._last_refresh_attempt = 0.0
+
+    def set_instruments(self, instruments: dict, loaded_at: Optional[float] = None) -> None:
+        self._instruments = instruments
+        self._loaded_at = loaded_at if loaded_at is not None else time.time()
+
+    def maybe_refresh(self, symbol: Optional[str] = None, expiry: Optional[str] = None,
+                      now: Optional[float] = None) -> bool:
+        """Refresh from Zerodha when the cache is older than the TTL or the
+        requested symbol/expiry is missing (new weekly listed, lot size
+        revision).  Rate-limited; returns True if instruments were replaced."""
+        if self._refresher is None:
+            return False
+        now = now if now is not None else time.time()
+        stale = (now - self._loaded_at) > self._ttl_seconds
+        missing = bool(symbol and expiry and not self._instruments.get(symbol, {}).get(expiry))
+        if not (stale or missing):
+            return False
+        if now - self._last_refresh_attempt < INSTRUMENTS_REFRESH_MIN_INTERVAL_SECONDS:
+            logger.debug(f"[SpanCalculator] {symbol} | SOURCE expiry={expiry} stale={stale} "
+                         f"missing={missing} — refresh rate-limited")
+            return False
+        self._last_refresh_attempt = now
+        fresh = self._refresher()
+        if not fresh:
+            logger.warning(f"[SpanCalculator] Instruments refresh failed (stale={stale} missing={missing})")
+            return False
+        self.set_instruments(fresh, loaded_at=now)
+        logger.info(f"[SpanCalculator] Instruments refreshed (stale={stale} missing={symbol}/{expiry})")
+        return True
 
     def get_lot_size(self, symbol: str, expiry: str) -> Optional[int]:
         """All options for a given symbol+expiry share the same lot size."""
+        self.maybe_refresh(symbol, expiry)
         entries = self._instruments.get(symbol, {}).get(expiry, [])
         return entries[0].lot_size if entries else None
 

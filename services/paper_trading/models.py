@@ -20,8 +20,10 @@ POSITIONS_OPEN_KEY = "paper:positions:open"
 CONFIG_KEY = "paper:config"
 TRADES_STREAM = "paper:trades"
 TRADES_STREAM_MAXLEN = 5000
-COOLDOWN_TTL_SECONDS = 900              # 15 min
+COOLDOWN_TTL_SECONDS = 900              # 15 min, set on exit
+STOP_LOSS_COOLDOWN_TTL_SECONDS = 1800   # 30 min after a STOP_LOSS / GAMMA_TRAP exit
 INSTRUMENTS_CACHE_TTL_SECONDS = 86400   # 1 day
+INSTRUMENTS_FETCHED_AT_KEY = "paper:instruments:fetched_at"
 
 
 def positions_closed_key(day: str) -> str:
@@ -44,10 +46,20 @@ def instruments_key(symbol: str) -> str:
 
 DEFAULT_SLIPPAGE_BPS = 50               # 0.5%
 DEFAULT_BROKERAGE_PER_ORDER = 20.0      # Rs 20 per leg per order (entry or exit)
-DEFAULT_STT_PCT = 0.001                 # 0.1% on sell-side premium
-DEFAULT_EXCHANGE_CHARGES_PCT = 0.0005   # 0.05% of premium
-DEFAULT_STAMP_DUTY_PCT = 0.00003        # 0.003% on sell-side premium
+# Index options statutory charges (NSE, effective Oct 2024):
+DEFAULT_STT_PCT = 0.001                 # STT 0.1% of premium, SELL trades only
+DEFAULT_EXCHANGE_CHARGES_PCT = 0.0003503  # NSE txn charge 0.03503% of premium (all trades)
+BSE_EXCHANGE_CHARGES_PCT = 0.000325     # BSE (SENSEX/BANKEX) options txn charge 0.0325%
+DEFAULT_STAMP_DUTY_PCT = 0.00003        # stamp duty 0.003% of premium, BUY trades only
+SEBI_FEE_PER_CRORE = 10.0               # Rs 10 per crore of turnover (all trades)
+GST_PCT = 0.18                          # 18% on brokerage + exchange charges + SEBI fee
 DEFAULT_CAPITAL = 1_000_000.0           # Rs 10L virtual capital
+
+BSE_SYMBOLS = {"SENSEX", "BANKEX"}
+
+
+def exchange_charges_pct_for(symbol: str) -> float:
+    return BSE_EXCHANGE_CHARGES_PCT if symbol in BSE_SYMBOLS else DEFAULT_EXCHANGE_CHARGES_PCT
 
 
 def apply_slippage(ltp: float, side: str, slippage_bps: int = DEFAULT_SLIPPAGE_BPS) -> float:
@@ -59,7 +71,7 @@ def apply_slippage(ltp: float, side: str, slippage_bps: int = DEFAULT_SLIPPAGE_B
 
 
 def compute_stt(sell_premium: float, qty: int, stt_pct: float = DEFAULT_STT_PCT) -> float:
-    """STT applies only to the sell side of a leg."""
+    """STT applies only to SELL trades (premium of the option being sold)."""
     return stt_pct * sell_premium * qty
 
 
@@ -68,15 +80,67 @@ def compute_exchange_charges(premium: float, qty: int,
     return pct * premium * qty
 
 
-def compute_stamp_duty(sell_premium: float, qty: int,
+def compute_stamp_duty(buy_premium: float, qty: int,
                         pct: float = DEFAULT_STAMP_DUTY_PCT) -> float:
-    """Stamp duty applies only to the sell side of a leg."""
-    return pct * sell_premium * qty
+    """Stamp duty applies only to BUY trades (premium of the option being bought)."""
+    return pct * buy_premium * qty
 
 
 def compute_brokerage(num_legs: int, per_order: float = DEFAULT_BROKERAGE_PER_ORDER) -> float:
     """Brokerage for one side (entry OR exit) of a multi-leg position."""
     return num_legs * per_order
+
+
+def compute_transaction_costs(trades: list[tuple[float, str]], qty: int,
+                               brokerage_per_order: float = DEFAULT_BROKERAGE_PER_ORDER,
+                               stt_pct: float = DEFAULT_STT_PCT,
+                               exchange_charges_pct: float = DEFAULT_EXCHANGE_CHARGES_PCT,
+                               stamp_duty_pct: float = DEFAULT_STAMP_DUTY_PCT) -> float:
+    """Total charges for one batch of orders (all legs of an entry OR an exit).
+
+    trades: [(fill_premium_per_unit, action)] where action is the order
+    actually being placed now ("SELL" or "BUY") -- at entry that's the leg's
+    side, at exit it's the opposite (shorts are bought back, longs sold).
+    STT on SELL actions, stamp duty on BUY actions, exchange + SEBI on all,
+    GST on brokerage + exchange + SEBI.
+    """
+    brokerage = compute_brokerage(len(trades), brokerage_per_order)
+    exchange = sebi = stt = stamp = 0.0
+    for premium, action in trades:
+        exchange += compute_exchange_charges(premium, qty, exchange_charges_pct)
+        sebi += premium * qty * SEBI_FEE_PER_CRORE / 1e7
+        if action == "SELL":
+            stt += compute_stt(premium, qty, stt_pct)
+        else:
+            stamp += compute_stamp_duty(premium, qty, stamp_duty_pct)
+    gst = GST_PCT * (brokerage + exchange + sebi)
+    return brokerage + exchange + sebi + stt + stamp + gst
+
+
+# ── Runtime config overrides (paper:config, set via /paper_config) ─────────
+# Only this small, validated subset is honoured; anything else is rejected.
+# key -> (type, min, max)
+CONFIG_SCHEMA: dict[str, tuple[type, float, float]] = {
+    "max_positions": (int, 1, 20),
+    "risk_scale": (float, 0.1, 3.0),          # multiplier on per-strategy RISK_PCT
+    "stop_loss_multiple": (float, 0.5, 5.0),  # x entry credit
+    "profit_target_pct": (float, 0.1, 1.0),   # fraction of entry credit
+}
+
+
+def parse_config_value(key: str, value) -> Optional[float]:
+    """Validate a /paper_config value. Returns the typed value or None if invalid."""
+    spec = CONFIG_SCHEMA.get(key)
+    if spec is None:
+        return None
+    typ, lo, hi = spec
+    try:
+        parsed = typ(float(value)) if typ is int else typ(value)
+    except (TypeError, ValueError):
+        return None
+    if not (lo <= parsed <= hi):
+        return None
+    return parsed
 
 
 # ── Expiry / strike-gap helpers (docs/PAPER_TRADING_DESIGN.md section 7.1/7.3) ──
@@ -176,12 +240,26 @@ class PaperAccount:
     daily_trades: int = 0
     daily_wins: int = 0
     daily_losses: int = 0
+    trading_day: str = ""      # ISO date the daily_* counters belong to
 
     _FLOAT_FIELDS = {
         "capital", "realized_pnl", "unrealized_pnl", "margin_used",
         "available_margin", "day_start_capital", "max_drawdown", "daily_realized_pnl",
     }
     _INT_FIELDS = {"open_positions", "daily_trades", "daily_wins", "daily_losses"}
+    _STR_FIELDS = {"trading_day"}
+
+    def roll_day(self, today: str) -> bool:
+        """Reset the daily_* counters when the trading day changes. Returns True if reset."""
+        if self.trading_day == today:
+            return False
+        self.trading_day = today
+        self.daily_realized_pnl = 0.0
+        self.daily_trades = 0
+        self.daily_wins = 0
+        self.daily_losses = 0
+        self.day_start_capital = self.capital + self.realized_pnl
+        return True
 
     def to_redis_mapping(self) -> dict:
         return {k: str(v) for k, v in asdict(self).items()}
@@ -196,4 +274,6 @@ class PaperAccount:
                 kwargs[k] = float(v)
             elif k in cls._INT_FIELDS:
                 kwargs[k] = int(v)
+            elif k in cls._STR_FIELDS:
+                kwargs[k] = str(v)
         return cls(**kwargs)

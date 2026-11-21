@@ -6,13 +6,14 @@ from unittest.mock import MagicMock
 
 from lib.intelligence.correlator import Confluence
 from lib.intelligence.signal import Direction, Layer, Signal, SignalStrength
-from services.paper_trading.models import PaperAccount, PaperPosition, OptionLeg
+from services.paper_trading.models import PaperAccount, PaperPosition
 from services.paper_trading.signal_router import (
     EntrySignal,
     ExitSignal,
     check_entry_filters,
     correlated_naked_cap_hit,
     daily_loss_limit_hit,
+    get_pinn_confirmation,
     has_cooldown_lock,
     has_duplicate_position,
     parse_analysis_result,
@@ -51,7 +52,7 @@ class TestParseAnalysisResult:
         })
         entries, exits = parse_analysis_result(fields)
         assert entries == []
-        assert exits == [ExitSignal(symbol="NIFTY", reason="GAMMA_TRAP")]
+        assert exits == [ExitSignal(symbol="NIFTY", reason="GAMMA_TRAP", direction="BEARISH")]
 
     def test_gamma_trap_active_flag_also_triggers_exit(self):
         fields = _fields(priority_override="CRITICAL", analysis_json={
@@ -60,6 +61,7 @@ class TestParseAnalysisResult:
         _, exits = parse_analysis_result(fields)
         assert len(exits) == 1
         assert exits[0].reason == "GAMMA_TRAP"
+        assert exits[0].direction is None   # no direction info -> close all on symbol
 
     def test_range_bound_setup_produces_entry_signal(self):
         fields = _fields(priority_override="HIGH", analysis_json={
@@ -123,6 +125,16 @@ class TestParseAnalysisResult:
         assert entries == []
         assert exits == []
 
+    def test_strangle_with_missing_wall_is_skipped(self):
+        fields = _fields(priority_override="HIGH", analysis_json={
+            "NEUTRAL": {"RANGE_BOUND_SETUP": {
+                "setup_type": "STRANGLE", "put_wall_strike": None, "call_wall_strike": "25000",
+            }}
+        })
+        entries, exits = parse_analysis_result(fields)
+        assert entries == []
+        assert exits == []
+
     def test_malformed_json_does_not_raise(self):
         fields = _fields(trend_found="true")
         fields["analysis_json"] = "{not valid json"
@@ -146,17 +158,18 @@ class TestParseAnalysisResult:
 
 class TestParseConfluenceMessage:
     def _confluence_fields(self, symbol="NIFTY", direction=Direction.BULLISH,
-                            layers=(Layer.LIVE, Layer.INTRADAY), score=11.0):
+                            layers=(Layer.LIVE, Layer.INTRADAY), score=11.0, has_contradiction=False):
         signals = [
-            Signal(symbol=symbol, direction=direction, source="vwap_cross",
+            Signal(symbol=symbol, direction=direction, source="pcr_shift",
                    layer=layers[0], strength=SignalStrength.STRONG),
         ]
-        if len(layers) > 1:
-            signals.append(Signal(symbol=symbol, direction=direction, source="rsi_divergence",
-                                   layer=layers[1], strength=SignalStrength.MODERATE))
+        # distinct signal families so 3-layer confluences qualify as HIGH
+        for layer, source in zip(layers[1:], ("oi_buildup", "iv_crush")):
+            signals.append(Signal(symbol=symbol, direction=direction, source=source,
+                                   layer=layer, strength=SignalStrength.MODERATE))
         confluence = Confluence(
             symbol=symbol, direction=direction, signals=signals,
-            layers_involved=set(layers), score=score,
+            layers_involved=set(layers), score=score, has_contradiction=has_contradiction,
         )
         return confluence.to_stream_fields()
 
@@ -167,18 +180,28 @@ class TestParseConfluenceMessage:
         assert signal.level == "MODERATE"
         assert signal.signal_source == "CONFLUENCE"
 
-    def test_high_bullish_confluence_maps_to_naked_pe(self):
+    def test_high_bullish_confluence_maps_to_defined_risk_spread(self):
         fields = self._confluence_fields(direction=Direction.BULLISH,
                                           layers=(Layer.LIVE, Layer.INTRADAY, Layer.POSITIONAL))
         signal = parse_confluence_message(fields, indices=("NIFTY", "BANKNIFTY", "SENSEX"))
-        assert signal.strategy == "NAKED_PE"
+        assert signal.strategy == "CREDIT_SPREAD"
         assert signal.level == "HIGH"
+        assert signal.direction == "BULLISH"
 
-    def test_high_bearish_confluence_maps_to_naked_ce(self):
+    def test_high_bearish_confluence_maps_to_defined_risk_spread(self):
         fields = self._confluence_fields(direction=Direction.BEARISH,
                                           layers=(Layer.LIVE, Layer.INTRADAY, Layer.POSITIONAL))
         signal = parse_confluence_message(fields, indices=("NIFTY", "BANKNIFTY", "SENSEX"))
-        assert signal.strategy == "NAKED_CE"
+        assert signal.strategy == "CREDIT_SPREAD"
+        assert signal.direction == "BEARISH"
+
+    def test_contradicted_confluence_is_skipped(self):
+        fields = self._confluence_fields(has_contradiction=True)
+        assert parse_confluence_message(fields, indices=("NIFTY",)) is None
+
+    def test_neutral_confluence_is_not_mapped_to_bullish(self):
+        fields = self._confluence_fields(direction=Direction.NEUTRAL)
+        assert parse_confluence_message(fields, indices=("NIFTY",)) is None
 
     def test_non_index_symbol_is_ignored(self):
         fields = self._confluence_fields(symbol="RELIANCE")
@@ -218,6 +241,7 @@ class TestParsePinnSignal:
         assert entry.mode == "intraday"
         assert entry.score == 2.5
         assert entry.signal_context["overpriced_type"] == "PE"
+        assert entry.expiry == "2026-09-22"
 
     def test_range_bound_maps_to_iron_condor_with_walls(self):
         signal = PinnSignal(
@@ -234,6 +258,7 @@ class TestParsePinnSignal:
         assert entry.call_wall_strike == 52000.0
         assert entry.signal_source == "PINN_MISPRICING"
         assert entry.mode == "intraday"
+        assert entry.expiry == "2026-09-22"
 
     def test_non_index_symbol_is_ignored(self):
         fields = self._emitted_fields(self._skew_fade_signal(symbol="RELIANCE"))
@@ -279,6 +304,11 @@ class TestEntryFilterPredicates:
         assert portfolio_margin_exceeded(account) is True
         account.margin_used = 399_999.0
         assert portfolio_margin_exceeded(account) is False
+
+    def test_portfolio_margin_includes_new_position(self):
+        account = PaperAccount(capital=1_000_000.0, margin_used=300_000.0)
+        assert portfolio_margin_exceeded(account, new_margin=100_000.0) is False
+        assert portfolio_margin_exceeded(account, new_margin=100_001.0) is True
 
     def test_daily_loss_limit_hit(self):
         account = PaperAccount(capital=1_000_000.0, daily_realized_pnl=-30_000.0)
@@ -357,3 +387,31 @@ class TestCheckEntryFilters:
         ]
         passed, _ = check_entry_filters(signal, self._redis(), account, positions)
         assert passed is True
+
+
+class TestPinnConfirmationRangeBound:
+    def _redis(self, zs):
+        import time as _t
+        redis = MagicMock()
+        redis.hgetall.return_value = {"last_updated": str(_t.time()), **zs}
+        return redis
+
+    def _signal(self):
+        return EntrySignal(strategy="IRON_CONDOR", symbol="NIFTY",
+                           put_wall_strike=24000.0, call_wall_strike=25000.0)
+
+    def test_uses_z_at_traded_short_strikes(self):
+        redis = self._redis({"zscore_24000.0_PE": "0.3", "zscore_25000.0_CE": "0.7",
+                             "zscore_26000.0_CE": "3.0"})   # untraded strike ignored
+        assert get_pinn_confirmation(redis, self._signal()) == 0.7
+
+    def test_all_underpriced_returns_non_positive_to_suppress(self):
+        redis = self._redis({"zscore_24000.0_PE": "-0.4", "zscore_25000.0_CE": "-1.2"})
+        assert get_pinn_confirmation(redis, self._signal()) == -0.4
+
+    def test_falls_back_to_chain_when_short_strikes_missing(self):
+        redis = self._redis({"zscore_23000.0_PE": "-0.5", "zscore_26000.0_CE": "-0.1"})
+        assert get_pinn_confirmation(redis, self._signal()) == -0.1
+
+    def test_no_zscores_fails_open(self):
+        assert get_pinn_confirmation(self._redis({}), self._signal()) is None

@@ -6,11 +6,13 @@ integration-level and exercised by the design doc's dry-run validation
 plan, not unit tests here.
 """
 
-import json
 import time
-from datetime import datetime, time as dtime
+from datetime import date, datetime, time as dtime
 from unittest.mock import MagicMock, patch
 
+import pytest
+
+from services.paper_trading import engine
 from services.paper_trading import main as pt_main
 from services.paper_trading.models import ACCOUNT_KEY, OptionLeg, PaperAccount, PaperPosition
 from services.paper_trading.signal_router import EntrySignal, ExitSignal
@@ -53,6 +55,26 @@ class TestAccountPersistence:
         account = pt_main.get_account(redis)
         assert account.capital == 1_000_000.0
 
+    def test_daily_counters_reset_on_new_trading_day(self):
+        redis = MagicMock()
+        stale = PaperAccount(daily_realized_pnl=-40_000.0, daily_trades=7, daily_wins=2,
+                             daily_losses=5, realized_pnl=-40_000.0, trading_day="2026-07-17")
+        redis.hgetall.return_value = stale.to_redis_mapping()
+        account = pt_main.get_account(redis, today="2026-07-20")
+        assert account.trading_day == "2026-07-20"
+        assert account.daily_realized_pnl == 0.0
+        assert account.daily_trades == 0 and account.daily_losses == 0
+        assert account.realized_pnl == -40_000.0          # lifetime P&L untouched
+        assert account.day_start_capital == 960_000.0
+
+    def test_daily_counters_kept_within_same_day(self):
+        redis = MagicMock()
+        same = PaperAccount(daily_realized_pnl=-10_000.0, daily_trades=3, trading_day="2026-07-20")
+        redis.hgetall.return_value = same.to_redis_mapping()
+        account = pt_main.get_account(redis, today="2026-07-20")
+        assert account.daily_realized_pnl == -10_000.0
+        assert account.daily_trades == 3
+
     def test_save_account_recomputes_available_margin(self):
         redis = MagicMock()
         account = PaperAccount(capital=1_000_000.0, margin_used=200_000.0)
@@ -78,7 +100,7 @@ class TestLoadOpenPositions:
 
 
 class TestPersistNewPosition:
-    def test_writes_position_cooldown_and_account(self):
+    def test_writes_position_and_account_no_cooldown_at_entry(self):
         redis = MagicMock()
         redis.hgetall.return_value = {}  # empty account -> defaults
         position = _position()
@@ -87,7 +109,7 @@ class TestPersistNewPosition:
             pt_main.persist_new_position(redis, position)
 
         redis.hset.assert_any_call(pt_main.POSITIONS_OPEN_KEY, mapping={"pos-1": position.to_json()})
-        redis.set_with_ttl.assert_called_once()
+        redis.set_with_ttl.assert_not_called()   # cooldown is set on exit
         tg.assert_called_once()
 
         # account update call: find the ACCOUNT_KEY hset
@@ -139,6 +161,66 @@ class TestPersistClosedPosition:
         mapping = account_calls[0].kwargs["mapping"]
         assert int(mapping["daily_losses"]) == 1
         assert float(mapping["realized_pnl"]) == -1500.0
+        # stop-loss exit sets the longer cooldown
+        redis.set_with_ttl.assert_called_once_with(
+            "paper:cooldown:NIFTY:IRON_CONDOR", "1", ex=pt_main.STOP_LOSS_COOLDOWN_TTL_SECONDS)
+
+    def test_target_exit_sets_normal_cooldown(self):
+        redis = MagicMock()
+        redis.hgetall.return_value = {}
+        position = _position()
+        position.pnl = 100.0
+        position.exit_reason = "TARGET"
+        with patch.object(pt_main.TELEGRAM_NOTIFICATIONS, "send_live_options_notification"), \
+                patch.object(pt_main.ledger, "insert_trade"):
+            pt_main.persist_closed_position(redis, position)
+        redis.set_with_ttl.assert_called_once_with(
+            "paper:cooldown:NIFTY:IRON_CONDOR", "1", ex=pt_main.COOLDOWN_TTL_SECONDS)
+
+    def test_already_closed_position_is_not_double_booked(self):
+        redis = MagicMock()
+        redis.hdel.return_value = 0   # another thread already removed it
+        position = _position()
+        position.pnl = 100.0
+        position.exit_reason = "TARGET"
+        with patch.object(pt_main.TELEGRAM_NOTIFICATIONS, "send_live_options_notification") as tg, \
+                patch.object(pt_main.ledger, "insert_trade") as ins:
+            assert pt_main.persist_closed_position(redis, position) is False
+        redis.xadd.assert_not_called()
+        ins.assert_not_called()
+        tg.assert_not_called()
+
+
+class TestApplyMtmResult:
+    def test_open_position_written_back_when_still_open(self):
+        redis = MagicMock()
+        redis.hget.return_value = "{}"
+        position = _position()
+        assert pt_main.apply_mtm_result(redis, position) is True
+        redis.hset.assert_called_once_with(pt_main.POSITIONS_OPEN_KEY, mapping={"pos-1": position.to_json()})
+
+    def test_position_closed_by_other_thread_not_resurrected(self):
+        redis = MagicMock()
+        redis.hget.return_value = None
+        assert pt_main.apply_mtm_result(redis, _position()) is False
+        redis.hset.assert_not_called()
+
+
+class TestSettleExpiredPositions:
+    def test_expired_position_settled_outside_market_hours(self):
+        redis = MagicMock()
+        position = _position()   # expiry 2026-07-21
+        redis.hgetall.side_effect = lambda key: (
+            {"pos-1": position.to_json()} if key == pt_main.POSITIONS_OPEN_KEY
+            else {"last_price": "24500"} if key == "data:tick:NIFTY"
+            else {}
+        )
+        with patch.object(pt_main.TELEGRAM_NOTIFICATIONS, "send_live_options_notification"), \
+                patch.object(pt_main.ledger, "insert_trade"):
+            pt_main.settle_expired_positions(redis, datetime(2026, 7, 22, 20, 0))
+        redis.hdel.assert_called_once_with(pt_main.POSITIONS_OPEN_KEY, "pos-1")
+        stream_fields = redis.xadd.call_args.args[1]
+        assert stream_fields["exit_reason"] == "EXPIRY_SETTLEMENT"
 
 
 class TestNotificationFormatting:
@@ -187,6 +269,29 @@ class TestTryLoadInstruments:
 
 
 class TestHandleExitSignal:
+    def _redis(self, positions):
+        redis = MagicMock()
+        redis.hgetall.side_effect = lambda key: (
+            {p.position_id: p.to_json() for p in positions} if key == pt_main.POSITIONS_OPEN_KEY
+            else {}
+        )
+        return redis
+
+    def test_directional_gamma_trap_only_closes_threatened_side(self):
+        put_spread = _position()                      # short PE only
+        call_spread = _position(strategy="CREDIT_SPREAD")
+        call_spread.position_id = "pos-2"
+        call_spread.legs = [
+            OptionLeg(strike=25000.0, option_type="CE", side="SELL", lots=1, entry_premium=50, current_premium=50),
+            OptionLeg(strike=25100.0, option_type="CE", side="BUY", lots=1, entry_premium=30, current_premium=30),
+        ]
+        redis = self._redis([put_spread, call_spread])
+        with patch.object(pt_main.TELEGRAM_NOTIFICATIONS, "send_live_options_notification"), \
+                patch.object(pt_main.ledger, "insert_trade"):
+            pt_main._handle_exit_signal(redis, ExitSignal(symbol="NIFTY", reason="GAMMA_TRAP",
+                                                          direction="BULLISH"))
+        redis.hdel.assert_called_once_with(pt_main.POSITIONS_OPEN_KEY, "pos-2")
+
     def test_closes_matching_position(self):
         redis = MagicMock()
         position = _position()
@@ -207,7 +312,60 @@ class TestHandleExitSignal:
         redis.hdel.assert_not_called()
 
 
+class TestCheckEntryGate:
+    def _redis(self, last_updated):
+        redis = MagicMock()
+        redis.hgetall.return_value = {"last_updated": str(last_updated)}
+        return redis
+
+    @patch("services.paper_trading.main.is_trading_day", return_value=True)
+    def test_allows_fresh_data_in_window(self, _td):
+        now = datetime(2026, 7, 20, 10, 0)
+        assert pt_main.check_entry_gate(self._redis(now.timestamp() - 2), "NIFTY", now) == ""
+
+    @patch("services.paper_trading.main.is_trading_day", return_value=True)
+    def test_rejects_outside_window(self, _td):
+        for t in (dtime(9, 19), dtime(15, 1), dtime(20, 0)):
+            now = datetime.combine(date(2026, 7, 20), t)
+            assert pt_main.check_entry_gate(self._redis(now.timestamp()), "NIFTY", now) == "outside_entry_window"
+
+    @patch("services.paper_trading.main.is_trading_day", return_value=False)
+    def test_rejects_non_trading_day(self, _td):
+        now = datetime(2026, 7, 20, 10, 0)
+        assert pt_main.check_entry_gate(self._redis(now.timestamp()), "NIFTY", now) == "not_trading_day"
+
+    @patch("services.paper_trading.main.is_trading_day", return_value=True)
+    def test_rejects_stale_options_agg(self, _td):
+        now = datetime(2026, 7, 20, 10, 0)
+        assert pt_main.check_entry_gate(self._redis(now.timestamp() - 30), "NIFTY", now) == "stale_options_agg"
+
+    @patch("services.paper_trading.main.build_position")
+    def test_gate_rejection_skips_everything(self, mock_build):
+        with patch.object(pt_main, "check_entry_gate", return_value="outside_entry_window"):
+            pt_main._handle_entry_signal(MagicMock(), MagicMock(), EntrySignal(strategy="IRON_CONDOR", symbol="NIFTY"))
+        mock_build.assert_not_called()
+
+
 class TestHandleEntrySignal:
+    @pytest.fixture(autouse=True)
+    def _open_gate(self):
+        with patch.object(pt_main, "check_entry_gate", return_value=""):
+            yield
+
+    @patch("services.paper_trading.main.persist_new_position")
+    @patch("services.paper_trading.main.build_position")
+    @patch("services.paper_trading.main.check_entry_filters")
+    def test_new_position_margin_counted_against_cap(self, mock_filters, mock_build, mock_persist):
+        mock_filters.return_value = (True, "")
+        mock_build.return_value = _position(margin=150_000.0)
+        redis = MagicMock()
+        account = PaperAccount(capital=1_000_000.0, margin_used=300_000.0,
+                               trading_day=date.today().isoformat())
+        redis.hgetall.side_effect = lambda key: account.to_redis_mapping() if key == ACCOUNT_KEY else {}
+        signal = EntrySignal(strategy="IRON_CONDOR", symbol="NIFTY")
+        pt_main._handle_entry_signal(redis, MagicMock(), signal)
+        mock_persist.assert_not_called()   # 300k + 150k > 40% of 10L
+
     @patch("services.paper_trading.main.build_position")
     @patch("services.paper_trading.main.check_entry_filters")
     def test_rejected_by_filters_does_not_build(self, mock_filters, mock_build):
@@ -367,19 +525,67 @@ class TestHandleCommand:
             pt_main._handle_command(redis, {"command": "close", "position_id": "pos-2"})
         redis.hdel.assert_called_once_with(pt_main.POSITIONS_OPEN_KEY, "pos-2")
 
-    def test_reset_clears_positions_and_account(self):
+    def test_reset_books_positions_then_resets_account(self):
         redis = MagicMock()
         position = _position()
-        redis.hgetall.return_value = {"pos-1": position.to_json()}
-        pt_main._handle_command(redis, {"command": "reset"})
+        redis.hgetall.side_effect = lambda key: (
+            {"pos-1": position.to_json()} if key == pt_main.POSITIONS_OPEN_KEY else {}
+        )
+        with patch.object(pt_main.TELEGRAM_NOTIFICATIONS, "send_live_options_notification"), \
+                patch.object(pt_main.ledger, "insert_trade") as ins:
+            pt_main._handle_command(redis, {"command": "reset"})
         redis.hdel.assert_called_once_with(pt_main.POSITIONS_OPEN_KEY, "pos-1")
+        ins.assert_called_once()
+        assert ins.call_args.args[0].exit_reason == "RESET"
         account_calls = [c for c in redis.hset.call_args_list if c.args[0] == ACCOUNT_KEY]
-        assert len(account_calls) == 1
+        final = account_calls[-1].kwargs["mapping"]
+        assert float(final["realized_pnl"]) == 0.0
+        assert int(final["open_positions"]) == 0
 
     def test_config_set(self):
         redis = MagicMock()
-        pt_main._handle_command(redis, {"command": "config_set", "key": "max_positions", "value": "10"})
-        redis.hset.assert_called_once_with(pt_main.CONFIG_KEY, mapping={"max_positions": "10"})
+        try:
+            pt_main._handle_command(redis, {"command": "config_set", "key": "max_positions", "value": "10"})
+            redis.hset.assert_called_once_with(pt_main.CONFIG_KEY, mapping={"max_positions": "10"})
+            assert pt_main._runtime_config["max_positions"] == 10
+        finally:
+            pt_main._runtime_config.clear()
+
+    def test_config_set_rejects_unknown_or_invalid(self):
+        redis = MagicMock()
+        pt_main._handle_command(redis, {"command": "config_set", "key": "bogus", "value": "1"})
+        pt_main._handle_command(redis, {"command": "config_set", "key": "max_positions", "value": "500"})
+        redis.hset.assert_not_called()
+        assert "max_positions" not in pt_main._runtime_config
+
+    def test_load_config_applies_exit_params(self):
+        redis = MagicMock()
+        redis.hgetall.return_value = {"stop_loss_multiple": "1.5", "profit_target_pct": "0.4", "junk": "x"}
+        try:
+            cfg = pt_main.load_config(redis)
+            assert cfg == {"stop_loss_multiple": 1.5, "profit_target_pct": 0.4}
+            assert engine.STOP_LOSS_MULTIPLE == 1.5
+            assert engine.PROFIT_TARGET_PCT == 0.4
+        finally:
+            engine.set_exit_params(stop_loss_multiple=2.0, profit_target_pct=0.5)
+            pt_main._runtime_config.clear()
+
+    @patch("services.paper_trading.main.persist_new_position")
+    @patch("services.paper_trading.main.build_position")
+    @patch("services.paper_trading.main.check_entry_filters")
+    def test_config_overrides_reach_entry_path(self, mock_filters, mock_build, mock_persist):
+        mock_filters.return_value = (True, "")
+        mock_build.return_value = None
+        redis = MagicMock()
+        redis.hgetall.return_value = {}
+        pt_main._runtime_config.update({"max_positions": 3, "risk_scale": 0.5})
+        try:
+            with patch.object(pt_main, "check_entry_gate", return_value=""):
+                pt_main._handle_entry_signal(redis, MagicMock(), EntrySignal(strategy="IRON_CONDOR", symbol="NIFTY"))
+        finally:
+            pt_main._runtime_config.clear()
+        assert mock_filters.call_args.kwargs["max_positions"] == 3
+        assert mock_build.call_args.kwargs["risk_scale"] == 0.5
 
     def test_unknown_command_does_nothing(self):
         redis = MagicMock()
