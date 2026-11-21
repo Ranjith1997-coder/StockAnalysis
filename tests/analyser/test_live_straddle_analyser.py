@@ -106,26 +106,84 @@ class TestCheckIvChange:
         assert result is None
 
 
+def _all_weekdays(d):
+    return d.weekday() < 5
+
+
+def _agg_with_dte(straddle, dte):
+    """agg whose expiry is `dte` trading sessions away (weekday-only calendar)."""
+    from datetime import date, timedelta
+    d = date.today()
+    n = 0
+    while True:
+        if _all_weekdays(d):
+            n += 1
+            if n == dte:
+                break
+        d += timedelta(days=1)
+    agg = _make_agg(straddle=straddle)
+    agg["expiry"] = d.isoformat()
+    return agg
+
+
+class TestDailyExpectedMove:
+    def test_sqrt_dte_scaling(self):
+        from services.analysis_engine.analyser.LiveStraddleAnalyser import daily_expected_move
+        assert daily_expected_move(200.0, 4) == pytest.approx(100.0)
+        assert daily_expected_move(300.0, 9) == pytest.approx(100.0)
+
+    def test_dte_one_and_zero_use_full_straddle(self):
+        from services.analysis_engine.analyser.LiveStraddleAnalyser import daily_expected_move
+        assert daily_expected_move(200.0, 1) == pytest.approx(200.0)
+        assert daily_expected_move(200.0, 0) == pytest.approx(200.0)
+        assert daily_expected_move(200.0, None) == pytest.approx(200.0)
+
+    def test_trading_days_to_expiry(self):
+        from datetime import date
+        from services.analysis_engine.analyser.LiveStraddleAnalyser import trading_days_to_expiry
+        mon = date(2026, 11, 23)
+        assert trading_days_to_expiry("2026-11-23", mon, _all_weekdays) == 1   # expiry day
+        assert trading_days_to_expiry("2026-11-26", mon, _all_weekdays) == 4   # Mon..Thu
+        assert trading_days_to_expiry("2026-11-30", mon, _all_weekdays) == 6   # skips weekend
+        assert trading_days_to_expiry("2026-11-20", mon, _all_weekdays) == 0   # past
+        assert trading_days_to_expiry(None, mon, _all_weekdays) is None
+
+
 class TestCheckImpliedMoveBoundary:
     def test_returns_none_when_no_open_reference(self):
-        a = LiveStraddleAnalyser("NIFTY")
-        result = a.check_implied_move_boundary(_make_agg(straddle=200.0), 20000.0)
+        a = LiveStraddleAnalyser("NIFTY", is_trading_day_fn=_all_weekdays)
+        result = a.check_implied_move_boundary(_agg_with_dte(200.0, 4), 20000.0)
         assert result is None
 
     def test_boundary_alert_when_range_consumed(self):
-        a = LiveStraddleAnalyser("NIFTY")
+        a = LiveStraddleAnalyser("NIFTY", is_trading_day_fn=_all_weekdays)
         h = _make_history_with_straddle([200.0, 200.0, 200.0], spot=20000.0, spacing_min=3)
-        # half_range=200*0.68/2=68; upper=20068; spot at 20062 → consumed=(20062-20000)/68=91% ≥ 75%
-        # remaining = 20068 - 20062 = 6 > 0 ✓
-        result = a.check_implied_move_boundary(_make_agg(straddle=200.0), 20062.0, history=h)
+        # DTE=4 → daily move = 200·√(1/4) = 100; spot +90 → 90% consumed ≥ 75%
+        result = a.check_implied_move_boundary(_agg_with_dte(200.0, 4), 20090.0, history=h)
         assert result is not None
         assert result[0] == "RANGE_BOUNDARY"
 
     def test_no_alert_when_inside_range(self):
-        a = LiveStraddleAnalyser("NIFTY")
+        a = LiveStraddleAnalyser("NIFTY", is_trading_day_fn=_all_weekdays)
         h = _make_history_with_straddle([200.0, 200.0, 200.0], spot=20000.0, spacing_min=3)
-        # spot moved only 50 points — 25% of 200
-        result = a.check_implied_move_boundary(_make_agg(straddle=200.0), 20050.0, history=h)
+        # DTE=4 → daily move 100; spot +50 → 50%
+        result = a.check_implied_move_boundary(_agg_with_dte(200.0, 4), 20050.0, history=h)
+        assert result is None
+
+    def test_old_068_range_no_longer_fires_far_from_expiry(self):
+        a = LiveStraddleAnalyser("NIFTY", is_trading_day_fn=_all_weekdays)
+        h = _make_history_with_straddle([200.0, 200.0, 200.0], spot=20000.0, spacing_min=3)
+        # Old logic: half_range = 68 → +62 fired. DTE=1 → daily move 200 → 31% only.
+        result = a.check_implied_move_boundary(_agg_with_dte(200.0, 1), 20062.0, history=h)
+        assert result is None
+        # Expiry day: fires at 75% of the full straddle
+        result = a.check_implied_move_boundary(_agg_with_dte(200.0, 1), 20160.0, history=h)
+        assert result is not None
+
+    def test_skips_when_expiry_unknown(self):
+        a = LiveStraddleAnalyser("NIFTY", is_trading_day_fn=_all_weekdays)
+        h = _make_history_with_straddle([200.0, 200.0, 200.0], spot=20000.0, spacing_min=3)
+        result = a.check_implied_move_boundary(_make_agg(straddle=200.0), 20190.0, history=h)
         assert result is None
 
 

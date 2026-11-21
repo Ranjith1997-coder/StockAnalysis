@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import threading
 import time
+from datetime import date, datetime
 from typing import Optional
 
 from lib.logging_util import get_logger
@@ -62,8 +63,22 @@ class TickStore:
             "iv_skew": 0.0,
             "max_oi_ce_strike": None,
             "max_oi_pe_strike": None,
+            # OI change since session open (sum over strikes of oi - open_oi).
+            # open_oi = first non-zero OI seen for the strike on the trading day
+            # (or Sensibull's day-open baseline oi - oi_change_quantity).
             "net_ce_oi_change": 0,
             "net_pe_oi_change": 0,
+            # Tick-to-tick OI change (sum of oi - prev_oi) — legacy semantics.
+            "net_ce_oi_change_tick": 0,
+            "net_pe_oi_change_tick": 0,
+            # PCR/OI totals only include strikes with OI > 0. Peripheral strikes
+            # are subscribed in MODE_QUOTE (no OI) so the effective window is
+            # ~ATM±3%. pcr_window_pct = max |strike-spot|/spot*100 over the
+            # strikes that actually contributed OI; pcr_strikes = their count.
+            "pcr_window_pct": 0.0,
+            "pcr_strikes": 0,
+            # Expiry (YYYY-MM-DD) of the live chain — set at registration time.
+            "expiry": None,
             "last_updated": 0.0,
             # Sensibull WS enrichment — populated when OPTIONS_SOURCE=sensibull;
             # remain at default (0.0 / None) in Zerodha mode.
@@ -85,6 +100,9 @@ class TickStore:
         # Live futures tick data from WebSocket
         # { "current": {ltp, oi, volume, …}, "next": {…} }
         self.futures_live: dict = {}
+
+        # Trading date for which per-strike ``open_oi`` baselines are valid.
+        self._oi_session_date: Optional[date] = None
 
     # ------------------------------------------------------------------
     # Equity / index tick
@@ -129,38 +147,102 @@ class TickStore:
     # Options ticks
     # ------------------------------------------------------------------
 
+    # Fields Sensibull may write in enrichment-only mode (Zerodha is the
+    # authoritative writer of ltp/oi/prev_oi/volume/timestamp/bid/ask).
+    ENRICHMENT_FIELDS = frozenset({"delta", "gamma", "theta", "vega", "iv", "iv_change"})
+
+    def _roll_oi_session(self) -> None:
+        """Reset per-strike ``open_oi`` baselines on a new trading day. Caller holds lock."""
+        today = date.today()
+        if self._oi_session_date == today:
+            return
+        if self._oi_session_date is not None:
+            for sides in self.options_live.values():
+                for entry in sides.values():
+                    entry.pop("open_oi", None)
+        self._oi_session_date = today
+
+    @staticmethod
+    def _best_price(depth: dict, side: str) -> Optional[float]:
+        """Best (level-0) price from a Zerodha depth dict; None when absent/zero."""
+        try:
+            levels = depth.get(side) or []
+            price = float(levels[0].get("price", 0) or 0) if levels else 0.0
+        except (AttributeError, TypeError, ValueError, IndexError):
+            return None
+        return price if price > 0 else None
+
     def update_option_tick(self, strike: float, option_type: str, tick: dict, merge: bool = False) -> None:
         """Update live option data from a WebSocket tick.
 
         Args:
-            merge: When True (enrichment-only mode), only writes keys present in
-                   ``tick`` without touching existing fields like ltp/oi/volume.
-                   The strike must already exist in options_live — if not, the
-                   update is silently skipped (Zerodha is the authoritative creator).
-                   Used by Sensibull in OPTIONS_SOURCE=both mode.
+            merge: When True (enrichment-only mode), only writes the Greeks/IV
+                   keys in ``ENRICHMENT_FIELDS`` — ltp/oi/prev_oi/volume/
+                   timestamp/bid/ask are never touched.  The strike must already
+                   exist in options_live — if not, the update is silently skipped
+                   (Zerodha is the authoritative creator).  Used by Sensibull
+                   whenever Zerodha is the options source.
+
+        Per-strike fields written in full-writer mode:
+            ltp, oi, prev_oi (tick-to-tick), open_oi (session baseline),
+            has_oi (False for MODE_QUOTE ticks, which carry no OI), volume,
+            buy_qty/sell_qty (total quantities), bid/ask (best prices from
+            Zerodha depth level 0, or Sensibull best_buy/sell_price), timestamp.
         """
         with self._lock:
-            self.option_tick_count += 1
             if merge:
                 # Enrichment-only: only update existing strikes (Zerodha-subscribed)
                 existing = self.options_live.get(strike, {}).get(option_type)
                 if existing is None:
                     logger.debug(f"[TickStore] Enrichment skip: strike {strike} {option_type} not in options_live (Zerodha not yet subscribed)")
                     return
-                existing.update(tick)
+                existing.update({k: v for k, v in tick.items() if k in self.ENRICHMENT_FIELDS})
                 return
+
+            self.option_tick_count += 1
+            self._roll_oi_session()
 
             if strike not in self.options_live:
                 self.options_live[strike] = {}
 
             entry = self.options_live[strike].get(option_type, {})
-            entry["prev_oi"] = entry.get("oi", 0)
             entry["ltp"] = tick.get("last_price", 0)
-            entry["oi"] = tick.get("oi", 0)
+            if "oi" in tick:
+                oi = tick.get("oi") or 0
+                entry["prev_oi"] = entry.get("oi", 0)
+                entry["oi"] = oi
+                entry["has_oi"] = True
+                baseline = tick.get("open_oi")
+                if baseline is not None:
+                    entry["open_oi"] = baseline
+                elif entry.get("open_oi") is None and oi > 0:
+                    # First OI seen this trading day.  Zerodha ticks carry no
+                    # prev-day close OI (oi_day_low/high are intraday extremes),
+                    # so after a mid-session restart this is the restart-time OI.
+                    entry["open_oi"] = oi
+            else:
+                # MODE_QUOTE tick: no OI in packet — keep last known OI, flag it.
+                entry.setdefault("oi", 0)
+                entry["prev_oi"] = entry["oi"]
+                entry["has_oi"] = False
             entry["volume"] = tick.get("volume_traded", 0)
             entry["buy_qty"] = tick.get("total_buy_quantity", 0)
             entry["sell_qty"] = tick.get("total_sell_quantity", 0)
-            entry["timestamp"] = tick.get("exchange_timestamp")
+            entry["timestamp"] = tick.get("exchange_timestamp") or datetime.now()
+
+            # Best bid/ask prices: explicit keys (Sensibull) win, else depth level 0.
+            bid = tick.get("bid")
+            ask = tick.get("ask")
+            depth = tick.get("depth")
+            if isinstance(depth, dict):
+                if bid is None:
+                    bid = self._best_price(depth, "buy")
+                if ask is None:
+                    ask = self._best_price(depth, "sell")
+            if bid is not None:
+                entry["bid"] = bid
+            if ask is not None:
+                entry["ask"] = ask
 
             # Greeks (populated by Sensibull path; absent in Zerodha ticks)
             if "delta" in tick:
@@ -185,27 +267,55 @@ class TickStore:
                      self.option_tick_count, option_type, strike,
                      entry.get("ltp", 0), entry.get("oi", 0))
 
+    def patch_options_aggregate(self, fields: dict) -> None:
+        """Thread-safe patch of enrichment fields into options_aggregate."""
+        with self._lock:
+            self.options_aggregate.update(fields)
+
+    def set_options_expiry(self, expiry: Optional[str]) -> None:
+        """Record which expiry the live chain belongs to (published in options_agg)."""
+        with self._lock:
+            self.options_aggregate["expiry"] = expiry
+
     def recompute_options_aggregate(self, spot_price: Optional[float] = None) -> None:
-        """Recompute aggregate metrics from options_live data."""
+        """Recompute aggregate metrics from options_live data.
+
+        Only legs with OI > 0 contribute to totals/PCR/walls: MODE_QUOTE
+        (peripheral) legs carry no OI and must not dilute or masquerade as a
+        complete chain.  ``pcr_window_pct`` reports the effective window.
+
+        ``net_*_oi_change`` = Σ(oi − open_oi) since session open (legs with a
+        known baseline only); ``net_*_oi_change_tick`` = Σ(oi − prev_oi).
+        """
         with self._lock:
             if not self.options_live:
                 return
 
             total_ce_oi = total_pe_oi = 0
             net_ce_oi_change = net_pe_oi_change = 0
+            net_ce_tick = net_pe_tick = 0
             max_ce_oi = max_pe_oi = 0
             max_ce_strike = max_pe_strike = None
+            oi_strikes: set = set()
 
             for strike, data in self.options_live.items():
                 ce = data.get("CE", {})
                 pe = data.get("PE", {})
 
-                ce_oi = ce.get("oi", 0)
-                pe_oi = pe.get("oi", 0)
-                total_ce_oi += ce_oi
-                total_pe_oi += pe_oi
-                net_ce_oi_change += ce_oi - ce.get("prev_oi", 0)
-                net_pe_oi_change += pe_oi - pe.get("prev_oi", 0)
+                ce_oi = ce.get("oi", 0) or 0
+                pe_oi = pe.get("oi", 0) or 0
+                if ce_oi > 0:
+                    oi_strikes.add(strike)
+                    total_ce_oi += ce_oi
+                    net_ce_tick += ce_oi - (ce.get("prev_oi", 0) or 0)
+                    if ce.get("open_oi") is not None:
+                        net_ce_oi_change += ce_oi - ce["open_oi"]
+                if pe_oi > 0:
+                    oi_strikes.add(strike)
+                    total_pe_oi += pe_oi
+                    net_pe_tick += pe_oi - (pe.get("prev_oi", 0) or 0)
+                    if pe.get("open_oi") is not None:
+                        net_pe_oi_change += pe_oi - pe["open_oi"]
 
                 if ce_oi > max_ce_oi:
                     max_ce_oi = ce_oi
@@ -222,6 +332,13 @@ class TickStore:
             agg["max_oi_pe_strike"] = max_pe_strike
             agg["net_ce_oi_change"] = net_ce_oi_change
             agg["net_pe_oi_change"] = net_pe_oi_change
+            agg["net_ce_oi_change_tick"] = net_ce_tick
+            agg["net_pe_oi_change_tick"] = net_pe_tick
+            agg["pcr_strikes"] = len(oi_strikes)
+            if spot_price and spot_price > 0 and oi_strikes:
+                agg["pcr_window_pct"] = round(
+                    max(abs(s - spot_price) for s in oi_strikes) / spot_price * 100, 2
+                )
 
             if spot_price and self.options_live:
                 closest_strike = min(self.options_live.keys(),

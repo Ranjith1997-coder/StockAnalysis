@@ -47,6 +47,7 @@ from common.token_registry import (
     TokenInfo,
     TokenType,
     TokenRegistry,
+    derive_strike_gap,
 )
 from services.common.version import BUILD_LABEL as _BUILD_LABEL, GIT_COMMIT as _GIT_COMMIT, GIT_DIRTY as _GIT_DIRTY
 from services.common.redis_proxy import RedisProxy
@@ -175,6 +176,19 @@ def _register_one_symbol(registry, stock, all_options_df, all_futures_df, parent
         return
 
     current_options = options[options["expiry"] == expiry_dates[0]]
+
+    # Strike gap from the nearest-expiry chain (NIFTY 50, BANKNIFTY/SENSEX 100…).
+    # Without this TokenRegistry falls back to 50 → wrong ATM rounding,
+    # re-centring and wall-proximity thresholds for non-50 indices.
+    gap = derive_strike_gap(current_options["strike"].tolist())
+    if gap:
+        registry.set_strike_gap(symbol, gap)
+        logger.debug(f"[market-data] {symbol} strike_gap={gap}")
+
+    if parent_type == TokenType.INDEX:
+        exp0 = expiry_dates[0]
+        expiry_str = exp0.strftime("%Y-%m-%d") if hasattr(exp0, "strftime") else str(exp0)[:10]
+        stock._tick_store.set_options_expiry(expiry_str)
 
     zerodha_ctx = stock.zerodha_ctx
     zerodha_ctx["option_chain"]["current"] = current_options
@@ -328,6 +342,11 @@ def _start_auth_commands_consumer(redis: RedisProxy, tm: ZerodhaTickerManager):
 
 
 # ── Sensibull feed startup ─────────────────────────────────────────────────
+
+def _sensibull_enrichment_only(options_source: str) -> bool:
+    """True unless Sensibull is the sole options source (OPTIONS_SOURCE=sensibull)."""
+    return (options_source or "zerodha").lower() != "sensibull"
+
 
 def _start_sensibull_feeds(tm: ZerodhaTickerManager, enrichment_only: bool):
     """Start Sensibull WS feeds for LIVE_OPTIONS_INDICES."""
@@ -534,7 +553,11 @@ def main():
     threading.Thread(target=_subscribe_options_later, daemon=True, name="opt-subscriber").start()
 
     # 9. Start Sensibull feeds
-    enrichment_only = options_source == "both"
+    # Sensibull is the full writer ONLY when it is the sole options source.
+    # Whenever Zerodha writes options (zerodha | both) Sensibull must be
+    # enrichment-only — otherwise both feeds overwrite ltp/oi/prev_oi and
+    # Sensibull triggers aggregates with the futures price as spot.
+    enrichment_only = _sensibull_enrichment_only(options_source)
     _start_sensibull_feeds(tm, enrichment_only=enrichment_only)
 
     # 10. Start snapshot publisher

@@ -13,8 +13,10 @@ logger = get_logger("notification")
 from ._guard import guard
 from ._helpers import find_stock_by_symbol, build_gainers_losers, refresh_stock_from_redis
 
-# Supported symbols for options commands
-_OPTIONS_SYMBOLS = {"NIFTY", "BANKNIFTY"}
+# Supported symbols for options commands (all live-options indices published
+# by market-data: NIFTY, BANKNIFTY, SENSEX).
+from common.constants import LIVE_OPTIONS_INDICES as _LIVE_OPTIONS_INDICES
+_OPTIONS_SYMBOLS = set(_LIVE_OPTIONS_INDICES)
 _STALE_THRESHOLD_SECS = 30
 
 
@@ -37,23 +39,32 @@ def _staleness_tag(last_updated: float) -> str:
     return ""
 
 
-def _session_wall_delta(symbol: str, wall_type: str, minutes: int = 375) -> tuple[int, int] | None:
+def _session_wall_delta(options_live: dict, strike, side: str) -> tuple[int, int] | None:
     """
-    Returns (open_oi, current_oi) for the dominant OI wall since session open.
-    Uses LiveOptionsHistory via live_options_engine. Returns None if no history yet
-    or if the wall strike migrated during the window.
+    Returns (open_oi, current_oi) for the wall strike/side since session open.
+
+    Reads the per-strike ``open_oi`` baseline that market-data's TickStore
+    records (first OI seen on the trading day, or Sensibull's day-open
+    baseline) and publishes into data:options_live.  Returns None when the
+    baseline is not available.
     """
-    import common.shared as _shared
-    tm = _shared.app_ctx.zd_ticker_manager
-    if tm is None:
-        return None  # WS moved to market-data service — no in-process history
-    engine = getattr(tm, "live_options_engine", None)
-    if engine is None:
+    leg = (options_live.get(strike) or {}).get(side) or {}
+    open_oi = leg.get("open_oi")
+    if open_oi is None:
         return None
-    history = engine.get_history(symbol)
-    if history is None or history.size() < 2:
+    try:
+        return int(open_oi), int(leg.get("oi", 0) or 0)
+    except (TypeError, ValueError):
         return None
-    return history.wall_oi_trend(wall_type, minutes)
+
+
+def _expected_moves(straddle: float, expiry) -> tuple[float, int | None]:
+    """(1-day expected move, DTE) — same formula as LiveStraddleAnalyser RANGE_BOUNDARY."""
+    from services.analysis_engine.analyser.LiveStraddleAnalyser import (
+        daily_expected_move, trading_days_to_expiry,
+    )
+    dte = trading_days_to_expiry(expiry)
+    return daily_expected_move(straddle, dte), dte
 
 
 def _resolve_options_stock(symbol: str):
@@ -63,7 +74,7 @@ def _resolve_options_stock(symbol: str):
     """
     if not symbol:
         return None, (
-            "Usage: <code>/straddle NIFTY</code> or <code>/straddle BANKNIFTY</code>\n"
+            "Usage: <code>/straddle NIFTY</code> (or BANKNIFTY / SENSEX)\n"
             f"Supported: {', '.join(sorted(_OPTIONS_SYMBOLS))}"
         )
     if symbol not in _OPTIONS_SYMBOLS:
@@ -372,7 +383,7 @@ async def cmd_holidays(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# /straddle <SYMBOL> — ATM straddle premium + expected 1-SD range
+# /straddle <SYMBOL> — ATM straddle premium + DTE-scaled expected move
 # ═══════════════════════════════════════════════════════════════════════════
 
 @guard
@@ -409,10 +420,17 @@ async def cmd_straddle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     ce_ltp = atm_data.get("CE", {}).get("ltp", 0.0)
     pe_ltp = atm_data.get("PE", {}).get("ltp", 0.0)
 
-    # 1-SD expected range = spot ± straddle premium
-    lower = spot - straddle
-    upper = spot + straddle
+    # ATM straddle ≈ expected absolute move to EXPIRY (≈0.8·σ·S·√T).
+    # 1-day expected move = straddle · √(1/DTE)   (DTE in trading sessions).
+    expiry = agg.get("expiry") or None
+    daily_move, dte = _expected_moves(straddle, expiry)
+    lower = spot - daily_move
+    upper = spot + daily_move
     straddle_pct = (straddle / spot * 100) if spot > 0 else 0.0
+    window_pct = agg.get("pcr_window_pct") or 0.0
+    window_str = f" (±{float(window_pct):.1f}% window)" if window_pct else ""
+    dte_str = f"{dte} DTE" if dte is not None else "DTE unknown"
+    expiry_str = f"Expiry:    <code>{str(expiry)[:10]}</code>  ({dte_str})" if expiry else f"Expiry:    {dte_str}"
 
     age_str = f"{time.time() - last_updated:.0f}s ago" if last_updated > 0 else ""
 
@@ -422,14 +440,17 @@ async def cmd_straddle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "",
         f"Spot:      <code>{spot:,.2f}</code>",
         f"ATM:       <code>{atm:,.0f}</code>",
+        expiry_str,
         "",
         f"Straddle:  <b><code>{straddle:.2f} pts</code></b>  ({straddle_pct:.2f}% of spot)",
-        f"Expected Range:  <code>{lower:,.2f}</code>  ↔  <code>{upper:,.2f}</code>",
+        f"1-day expected move:  <code>±{daily_move:,.0f}</code>  →  <code>{lower:,.2f}</code>  ↔  <code>{upper:,.2f}</code>",
+        f"To expiry:  <code>{spot - straddle:,.2f}</code>  ↔  <code>{spot + straddle:,.2f}</code>",
+        "<i>move ≈ straddle·√(1/DTE)</i>",
         "",
         f"CE leg (ATM {atm:,.0f}):  <code>{ce_ltp:.2f}</code>",
         f"PE leg (ATM {atm:,.0f}):  <code>{pe_ltp:.2f}</code>",
         "",
-        f"PCR: <code>{pcr:.2f}</code>  |  CE OI: <code>{_fmt_oi(total_ce_oi)}</code>  |  PE OI: <code>{_fmt_oi(total_pe_oi)}</code>",
+        f"PCR{window_str}: <code>{pcr:.2f}</code>  |  CE OI: <code>{_fmt_oi(int(total_ce_oi))}</code>  |  PE OI: <code>{_fmt_oi(int(total_pe_oi))}</code>",
     ]
     if stale:
         lines.append(stale)
@@ -481,9 +502,9 @@ async def cmd_walls(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     pe_wall_oi = pe_wall_data.get("oi", 0)
     pe_wall_tick_net = pe_wall_oi - pe_wall_data.get("prev_oi", pe_wall_oi)
 
-    # Session-level delta from LiveOptionsHistory (open-of-day vs now)
-    ce_session = _session_wall_delta(symbol, "CE")
-    pe_session = _session_wall_delta(symbol, "PE")
+    # Session-level delta from per-strike open_oi (published by market-data)
+    ce_session = _session_wall_delta(options_live, ce_wall, "CE")
+    pe_session = _session_wall_delta(options_live, pe_wall, "PE")
 
     # Gaps from spot to each wall
     ce_gap = ce_wall - spot if spot > 0 else 0.0

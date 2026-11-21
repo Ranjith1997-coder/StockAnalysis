@@ -14,15 +14,25 @@ class LiveOIAnalyser:
 
     Strategies:
       - PCR Crossover:     PCR crosses 1.0 → directional bias shift
-      - PCR Extreme:       PCR enters extreme zone (<0.7 or >1.3) → contrarian signal
+      - PCR Bias zone:     OI-PCR enters a strong bias zone (≥1.3 bullish, ≤0.7 bearish).
+                           NOTE: these are *bias* (writer-positioning) semantics, NOT
+                           the batch PCRAnalyser "extreme/contrarian" semantics
+                           (PCRAnalyser: ≤0.3 / ≥1.5).  Live PCR is PE OI / CE OI over
+                           the subscribed window (see agg["pcr_window_pct"]): high PCR
+                           = put writers dominant = support = BULLISH bias.
+                           Alert type names PCR_EXTREME_PE/CE are kept for
+                           cooldown/consumer compatibility.
       - PCR Sustained:     PCR trending in one direction for ≥15 min → confirmed bias
       - OI Wall Breach:    Spot near max OI wall while wall OI falls → breakout setup
                            Uses 15-min history when available, falls back to 5-tick deque
     """
 
     PCR_CROSS_LEVEL      = 1.0    # Directional pivot
-    PCR_EXTREME_PE       = 1.3    # Excess put buying  — contrarian bearish
-    PCR_EXTREME_CE       = 0.7    # Excess call buying — contrarian bullish
+    PCR_BIAS_BULLISH     = 1.3    # PE OI ≥ 1.3× CE OI — put writers dominant → BULLISH bias
+    PCR_BIAS_BEARISH     = 0.7    # PE OI ≤ 0.7× CE OI — call writers dominant → BEARISH bias
+    # Back-compat aliases (legacy names; semantics are bias, not contrarian extremes)
+    PCR_EXTREME_PE       = PCR_BIAS_BULLISH
+    PCR_EXTREME_CE       = PCR_BIAS_BEARISH
     PCR_SUSTAINED_MIN    = 15     # Minutes of sustained PCR trend needed
     OI_WALL_PROXIMITY    = 0.6    # Alert when within 0.6 × strike_gap of a wall
     OI_WEAKENING_SHORT   = -0.03  # −3% over last 5 ticks (fast signal)
@@ -87,7 +97,8 @@ class LiveOIAnalyser:
 
     def check_pcr_extreme(self, agg: dict) -> tuple[str, str] | None:
         """
-        Fires when PCR enters an extreme zone.
+        Fires when OI-PCR enters a strong *bias* zone (≥ PCR_BIAS_BULLISH →
+        PCR_EXTREME_PE / bullish; ≤ PCR_BIAS_BEARISH → PCR_EXTREME_CE / bearish).
         Call after check_pcr_crossover() (which updates history).
         """
         if len(self._pcr_history) < 2:
@@ -96,19 +107,19 @@ class LiveOIAnalyser:
         prev = self._pcr_history[-2]
         curr = self._pcr_history[-1]
 
-        if prev < self.PCR_EXTREME_PE <= curr:
+        if prev < self.PCR_BIAS_BULLISH <= curr:
             msg = F.build(
-                F.header(self.symbol, "PCR Extreme — PUT HEAVY", "⚠️"),
-                F.kv("PCR", f"{curr:.3f}  (≥ {self.PCR_EXTREME_PE})"),
-                F.signal("Excessive put buying. Contrarian signal: possible <b>bounce</b>."),
+                F.header(self.symbol, "PCR Bias — PUT OI HEAVY", "⚠️"),
+                F.kv("PCR", f"{curr:.3f}  (≥ {self.PCR_BIAS_BULLISH})"),
+                F.signal("Put writers dominant — support building. Bias: <b>BULLISH</b>."),
             )
             return ("PCR_EXTREME_PE", msg)
 
-        if prev > self.PCR_EXTREME_CE >= curr:
+        if prev > self.PCR_BIAS_BEARISH >= curr:
             msg = F.build(
-                F.header(self.symbol, "PCR Extreme — CALL HEAVY", "⚠️"),
-                F.kv("PCR", f"{curr:.3f}  (≤ {self.PCR_EXTREME_CE})"),
-                F.signal("Excessive call buying. Contrarian signal: possible <b>reversal down</b>."),
+                F.header(self.symbol, "PCR Bias — CALL OI HEAVY", "⚠️"),
+                F.kv("PCR", f"{curr:.3f}  (≤ {self.PCR_BIAS_BEARISH})"),
+                F.signal("Call writers dominant — resistance building. Bias: <b>BEARISH</b>."),
             )
             return ("PCR_EXTREME_CE", msg)
 

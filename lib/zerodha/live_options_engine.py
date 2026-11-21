@@ -121,8 +121,9 @@ class LiveOptionsEngine:
     ALERT_DIRECTION: dict[str, Direction] = {
         "PCR_CROSSOVER_BULLISH": Direction.BULLISH,
         "PCR_CROSSOVER_BEARISH": Direction.BEARISH,
-        "PCR_EXTREME_PE":        Direction.BULLISH,    # contrarian: excess puts = bounce
-        "PCR_EXTREME_CE":        Direction.BEARISH,    # contrarian: excess calls = drop
+        # OI-PCR bias zones (not contrarian): high PE OI = put writers = support
+        "PCR_EXTREME_PE":        Direction.BULLISH,
+        "PCR_EXTREME_CE":        Direction.BEARISH,
         "PCR_SUSTAINED_BULLISH": Direction.BULLISH,
         "PCR_SUSTAINED_BEARISH": Direction.BEARISH,
         "SKEW_FLIP_BULLISH":     Direction.BULLISH,

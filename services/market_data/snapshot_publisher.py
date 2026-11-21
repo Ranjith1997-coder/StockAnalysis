@@ -8,8 +8,8 @@ without holding WebSocket connections.
 
 Redis keys written:
   data:tick:{symbol}          — equity/index tick (last_price, ohlc, volume, ...)
-  data:options_live:{symbol}  — per-strike CE/PE tick JSON (DELETE + HSET)
-  data:options_agg:{symbol}   — aggregate metrics (PCR, ATM, walls, gex_*, ...)
+  data:options_live:{symbol}  — per-strike CE/PE tick JSON (atomic MULTI: DEL + HSET)
+  data:options_agg:{symbol}   — aggregate metrics (PCR, ATM, walls, gex_*, expiry, ...)
   data:futures_live:{symbol}  — current/next futures tick
 """
 from __future__ import annotations
@@ -94,13 +94,37 @@ class SnapshotPublisher:
                 "tick_count": str(ts.tick_count),
             })
 
+    def _replace_hash_atomically(self, key: str, mapping: dict) -> None:
+        """Replace hash ``key`` with ``mapping`` without readers ever seeing it empty.
+
+        Preferred: MULTI/EXEC pipeline (DEL + HSET applied atomically).
+        Fallback (client without pipeline): HSET first, then HDEL stale fields —
+        the hash is never empty, at worst briefly holds extra stale strikes.
+        """
+        client = self._redis
+        pipeline_fn = getattr(client, "pipeline", None)
+        if pipeline_fn is None:
+            pipeline_fn = getattr(getattr(client, "_client", None), "pipeline", None)
+        if callable(pipeline_fn):
+            pipe = pipeline_fn(transaction=True)
+            pipe.delete(key)
+            pipe.hset(key, mapping=mapping)
+            pipe.execute()
+            return
+        client.hset(key, mapping=mapping)
+        stale = [f for f in (client.hkeys(key) or []) if f not in mapping]
+        if stale:
+            client.hdel(key, *stale)
+
     def _publish_options(self) -> None:
         for idx in self._index_objs:
             if idx.stock_symbol not in constant.LIVE_OPTIONS_INDICES:
                 continue
             ts = idx._tick_store
 
-            if ts.options_live:
+            # Snapshot under the TickStore lock so the tick thread can't mutate
+            # the dicts mid-iteration.
+            with ts._lock:
                 mapping = {}
                 for strike, sides in ts.options_live.items():
                     strike_key = str(float(strike))
@@ -108,20 +132,21 @@ class SnapshotPublisher:
                         tick = sides.get(opt_type)
                         if tick:
                             mapping[f"{strike_key}_{opt_type}"] = json.dumps(tick, default=str)
-                if mapping:
-                    key = f"data:options_live:{idx.stock_symbol}"
-                    self._redis.delete(key)
-                    self._redis.hset(key, mapping=mapping)
+                agg = dict(ts.options_aggregate)
+                option_tick_count = ts.option_tick_count
+                tick_count = ts.tick_count
 
-            agg = ts.options_aggregate
+            if mapping:
+                self._replace_hash_atomically(f"data:options_live:{idx.stock_symbol}", mapping)
+
             if agg.get("last_updated", 0) > 0:
                 agg_mapping = {}
                 for k, v in agg.items():
                     if k == "gex_by_strike":
                         continue
                     agg_mapping[k] = str(v) if v is not None else ""
-                agg_mapping["option_tick_count"] = str(ts.option_tick_count)
-                agg_mapping["tick_count"] = str(ts.tick_count)
+                agg_mapping["option_tick_count"] = str(option_tick_count)
+                agg_mapping["tick_count"] = str(tick_count)
                 self._redis.hset(f"data:options_agg:{idx.stock_symbol}", mapping=agg_mapping)
 
     def _publish_futures(self) -> None:

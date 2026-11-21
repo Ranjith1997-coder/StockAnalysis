@@ -1,12 +1,76 @@
+import math
 import time
 from collections import deque
+from datetime import date, datetime, timedelta
+from typing import TYPE_CHECKING, Callable, Optional
+
 from lib.logging_util import get_logger
 logger = get_logger("analyser")
 from .LiveAlertFormatter import F
 
-from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .LiveOptionsHistory import LiveOptionsHistory
+
+
+def _parse_expiry(expiry) -> Optional[date]:
+    if expiry is None or expiry == "":
+        return None
+    if isinstance(expiry, datetime):
+        return expiry.date()
+    if isinstance(expiry, date):
+        return expiry
+    try:
+        return datetime.strptime(str(expiry)[:10], "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+def _default_is_trading_day(d: date) -> bool:
+    try:
+        from common.market_calendar import is_trading_day
+        return is_trading_day(d)
+    except Exception:
+        return d.weekday() < 5
+
+
+def trading_days_to_expiry(
+    expiry,
+    today: Optional[date] = None,
+    is_trading_day_fn: Optional[Callable[[date], bool]] = None,
+) -> Optional[int]:
+    """Trading sessions from ``today`` through ``expiry`` inclusive.
+
+    Expiry day itself → 1.  An expiry already in the past → 0.
+    Returns None when the expiry is unknown/unparseable.
+    """
+    exp = _parse_expiry(expiry)
+    if exp is None:
+        return None
+    today = today or date.today()
+    if exp < today:
+        return 0
+    fn = is_trading_day_fn or _default_is_trading_day
+    n, d = 0, today
+    while d <= exp:
+        if fn(d):
+            n += 1
+        d += timedelta(days=1)
+    return n
+
+
+def daily_expected_move(straddle: float, dte_trading_days: Optional[int]) -> float:
+    """1-day expected move implied by an ATM straddle.
+
+    ATM straddle ≈ 0.8·σ·S·√T  (= E|ΔS| over the remaining life, T to expiry).
+    Volatility scales with √time, so the expected absolute move for ONE
+    session is   daily_move ≈ straddle · √(1 / DTE)   with DTE in trading
+    days.  (The 1-SD daily move is daily_move / 0.8.)
+    DTE ≤ 1 (expiry day, or stale/past expiry) → the straddle itself.
+    """
+    if straddle <= 0:
+        return 0.0
+    dte = max(1, int(dte_trading_days or 1))
+    return straddle * math.sqrt(1.0 / dte)
 
 
 class LiveStraddleAnalyser:
@@ -17,7 +81,8 @@ class LiveStraddleAnalyser:
       - IV Change Detection:   Straddle ±% with spot flat → IV expanding/compressing.
                                Uses history for 5-min comparison when available;
                                falls back to internal 60-s snapshot deque otherwise.
-      - ATM Implied Move:      Spot consumed ≥ 75% of expected daily range → boundary alert.
+      - ATM Implied Move:      Spot consumed ≥ 75% of the 1-day expected move
+                               (open straddle · √(1/DTE)) → boundary alert.
                                Opening reference comes from history[0] (true open) when
                                available, else from first tick seen this session.
       - IV Skew Reversal:      IV skew (PE IV − CE IV) crosses zero → real skew flip alert.
@@ -41,8 +106,11 @@ class LiveStraddleAnalyser:
     # A real ATM straddle is typically 0.5-3% of spot. Below 0.3% means one leg is missing.
     MIN_STRADDLE_SPOT_PCT  = 0.003
 
-    def __init__(self, symbol: str):
+    def __init__(self, symbol: str, is_trading_day_fn: Optional[Callable[[date], bool]] = None):
         self.symbol = symbol
+        self._is_trading_day_fn = is_trading_day_fn
+        # (expiry_str, today) → DTE cache; the check runs every second.
+        self._dte_cache: tuple | None = None
 
         # Internal fallback snapshot deque (used before history has enough data)
         self._snapshots: deque = deque(maxlen=12)      # (ts, straddle, spot)
@@ -87,6 +155,16 @@ class LiveStraddleAnalyser:
             if oldest and oldest.straddle > 0 and oldest.spot > 0:
                 return oldest.straddle, oldest.spot
         return self._open_straddle, self._open_spot
+
+    def _dte(self, expiry) -> Optional[int]:
+        if expiry is None or expiry == "":
+            return None
+        key = (str(expiry), date.today())
+        if self._dte_cache and self._dte_cache[0] == key:
+            return self._dte_cache[1]
+        dte = trading_days_to_expiry(expiry, is_trading_day_fn=self._is_trading_day_fn)
+        self._dte_cache = (key, dte)
+        return dte
 
     # ── signal checks ─────────────────────────────────────────────────────────
 
@@ -174,8 +252,10 @@ class LiveStraddleAnalyser:
         history: "LiveOptionsHistory | None" = None,
     ) -> tuple[str, str] | None:
         """
-        Expected daily range = ATM straddle × 0.68.
-        Fires when spot has consumed ≥ 75% of that range from the session open.
+        Expected 1-day move = open ATM straddle · √(1/DTE)   (see daily_expected_move).
+        Range = open_spot ± daily_move.  Fires when spot has consumed ≥ 75% of
+        that one-sided move from the session open.  DTE = trading sessions to
+        the live-chain expiry (agg["expiry"]); skipped when expiry is unknown.
 
         Opening reference: history[0] if available, else first-tick cache.
         """
@@ -187,11 +267,15 @@ class LiveStraddleAnalyser:
         self._record_snapshot(straddle, spot)
 
         open_straddle, open_spot = self._open_reference(history)
-        if open_spot <= 0:
+        if open_spot <= 0 or open_straddle <= 0:
             return None
 
-        expected_range = open_straddle * 0.68
-        half_range     = expected_range / 2.0
+        dte = self._dte(agg.get("expiry"))
+        if dte is None:
+            logger.debug(f"[RANGE_BOUNDARY] {self.symbol} | SOURCE expiry=None — skip (DTE unknown)")
+            return None
+
+        half_range     = daily_expected_move(open_straddle, dte)
         upper          = open_spot + half_range
         lower          = open_spot - half_range
 
@@ -210,7 +294,7 @@ class LiveStraddleAnalyser:
             msg = F.build(
                 F.header(self.symbol, f"Near Range Boundary  ({source_note})", "📏"),
                 F.kv_pair("Spot", f"{spot:.2f}", "Direction", f"<b>{direction}</b>"),
-                F.kv("Range", f"{lower:.0f} – {upper:.0f}  (open straddle: {open_straddle:.0f})"),
+                F.kv("Range", f"{lower:.0f} – {upper:.0f}  (1-day move ±{half_range:.0f} = straddle {open_straddle:.0f}·√(1/{max(dte, 1)}))"),
                 F.kv_pair("Used", f"{used_pct*100:.0f}%", "Remaining", f"{remaining:.0f} pts"),
                 F.signal(f"Consider booking <b>{book_action}</b> or hedging."),
             )

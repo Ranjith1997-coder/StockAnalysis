@@ -370,3 +370,27 @@ class TestThreadSafety:
         [t.start() for t in threads]
         [t.join() for t in threads]
         assert errors == []
+
+
+# ── derive_strike_gap ─────────────────────────────────────────────────────────
+
+class TestDeriveStrikeGap:
+    def test_nifty_50(self):
+        from common.token_registry import derive_strike_gap
+        assert derive_strike_gap([24000, 24050, 24100, 24200, 24000]) == 50.0
+
+    def test_banknifty_100_unsorted_floats(self):
+        from common.token_registry import derive_strike_gap
+        assert derive_strike_gap([52500.0, 52300.0, 52400.0, 53000.0]) == 100.0
+
+    def test_insufficient_strikes(self):
+        from common.token_registry import derive_strike_gap
+        assert derive_strike_gap([24000]) is None
+        assert derive_strike_gap([]) is None
+
+    def test_registry_rounding_uses_gap(self):
+        r = TokenRegistry()
+        assert r.round_to_strike(52340.0, "BANKNIFTY") == 52350.0  # default 50 (wrong)
+        r.set_strike_gap("BANKNIFTY", 100.0)
+        assert r.round_to_strike(52340.0, "BANKNIFTY") == 52300.0
+        assert r.has_strike_gap("BANKNIFTY")

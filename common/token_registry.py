@@ -34,6 +34,11 @@ WS_MODE_LTP = "ltp"
 # OI is critical for option strategies (OI walls, PCR, buildup detection),
 # so both CORE and ACTIVE zones use MODE_FULL.
 # PERIPHERAL uses MODE_QUOTE for volume data without the depth overhead.
+#
+# Consequence: peripheral (3-5%) legs carry NO OI.  Rather than upgrading them
+# to MODE_FULL (4x bandwidth per token, more WS2 load on recentring), TickStore
+# excludes legs without OI from totals/PCR/walls and publishes the effective
+# window as ``pcr_window_pct`` (≈3%) + ``pcr_strikes`` in data:options_agg.
 ZONE_TO_WS_MODE = {
     OptionZone.CORE: WS_MODE_FULL,        # OI + Volume + Depth
     OptionZone.ACTIVE: WS_MODE_FULL,       # OI + Volume + Depth
@@ -52,6 +57,20 @@ class TokenInfo:
     expiry: Optional[object] = None     # date or string
     zone: Optional[OptionZone] = None   # Only for options
     is_subscribed: bool = False
+
+
+def derive_strike_gap(strikes) -> Optional[float]:
+    """Strike gap = minimum positive difference between sorted unique strikes.
+
+    Pass strikes for a single (nearest) expiry.  Returns None when fewer than
+    two distinct valid strikes exist.
+    """
+    uniq = sorted({float(s) for s in strikes
+                   if s is not None and math.isfinite(float(s)) and float(s) > 0})
+    if len(uniq) < 2:
+        return None
+    diffs = [b - a for a, b in zip(uniq, uniq[1:]) if b - a > 0]
+    return min(diffs) if diffs else None
 
 
 class TokenRegistry:
@@ -131,6 +150,9 @@ class TokenRegistry:
 
     def get_strike_gap(self, symbol: str) -> float:
         return self._strike_gaps.get(symbol, 50.0)
+
+    def has_strike_gap(self, symbol: str) -> bool:
+        return symbol in self._strike_gaps
 
     def get_tokens_by_type(self, parent_symbol: str, token_type: TokenType) -> Set[int]:
         return self._parent_map.get(parent_symbol, {}).get(token_type, set()).copy()

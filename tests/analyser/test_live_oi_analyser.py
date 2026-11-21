@@ -190,3 +190,19 @@ class TestUpdatePcr:
         analyser = LiveOIAnalyser("NIFTY", 100)
         analyser.update_pcr(-0.5)
         assert len(analyser._pcr_history) == 0
+
+
+class TestPcrBiasNaming:
+    def test_bias_thresholds_and_legacy_aliases(self):
+        from services.analysis_engine.analyser.LiveOIAnalyser import LiveOIAnalyser as A
+        assert A.PCR_BIAS_BULLISH == A.PCR_EXTREME_PE == 1.3
+        assert A.PCR_BIAS_BEARISH == A.PCR_EXTREME_CE == 0.7
+
+    def test_high_pcr_message_is_bullish_bias(self):
+        from services.analysis_engine.analyser.LiveOIAnalyser import LiveOIAnalyser as A
+        a = A("NIFTY", 50.0)
+        a.update_pcr(1.25)
+        a.update_pcr(1.35)
+        alert_type, msg = a.check_pcr_extreme({"live_pcr": 1.35})
+        assert alert_type == "PCR_EXTREME_PE"
+        assert "BULLISH" in msg and "Contrarian" not in msg

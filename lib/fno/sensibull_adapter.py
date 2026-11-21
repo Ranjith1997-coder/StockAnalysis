@@ -2,27 +2,29 @@
 SensibullAdapter — translates a decoded Sensibull WS option-chain snapshot
 into the same TickStore structures that the Zerodha tick path produces.
 
-After ``apply()`` completes, ``options_live`` and ``options_aggregate`` on
-the target Stock are fully populated and ``LiveOptionsEngine.on_aggregate_updated``
-is called — exactly as in the Zerodha code path.
+Two modes (selected by services/market_data/main.py from OPTIONS_SOURCE):
 
-Sensibull → internal field mapping
-───────────────────────────────────
-options_live[strike][CE/PE]:
-  last_price          → "last_price"   (TickStore reads tick.get("last_price"))
-  oi                  → "oi"
-  volume              → "volume_traded"
-  best_buy_price      → "total_buy_quantity"   (price proxy, no qty available)
-  best_sell_price     → "total_sell_quantity"  (price proxy)
+Full-writer mode (enrichment_only=False, OPTIONS_SOURCE=sensibull only):
+  options_live[strike][CE/PE]:
+    last_price          → "last_price"
+    oi                  → "oi"           (open_oi = oi − oi_change_quantity)
+    volume              → "volume_traded"
+    best_buy_price      → "bid"          (price — NOT a quantity)
+    best_sell_price     → "ask"
+    best_buy_quantity / best_sell_quantity → buy_qty / sell_qty (0 if absent)
+  Aggregates are recomputed with the *index* spot (Zerodha WS1 index tick)
+  when available; ``future_price`` is used only as a last-resort fallback.
 
-options_aggregate (Sensibull-only enrichment, patched after recompute):
-  atm_iv, atm_iv_percentile, atm_ivp_type, max_pain_strike, future_price
-
-enrichment_only mode (OPTIONS_SOURCE=both):
-  Only Greeks/IV fields are written to options_live (via merge=True in
-  TickStore — silently skips far-OTM strikes not subscribed by Zerodha).
-  options_aggregate Sensibull fields are always patched.
-  on_aggregate_updated is NOT called (Zerodha is the authoritative trigger).
+Enrichment-only mode (enrichment_only=True — whenever Zerodha is the options
+source, i.e. OPTIONS_SOURCE=zerodha or both):
+  * Only Greeks/IV (delta/gamma/theta/vega/iv/iv_change) are merged into
+    existing Zerodha-created strikes (TickStore merge=True).
+  * ltp/oi/prev_oi/volume/timestamp/bid/ask are never written.
+  * Aggregate enrichment fields (atm_iv, atm_iv_percentile, atm_ivp_type,
+    max_pain_strike, future_price, atm_iv_ce/pe, iv_skew) are patched.
+  * recompute_options_aggregate / on_aggregate_updated are NOT called —
+    Zerodha is the authoritative trigger, and futures price is never used
+    as spot.
 """
 from __future__ import annotations
 
@@ -66,11 +68,11 @@ class SensibullAdapter:
 
         Normal mode (enrichment_only=False):
           1. Update ``options_live`` for every strike/side (full tick).
-          2. Call ``recompute_options_aggregate``.
+          2. Call ``recompute_options_aggregate`` (index spot, futures fallback).
           3. Patch Sensibull-only enrichment fields into ``options_aggregate``.
           4. Call ``live_options_engine.on_aggregate_updated``.
 
-        Enrichment-only mode (enrichment_only=True, OPTIONS_SOURCE=both):
+        Enrichment-only mode (enrichment_only=True — Zerodha is options source):
           1. Write only Greeks/IV fields to existing strikes (merge=True —
              skips far-OTM strikes not yet written by Zerodha).
           2. Patch Sensibull-only aggregate fields (atm_iv, ivp, max_pain…).
@@ -79,7 +81,7 @@ class SensibullAdapter:
         """
         symbol = index_stock.stock_symbol
         chain: dict = data.get("chain", {})
-        spot: float = data.get("future_price") or 0.0
+        future_price: float = data.get("future_price") or 0.0
 
         if not chain:
             logger.debug(f"[SensibullAdapter] empty chain for {symbol}, skipping")
@@ -140,9 +142,9 @@ class SensibullAdapter:
                 delta = call_delta if internal_side == "CE" else (call_delta - 1.0)
 
                 if enrichment_only:
-                    # Only write Greeks/IV — never touch ltp/oi/volume/buy_qty.
-                    # merge=True silently skips strikes not yet in options_live
-                    # (i.e. far-OTM strikes outside Zerodha's subscription zone).
+                    # Only write Greeks/IV — never touch ltp/oi/prev_oi/volume/
+                    # timestamp/bid/ask.  merge=True silently skips strikes not
+                    # yet in options_live (outside Zerodha's subscription zone).
                     greek_tick = {
                         "delta":     delta,
                         "gamma":     gamma,
@@ -156,9 +158,14 @@ class SensibullAdapter:
                     tick = {
                         "last_price":           leg.get("last_price") or 0,
                         "oi":                   current_oi,
+                        # Day-open OI baseline (Sensibull oi_change_quantity is
+                        # the absolute change since day open).
+                        "open_oi":              current_oi - oi_change_qty,
                         "volume_traded":        leg.get("volume") or 0,
-                        "total_buy_quantity":   leg.get("best_buy_price") or 0,
-                        "total_sell_quantity":  leg.get("best_sell_price") or 0,
+                        "total_buy_quantity":   leg.get("best_buy_quantity") or 0,
+                        "total_sell_quantity":  leg.get("best_sell_quantity") or 0,
+                        "bid":      leg.get("best_buy_price") or 0,
+                        "ask":      leg.get("best_sell_price") or 0,
                         "delta":    delta,
                         "gamma":    gamma,
                         "theta":    theta,
@@ -168,26 +175,31 @@ class SensibullAdapter:
                     }
                     index_stock.update_option_tick(strike, internal_side, tick)
 
-            # Patch prev_oi using the snapshot taken before cache update.
-            # TickStore.update_option_tick sets prev_oi = old entry["oi"] which
-            # is correct on subsequent calls, but on the first call it is 0.
-            # The snapshot gives the day-open baseline on first call and the
-            # true previous OI on all subsequent calls.
-            _patch_prev_oi(index_stock, strike, prev_oi_snapshot)
+            # Full-writer mode only: patch prev_oi using the snapshot taken
+            # before cache update (first call → day-open baseline).  Never in
+            # enrichment mode — Zerodha owns prev_oi there.
+            if not enrichment_only:
+                _patch_prev_oi(index_stock, strike, prev_oi_snapshot)
 
         # ── 2. Recompute aggregate (PCR, ATM strike, straddle, OI walls) ──────
         # Skipped in enrichment_only mode — Zerodha owns the aggregate trigger.
+        # Use the real index spot; futures price only as a fallback.
+        engine_spot = 0.0
         if not enrichment_only:
-            index_stock.recompute_options_aggregate(spot if spot > 0 else None)
+            engine_spot = _index_spot(index_stock) or (future_price if future_price > 0 else 0.0)
+            index_stock.recompute_options_aggregate(engine_spot or None)
 
         # ── 3. Patch Sensibull-only enrichment fields ─────────────────────────
         # Always patched regardless of mode — Zerodha never writes these fields.
-        agg = index_stock._tick_store.options_aggregate
-        agg["atm_iv"]            = data.get("atm_iv", 0.0) or 0.0
-        agg["atm_iv_percentile"] = data.get("atm_iv_percentile", 0.0) or 0.0
-        agg["atm_ivp_type"]      = data.get("atm_ivp_type")
-        agg["max_pain_strike"]   = data.get("max_pain_strike")
-        agg["future_price"]      = spot
+        ts = index_stock._tick_store
+        patch: dict = {
+            "atm_iv":            data.get("atm_iv", 0.0) or 0.0,
+            "atm_iv_percentile": data.get("atm_iv_percentile", 0.0) or 0.0,
+            "atm_ivp_type":      data.get("atm_ivp_type"),
+            "max_pain_strike":   data.get("max_pain_strike"),
+            "future_price":      future_price,
+        }
+        agg = ts.options_aggregate
 
         # ── 3a. Populate atm_iv_ce, atm_iv_pe, iv_skew from per-strike IVs ───
         # Sensibull gives one IV per strike in greeks.iv.  We use the nearest
@@ -213,26 +225,39 @@ class SensibullAdapter:
                 ce_iv = strike_iv.get(ce_strike, 0.0) if ce_strike else 0.0
                 pe_iv = strike_iv.get(pe_strike, 0.0) if pe_strike else 0.0
 
-                agg["atm_iv_ce"] = ce_iv
-                agg["atm_iv_pe"] = pe_iv
+                patch["atm_iv_ce"] = ce_iv
+                patch["atm_iv_pe"] = pe_iv
                 # skew in percentage-point terms (matching context_builder convention)
                 if ce_iv > 0 and pe_iv > 0:
-                    agg["iv_skew"] = (pe_iv - ce_iv) * 100
+                    patch["iv_skew"] = (pe_iv - ce_iv) * 100
+
+        ts.patch_options_aggregate(patch)
 
         # ── 4. Notify the live options engine ─────────────────────────────────
         # Skipped in enrichment_only mode — Zerodha ticks are the authoritative
         # engine trigger; Sensibull is a passive enrichment source only.
         if live_options_engine and not enrichment_only:
-            live_options_engine.on_aggregate_updated(index_stock, spot if spot > 0 else 0)
+            live_options_engine.on_aggregate_updated(index_stock, engine_spot)
 
         logger.debug(
             f"[SensibullAdapter] {symbol} {'enriched' if enrichment_only else 'updated'} — "
-            f"strikes={len(chain)}, spot={spot}, "
+            f"strikes={len(chain)}, future_price={future_price}, "
             f"atm_iv={agg.get('atm_iv', 0):.3f}, ivp={agg.get('atm_iv_percentile', 0):.1f}"
         )
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
+
+def _index_spot(index_stock: "Stock") -> float:
+    """Underlying index spot from the Zerodha WS1 index tick (0.0 if absent)."""
+    try:
+        px = index_stock._tick_store._zerodha_data.get("last_price") or 0.0
+        if not px:
+            px = getattr(index_stock, "ltp", 0.0) or 0.0
+        return float(px) if px and px > 0 else 0.0
+    except (AttributeError, TypeError, ValueError):
+        return 0.0
+
 
 def _patch_prev_oi(
     index_stock: "Stock",
