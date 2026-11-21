@@ -66,6 +66,11 @@ def run_one(symbol: str, end_date: date, seed: int, variant: dict, config: PINNC
 
     bhavcopy = fetch_recent_bhavcopies(
         n_days=config.training_window_days + 1, end_date=end_date, symbols=[symbol],
+        # run_training.py leaves max_days_back at its default of 20 CALENDAR
+        # days, which silently truncates any window wider than ~14 trading
+        # days (N trading days needs ~N*1.4 calendar days). Scale it here so a
+        # 14/21-day window actually fetches the requested span.
+        max_days_back=max(20, (config.training_window_days + 1) * 2 + 10),
     )
     if bhavcopy.empty:
         return {"status": "no_data", "symbol": symbol, "end_date": end_date.isoformat(), "seed": seed}
@@ -156,12 +161,16 @@ def main(argv: list | None = None) -> int:
     parser.add_argument("--dates", default="2026-08-10:2026-08-21", help="START:END (inclusive)")
     parser.add_argument("--symbols", nargs="+", default=["NIFTY", "BANKNIFTY"])
     parser.add_argument("--seeds", nargs="+", type=int, default=[42])
+    parser.add_argument("--window", type=int, default=None,
+                        help="Override PINNConfig.training_window_days (default 7)")
     parser.add_argument("--out", default=None, help="JSON output path (default: /tmp/pinn_bench_<variant>.json)")
     parser.add_argument("--no-deterministic", action="store_true",
                         help="Disable torch.set_num_threads(1) (faster, non-reproducible)")
     args = parser.parse_args(argv)
 
     config = PINNConfig()
+    if args.window is not None:
+        config.training_window_days = args.window
     config.enable_deterministic_threads = not args.no_deterministic
     variant = VARIANTS[args.variant]
 
@@ -169,7 +178,8 @@ def main(argv: list | None = None) -> int:
     days = trading_days(date.fromisoformat(start_s), date.fromisoformat(end_s))
     out_path = args.out or f"/tmp/pinn_bench_{args.variant}.json"
 
-    print(f"variant={args.variant} flags={variant} deterministic={config.enable_deterministic_threads}")
+    print(f"variant={args.variant} flags={variant} window={config.training_window_days} "
+          f"deterministic={config.enable_deterministic_threads}")
     print(f"days={[d.isoformat() for d in days]} symbols={args.symbols} seeds={args.seeds}")
     print(f"total runs = {len(days) * len(args.symbols) * len(args.seeds)}")
 
@@ -188,7 +198,9 @@ def main(argv: list | None = None) -> int:
 
     summary = summarize(rows)
     with open(out_path, "w") as fh:
-        json.dump({"variant": args.variant, "variant_flags": variant, "rows": rows, "summary": summary}, fh, indent=2)
+        json.dump({"variant": args.variant, "variant_flags": variant,
+                   "window": config.training_window_days,
+                   "rows": rows, "summary": summary}, fh, indent=2)
 
     print("\n=== SUMMARY ===")
     print(json.dumps(summary, indent=2))
