@@ -75,8 +75,8 @@ help:
 	@echo "    server-logs         Tail last 50 lines of orchestrator.log on server"
 	@echo "    server-logs-500     Tail last 500 lines of orchestrator.log on server"
 	@echo "    server-logs-1000    Tail last 1000 lines of orchestrator.log on server"
-	@echo "    server-logs-follow  Live-follow monolith.log on server"
-	@echo "    server-logs-copy    Copy monolith.log from server to local logs/"
+	@echo "    server-logs-follow  Live-follow orchestrator.log on server"
+	@echo "    server-logs-copy    Copy orchestrator.log from server to local logs/"
 	@echo "    server-status       Show stock_analysis.service status"
 	@echo "    server-start        Start stock_analysis.service"
 	@echo "    server-restart      Restart stock_analysis.service"
@@ -439,7 +439,7 @@ logs-all:
 	done
 	@echo ""; \
 	echo "=== Monolith log (last 5 lines) ==="; \
-	tail -5 $(LOG_FILE) 2>/dev/null || echo "(no monolith log)"
+	tail -5 $(LOG_FILE) 2>/dev/null || echo "(no orchestrator log)"
 
 logs-all-follow:
 	@echo "Following all service logs (Ctrl+C to stop)..."
@@ -488,7 +488,7 @@ clean-all: clean
 server-ssh:
 	ssh $(SERVER)
 
-SERVER_LOG := ~/StockAnalysis/logs/monolith.log
+SERVER_LOG := ~/StockAnalysis/logs/orchestrator.log
 
 .PHONY: server-logs
 server-logs:
@@ -508,8 +508,8 @@ server-logs-follow:
 
 .PHONY: server-logs-copy
 server-logs-copy:
-	scp $(SERVER):$(SERVER_LOG) logs/monolith.log
-	@echo "Copied to logs/monolith.log"
+	scp $(SERVER):$(SERVER_LOG) logs/orchestrator.log
+	@echo "Copied to logs/orchestrator.log"
 
 .PHONY: server-status
 server-status:
@@ -624,7 +624,7 @@ timers-disable:
 
 .PHONY: server-enable-always-on
 server-enable-always-on: timers-disable
-	@echo "=== Restarting monolith as always-on service ==="
+	@echo "=== Restarting orchestrator as always-on service ==="
 	ssh $(SERVER) "sudo systemctl enable stockanalysis.service 2>/dev/null; \
 		sudo systemctl restart stockanalysis.service 2>/dev/null; \
 		echo 'Monolith restarted in always-on mode'"
