@@ -48,13 +48,18 @@ ml_pipeline/**/__pycache__/
 # Logs
 logs/
 
-# Generated data
+# Generated data / runtime state (never commit these)
 data/backtest_results/
 data/indices/
 data/models/
 data/processed/
 data/raw/
 data/stocks/
+data/paper_trades.db
+data/paper_trades.db-*
+data/pinn_models/
+data/pinn_training/
+data/options_history/
 
 # Model artifacts
 *.pkl
