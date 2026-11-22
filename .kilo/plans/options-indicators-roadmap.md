@@ -332,10 +332,38 @@ Already parsed in `lib/zerodha/zerodha_ticker.py:829-843`.
 | X7 | Seasonality / calendar effects | Day-of-week, expiry-week, time-of-day returns and straddle decay curves per index | Build from M1 + Bhavcopy | S |
 | X8 | **Meta-labelling ML filter** | Train a LightGBM classifier on M2 outcomes to accept/reject each raw signal (features: regime, IVR, VRP, skew, OFI…). Cheap and effective; never predicts price directly | From M2 | M |
 | X9 | Fractional-Kelly / risk-parity sizing across strategies | Allocate capital by each strategy's measured edge and correlation; cap at ¼ Kelly | From M2 | S |
-| X10 | Cross-asset & global risk regime | GIFT Nifty gap, USDINR, US 10y, DXY, US VIX, crude; overnight gap model for positional short vol | Partially (yfinance in pre-market); **GIFT Nifty needed** | S |
+| X10 | Cross-asset & global risk regime | GIFT Nifty gap, USDINR, US 10y, DXY, US VIX, crude; overnight gap model for positional short vol | Partially (yfinance in pre-market); **GIFT Nifty available via Kite NSEIX index tick (token 1140)** | S |
 | X11 | Participant positioning model | FII/Pro/Client index futures & options OI changes as daily bias (extends I12) | Have (NSE participant OI) | S |
 | X12 | News / filings sentiment | NSE announcements, RBI/MPC statements summarised by the existing LLM; event severity tags for I14 | Free (NSE/RBI sites) | M |
 | X13 | Data-quality monitor | Stale/locked quotes, crossed books, IV outliers, missing strikes → auto-disable strategies when data is bad | Have | S |
+
+#### X10 detail — how GIFT Nifty is used
+
+GIFT Nifty (NSE IX) trades ~06:30–15:40 IST, so it prices the overnight global
+move before NSE opens. It is the **index level** (Kite `NSEIX`, token resolved
+from `instruments()` at startup; publish `data:tick:GIFTNIFTY`), not a
+tradeable contract.
+
+Derived, sampled at 07:30 / 08:00 / 08:30 / 09:00 / 09:07:
+`gap_pct = (GIFT_t − NIFTY_prev_close) / NIFTY_prev_close`, plus overnight
+high–low range and the 07:30→09:07 trend.
+
+Uses:
+1. **Pre-market report**: implied open, gap in points/%, and a size bucket
+   (FLAT < 0.3 %, MODERATE 0.3–0.75 %, LARGE > 0.75 %).
+2. **Morning bias**: a flat gap stays neutral; a moderate gap adds directional
+   weight; a large gap raises a trend-risk flag and suppresses counter-trend
+   fades.
+3. **Entry gates**: no new short-vol entries above a configurable gap
+   threshold; S9 stand-down; if an open short strike sits inside the implied
+   gap, flag it before the open.
+4. **Positional risk at 08:00**: compare the implied open with every open
+   short strike and margin, flagging positions that need a pre-open decision.
+5. **Gap-fill statistics (M2)**: per gap bucket, measure how often the gap
+   fills by 10:00 / 12:00 / EOD. Do not assume gaps fill — measure it, then
+   decide whether to fade or follow.
+
+Not used intraday after 09:15 — the NSE index price takes over.
 
 ---
 
@@ -351,7 +379,7 @@ Already parsed in `lib/zerodha/zerodha_ticker.py:829-843`.
 | EOD full chain history | Have (NIFTY/BANKNIFTY) | NSE Bhavcopy; **SENSEX needs BSE Bhavcopy** (free, add a fetcher) |
 | India VIX history | Have (spot); history via NSE/yfinance | |
 | Event / economic calendar | **Missing** | Maintain a JSON (RBI, Budget, FOMC, CPI, holidays, expiry) — free |
-| GIFT Nifty | **Missing** | NSE IX; free sources are unreliable — consider a vendor feed or broker API |
+| GIFT Nifty | **Available, not subscribed** | Kite instruments dump: exchange `NSEIX`, tradingsymbol `GIFT NIFTY`, `instrument_token` 1140 (`EQ`/`INDICES`). It is the index level, not a futures contract — exactly what an overnight gap model needs. Resolve the token from `instruments()` at startup (do not hardcode 1140), subscribe on the index feed, publish `data:tick:GIFTNIFTY`, and record it in the M1 recorder. NSE IX session ≈ 06:30–15:40 IST, so ticks matter from ~07:30 |
 | Index constituent weights | **Missing** | NSE monthly factsheets (free, monthly) — needed for X3/I13 |
 | FII/DII, participant OI, bulk/block deals | Have / free | NSE daily reports |
 | 20-level+ depth | Not available via KiteConnect | Kite API is 5 levels; some brokers offer deeper depth APIs — verify before relying on it |

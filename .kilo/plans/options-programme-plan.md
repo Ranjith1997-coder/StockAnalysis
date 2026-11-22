@@ -153,15 +153,18 @@ and explicit risk limits from the owner.
 
 ## Open decisions
 
-| # | Decision | Options | Status |
-|---|---|---|---|
-| D1 | Deploy Milestone 0 now? | yes / review diffs first | ⬜ |
-| D2 | Paper capital & risk defaults | ₹10 L, 1 %/trade, 6 % open max loss | ⬜ |
-| D3 | Index priority | NIFTY+BANKNIFTY → SENSEX after BSE data | ⬜ |
-| D4 | Order-book work timing | now / after Strategy v1 | ⬜ |
-| D5 | Buy expired-contract intraday history? | no (build own) / yes (vendor) | ⬜ |
-| D6 | GIFT Nifty source | broker/vendor / best-effort free | ⬜ |
-| D7 | Live execution target | paper-only / within 3 months | ⬜ |
+| # | Decision | Options | Recommendation | Status |
+|---|---|---|---|---|
+| D1 | Deploy Milestone 0 now? | yes / review diffs first | Push, let CI run, then deploy today (Sunday, market closed) and verify Monday | ⬜ |
+| D2 | Paper capital & risk defaults | ₹10 L, 1 %/trade, 6 % open max loss | ₹10 L; 1 % risk/trade by **max loss**; 5 % total open max loss; max 6 positions, max 2 per index | ⬜ |
+| D3 | Index priority | NIFTY+BANKNIFTY → SENSEX | Agree; add SENSEX after a BSE Bhavcopy fetcher exists | ⬜ |
+| D4 | Order-book work timing | now / after Strategy v1 | Record depth early (O0 in M2); build O1–O5 only after S1 is validated | ⬜ |
+| D5 | Buy expired-contract intraday history? | no (build own) / yes (vendor) | No — accumulate via M1; revisit after ~3 months of data | ⬜ |
+| D6 | GIFT Nifty source | broker/vendor / free | **Kite NSEIX "GIFT NIFTY" index tick — `instrument_token` 1140, verified in the public instrument dump** (exchange `NSEIX`, type `EQ`, segment `INDICES`). Free with the existing broker connection: resolve the token from `instruments()` at startup, subscribe on the index feed, publish `data:tick:GIFTNIFTY` | ⬜ |
+| D7 | Live execution target | paper-only / within 3 months | Paper-only for ≥3 months; revisit after Milestone 5 + 8–12 weeks paper | ⬜ |
+
+Cross-cutting: fix the server's power reliability (battery/UPS) **before** any
+live execution — the box currently has no runtime protection.
 
 ---
 
