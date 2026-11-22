@@ -27,7 +27,12 @@ Legend: ⬜ not started · 🟨 in progress · ✅ done · ⏸ blocked · ❌ dr
 
 ---
 
-## Milestone 0 — Ship what is done (0.5 d) ⬜
+## Milestone 0 — Ship what is done (0.5 d) 🟨
+
+**Status (2026-11-22):** 0.1 ✅ pushed; CI created and green (it caught two real
+logger-format bugs, now guarded by `tests/test_logging_format.py`, and pinned
+ruff for CI/local parity). 0.2 ✅ deployed `7ec9294` — all 11 services active,
+heartbeats healthy. 0.3 ⬜ Monday session verification.
 
 | # | Item | Output | Acceptance |
 |---|---|---|---|
@@ -186,7 +191,8 @@ live execution — the box currently has no runtime protection.
 
 | Date | Milestone | Note |
 |---|---|---|
-| 2026-11-22 | — | Plan created for review |
+| 2026-11-22 | M0 | Plan created; tooling (skills/commands/CI/backups) added |
+| 2026-11-22 | M0 | CI green after fixing 2 logger-format bugs; fixed options/paper/analysis/data layers deployed (`7ec9294`); 11/11 services active. PINN: only an accepted BANKNIFTY model (2026-10-01) is loaded; recent nightly runs reject both symbols (NIFTY 4.77 %, BANKNIFTY 5.38 % wings) |
 
 ---
 
