@@ -4,32 +4,30 @@ Market-Data Service — WebSocket tick ingestion + Redis snapshot publisher.
 Owns all live WebSocket connections (Zerodha WS1/WS2, Sensibull WS),
 the TickStore state, live engines (LiveOptionsEngine, LiveStockEngine),
 and the TokenRegistry. Publishes 1-second snapshots to Redis hashes
-so the monolith (bot commands, narrator) and analysis-engine workers
+so the orchestrator (bot commands, narrator) and analysis-engine workers
 can read live tick data without holding WS connections.
 
 Lifecycle:
   1. Load instruments from Zerodha (kc.instruments — public API)
-  2. Build Stock objects + TokenRegistry (same as monolith init)
-  3. Wait for enctoken from Redis (published by monolith at 09:00)
+  2. Build Stock objects + TokenRegistry (same as orchestrator init)
+  3. Wait for enctoken from Redis (published by the orchestrator at 09:00)
   4. Connect WS1 (equity/index) + WS2 (options)
   5. Start Sensibull feeds (greeks enrichment)
   6. Start snapshot publisher (1-second Redis writes)
   7. Health heartbeat loop
 
-Enctoken refresh: consumes `auth:commands` stream — when the monolith
+Enctoken refresh: consumes `auth:commands` stream — when the orchestrator
 publishes a `refresh_enctoken` command (triggered by data-gateway 403
 or 18:50 proactive refresh), this service picks up the new token from
 Redis and reconnects WS.
 """
 from __future__ import annotations
 
-import json
 import os
 import signal as sig
 import sys
 import threading
 import time
-from datetime import datetime
 from urllib.parse import quote
 
 import pandas as pd
@@ -53,7 +51,7 @@ from services.common.version import BUILD_LABEL as _BUILD_LABEL, GIT_COMMIT as _
 from services.common.redis_proxy import RedisProxy
 from services.market_data.snapshot_publisher import SnapshotPublisher
 from services.market_data.signal_publisher import RedisSignalBus
-from services.common.metrics import incr_stock, set_stock, incr_system, set_system
+from services.common.metrics import set_stock, incr_system, set_system
 
 # ── Lazy imports (heavy deps) ──────────────────────────────────────────────
 from lib.zerodha.zerodha_analysis import ZerodhaTickerManager
@@ -62,7 +60,6 @@ from lib.zerodha.live_options_engine import LiveOptionsEngine
 from lib.zerodha.live_stock_engine import LiveStockEngine
 from .sensibull_feed import SensibullFeed
 from lib.fno.sensibull_adapter import SensibullAdapter
-from lib.notification.Notification import TELEGRAM_NOTIFICATIONS
 
 
 AUTH_HASH = "auth:zerodha"
@@ -81,7 +78,7 @@ def signal_handler(signum, frame):
 # ── Stock object + registry setup ──────────────────────────────────────────
 
 def _build_stock_objects():
-    """Build Stock objects from final_derivatives_list.json (same as monolith)."""
+    """Build Stock objects from final_derivatives_list.json (same as orchestrator)."""
     stock_list, index_list, commodity_list, global_indices_list = get_stock_objects_from_json()
 
     for index in index_list:
@@ -154,7 +151,7 @@ def _register_base_tokens(registry: TokenRegistry):
 
 
 def _register_option_tokens(registry: TokenRegistry, all_options_df, all_futures_df):
-    """Register option + futures tokens for current expiry (same as monolith's update_zerodha_option_chain)."""
+    """Register option + futures tokens for current expiry (same as orchestrator's update_zerodha_option_chain)."""
     for stock in shared.app_ctx.stock_token_obj_dict.values():
         _register_one_symbol(registry, stock, all_options_df, all_futures_df, TokenType.EQUITY)
 
@@ -298,7 +295,7 @@ def _start_auth_commands_consumer(redis: RedisProxy, tm: ZerodhaTickerManager):
     """Consume auth:commands stream for reactive enctoken refresh.
 
     When the data-gateway gets 403, it publishes a refresh_enctoken command.
-    The monolith does the TOTP login and publishes the new token to Redis.
+    The orchestrator does the TOTP login and publishes the new token to Redis.
     This service picks it up via the Pub/Sub subscriber above.
     This consumer is a backup in case Pub/Sub is missed.
     """

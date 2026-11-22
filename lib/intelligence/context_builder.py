@@ -179,13 +179,13 @@ class IndexMarketContext(MarketContext):
             strikes_str = " | ".join(
                 f"{s:.0f} ({oi:,})" for s, oi in self.top_ce_strikes
             )
-            lines.append(f"\n--- Top CE OI Walls (resistance) ---")
+            lines.append("\n--- Top CE OI Walls (resistance) ---")
             lines.append(f"  {strikes_str}")
         if self.top_pe_strikes:
             strikes_str = " | ".join(
                 f"{s:.0f} ({oi:,})" for s, oi in self.top_pe_strikes
             )
-            lines.append(f"\n--- Top PE OI Walls (support) ---")
+            lines.append("\n--- Top PE OI Walls (support) ---")
             lines.append(f"  {strikes_str}")
 
         # Futures positioning
@@ -348,7 +348,7 @@ class ContextBuilder:
     def _refresh_from_redis(self, stock):
         """Refresh live tick data from Redis (market-data service snapshots)."""
         try:
-            # The monolith's RedisProxy lives on services.orchestrator.main (set in
+            # The orchestrator's RedisProxy lives on services.orchestrator.main (set in
             # its startup). Look it up via sys.modules so this never imports the
             # orchestrator (and its side effects) into other processes; when it is
             # not loaded / not connected, this is a no-op and the in-memory

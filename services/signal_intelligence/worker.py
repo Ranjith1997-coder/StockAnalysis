@@ -5,10 +5,10 @@ Consumes intelligence:signals (LIVE + INTRADAY + POSITIONAL Signal events
 reconstructed from Redis), feeds a single shared SignalCorrelator, and on
 confluence:
   1. XADDs to intelligence:confluence for downstream subscribers (the
-     monolith's HIGH-only narrator consumer, future paper-trading).
+     orchestrator's HIGH-only narrator consumer, future paper-trading).
   2. Sends the base Telegram alert directly. This call only touches Redis
      (notification/Notification.py -> notification:jobs), so it needs no
-     monolith-only state.
+     orchestrator-only state.
 """
 from __future__ import annotations
 
@@ -42,10 +42,11 @@ def reconstruct_signal(fields: dict) -> Signal:
 
 
 def format_confluence_alert(confluence: Confluence) -> str:
-    """Base Telegram alert text -- same format the monolith's old
+    """Base Telegram alert text -- same format the orchestrator's old
     _handle_confluence used to build in-process."""
     layers_str = " + ".join(
-        l.value.upper() for l in sorted(confluence.layers_involved, key=lambda l: l.value)
+        layer.value.upper()
+        for layer in sorted(confluence.layers_involved, key=lambda layer: layer.value)
     )
     sources = "\n".join(
         f"  - {s.layer.value}: {s.source} ({s.strength.name})"

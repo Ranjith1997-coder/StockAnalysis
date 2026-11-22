@@ -51,6 +51,10 @@ ENV_DEV_LOOP_WAIT  = "DEV_LOOP_WAIT_TIME"    # Seconds to sleep between dev cycl
 ENV_THREAD_POOL_WORKERS = "THREAD_POOL_WORKERS"  # Number of worker threads in the analysis pool (default: 20)
 
 # Phase 1C: analysis-engine stream contracts
+# NOTE: ANALYSIS_RESULTS_GROUP / CONFLUENCE_GROUP keep their historical
+# "monolith" names on purpose — consumer groups are persisted in Redis, so a
+# rename would orphan in-flight/pending entries. The component itself is now
+# called "orchestrator"; these are internal identifiers only.
 ANALYSIS_JOBS_STREAM     = "orchestrator:analysis_jobs"
 ANALYSIS_RESULTS_STREAM  = "analysis:results"
 ANALYSIS_JOBS_GROUP      = "analysis-workers"

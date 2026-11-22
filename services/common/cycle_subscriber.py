@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import json
 import threading
 import time
-from typing import Any
 
 from lib.logging_util import get_logger
 
@@ -11,7 +9,7 @@ logger = get_logger("cycle-subscriber")
 
 CYCLE_STREAM = "data:cycle_stream"
 CYCLE_CHANNEL = "data:cycle_ready"
-CYCLE_GROUP = "monolith"
+CYCLE_GROUP = "monolith"  # historical Redis group name; component is now "orchestrator"
 
 
 class CycleSubscriber:

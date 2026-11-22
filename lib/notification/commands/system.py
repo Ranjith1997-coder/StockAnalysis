@@ -46,7 +46,7 @@ def _feed_health_lines() -> list[str]:
     ctx = shared.app_ctx
     now = time.time()
 
-    # Read equity tick time from market-data service registry (fallback to monolith)
+    # Read equity tick time from market-data service registry (fallback to orchestrator)
     last_equity_tick = 0.0
     try:
         from ._helpers import _get_redis
@@ -214,7 +214,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/debug — Overview dashboard\n"
         "/debugstock <code>&lt;SYM&gt;</code> — Deep stock object dump\n"
         "/debugsignals <code>[SYM]</code> — SignalBus + correlator state\n"
-        "/debugcycle — Cycle sync (data-gateway + monolith)\n"
+        "/debugcycle — Cycle sync (data-gateway + orchestrator)\n"
         "/debugredis <code>&lt;SYM&gt;</code> — Raw Redis hash inspection\n"
         "/debugcounters — All runtime counters\n"
         "/debugmemory — AppContext + memory layout\n"
@@ -334,7 +334,7 @@ async def job_llm_budget_alert(context: ContextTypes.DEFAULT_TYPE) -> None:
 # ─── /version: service version dashboard ──────────────────────────────────────
 
 _VERSION_SERVICES = [
-    "monolith",
+    "orchestrator",
     "data-gateway",
     "market-data",
     "analysis-engine",

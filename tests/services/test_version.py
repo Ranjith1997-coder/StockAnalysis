@@ -186,10 +186,10 @@ class TestVersionCommand:
 
     @pytest.mark.asyncio
     async def test_version_all_services_present(self, mock_update, mock_context):
-        """Should list all 6 known services."""
+        """Should list every known service."""
         mock_redis = MagicMock()
         mock_redis.hgetall.return_value = {
-            "name": "monolith",
+            "name": "orchestrator",
             "version": "1.0.0+abc1234",
             "commit": "abc1234",
             "dirty": "False",
@@ -204,7 +204,7 @@ class TestVersionCommand:
 
         mock_context.bot.send_message.assert_called_once()
         text = mock_context.bot.send_message.call_args.kwargs.get("text", "")
-        for svc in ["monolith", "data-gateway", "market-data", "analysis-engine", "notification-service", "resource-monitor"]:
+        for svc in ["orchestrator", "data-gateway", "market-data", "analysis-engine", "notification-service", "resource-monitor"]:
             assert svc in text
 
     @pytest.mark.asyncio
@@ -212,7 +212,7 @@ class TestVersionCommand:
         """Stale service (heartbeat > 240s) should show stale marker."""
         mock_redis = MagicMock()
         mock_redis.hgetall.return_value = {
-            "name": "monolith",
+            "name": "orchestrator",
             "version": "1.0.0+abc1234",
             "commit": "abc1234",
             "dirty": "False",
@@ -233,7 +233,7 @@ class TestVersionCommand:
         """Dirty service should show dirty warning."""
         mock_redis = MagicMock()
         mock_redis.hgetall.return_value = {
-            "name": "monolith",
+            "name": "orchestrator",
             "version": "1.0.0+abc1234+dirty",
             "commit": "abc1234",
             "dirty": "True",

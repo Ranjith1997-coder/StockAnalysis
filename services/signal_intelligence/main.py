@@ -2,7 +2,7 @@
 Signal Intelligence — Service Entry Point
 
 Consumes intelligence:signals (LIVE from market-data, INTRADAY/POSITIONAL
-from analysis-engine + monolith) and detects cross-layer confluence via a
+from analysis-engine + orchestrator) and detects cross-layer confluence via a
 single, process-lifetime SignalCorrelator instance.
 
 IMPORTANT: run exactly ONE instance of this service. Unlike analysis-engine,

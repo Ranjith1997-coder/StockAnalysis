@@ -223,7 +223,7 @@ async def cmd_watchlist(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 ws2_subs = int(_md.get("ws2_subs", 0))
     except Exception as e:
         logger.debug("[watchlist] Redis market-data registry read failed: %s", e)
-    # Fallback: check monolith's own tm (still set in dev or if WS not yet moved)
+    # Fallback: check the orchestrator's own tm (still set in dev or if WS not yet moved)
     if not ws_connected:
         tm = ctx.zd_ticker_manager
         if tm is not None:

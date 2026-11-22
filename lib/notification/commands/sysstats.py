@@ -149,7 +149,7 @@ def _fmt_age(ts_str: str) -> str:
 # ── Service discovery for display ───────────────────────────────────────────
 
 _KNOWN_SERVICES = [
-    ("monolith", "stockanalysis"),
+    ("orchestrator", "stockanalysis"),
     ("data-gateway", "stockanalysis-data-gateway"),
     ("market-data", "stockanalysis-market-data"),
     ("analysis-engine", "stockanalysis-analysis-engine"),
@@ -200,8 +200,12 @@ def _build_live_text(rc) -> str:
     ram_arrow = _trend_arrow(rc, "sys:ts:ram", ram)
 
     lines.append("🖥️ <b>System</b>")
+    cores_note = (
+        f" · cores max {core_max:.0f}% avg {core_avg:.0f}%"
+        if (core_max or core_avg) else ""
+    )
     lines.append(
-        f"  CPU: {_color_icon(cpu)} <b>{cpu:.1f}%</b> ({cpu_arrow} from 5m ago)"
+        f"  CPU: {_color_icon(cpu)} <b>{cpu:.1f}%</b> ({cpu_arrow} from 5m ago){cores_note}"
     )
 
     # Per-core display
@@ -244,7 +248,6 @@ def _build_live_text(rc) -> str:
     lines.append(f"🔧 <b>Services</b> ({len(service_names)} active)")
 
     # Per-core usage from services
-    core_totals = [0.0] * core_count if core_count > 0 else []
 
     for name in service_names:
         svc_raw = rc.hgetall(f"sys:latest:{name}") or {}

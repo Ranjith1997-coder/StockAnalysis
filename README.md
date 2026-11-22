@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-StockAnalysis is an automated analysis system for Indian equity and derivatives markets (NSE). It targets NIFTY weekly options traders using live Zerodha WebSocket data for real-time tick-level analysis, Sensibull for OI chain and PCR data, and yfinance for historical price data. The system runs as 9 always-on microservices (monolith, data-gateway, market-data, analysis-engine, signal-intelligence, notification-service, resource-monitor, auth-service, Redis) with Redis as the sole shared-state and message-broker dependency.
+StockAnalysis is an automated analysis system for Indian equity and derivatives markets (NSE). It targets NIFTY weekly options traders using live Zerodha WebSocket data for real-time tick-level analysis, Sensibull for OI chain and PCR data, and yfinance for historical price data. The system runs as 11 always-on services (orchestrator, data-gateway, market-data, analysis-engine, signal-intelligence, notification-service, resource-monitor, auth-service, paper-trading, PINN trainer, volatility engine, plus Redis) with Redis as the sole shared-state and message-broker dependency.
 
 ---
 
@@ -107,7 +107,7 @@ Data flow:
   resource-monitor → Polls psutil every 30s → sys:latest:* (system, per-service, Redis)
                   → sys:ts:* time-series (24h ZSET), sys:daily:* rollups (30d)
                   → Fires proactive alerts → notification:jobs
-  monolith      → reads Redis hashes (sub-millisecond)
+  orchestrator  → reads Redis hashes (sub-millisecond)
                   → writes notification:jobs stream
                   → alert counters: alerts_trend, etc.
                   → consumes intelligence:confluence (HIGH-only) for LLM narrator follow-up
@@ -189,13 +189,13 @@ total_score = base_score + alignment_bonus
 ## Intelligence Layer (opt-in)
 
 When `ENABLE_INTELLIGENCE=1`:
-- **RedisSignalBus**: every process (monolith, analysis-engine, market-data) emits `Signal` objects to the shared `intelligence:signals` Redis stream — not a local in-memory bus, since each layer's signals originate in a different process
+- **RedisSignalBus**: every process (orchestrator, analysis-engine, market-data) emits `Signal` objects to the shared `intelligence:signals` Redis stream — not a local in-memory bus, since each layer's signals originate in a different process
 - **signal-intelligence service** (standalone, single instance): the one consumer that combines LIVE + INTRADAY + POSITIONAL into a single `SignalCorrelator` and detects cross-layer confluence; sends the base Telegram alert directly and publishes `intelligence:confluence` for downstream consumers
-- **Morning bias**: extracts positional bias signals from 8 PM analysis results (fast path — zero HTTP, ~0.5s). Falls back to full recompute from Redis if monolith restarted overnight.
+- **Morning bias**: extracts positional bias signals from 8 PM analysis results (fast path — zero HTTP, ~0.5s). Falls back to full recompute from Redis if orchestrator restarted overnight.
 - **LiveStockEngine**: per-tick VWAP cross, bid/ask imbalance, ORB, day high/low break signals
 
 When `ENABLE_NARRATOR=1` (requires `GEMINI_API_KEY`):
-- **MarketNarrator**: LLM-powered trade thesis via Google Gemini Flash, run from the monolith (needs live Stock/zerodha_ctx context)
+- **MarketNarrator**: LLM-powered trade thesis via Google Gemini Flash, run from the orchestrator (needs live Stock/zerodha_ctx context)
 - Monolith consumes `intelligence:confluence`, filters to HIGH confluences (3+ layers aligned) with 30-min per-symbol cooldown, and calls the narrator
 - Also generates EOD positional briefing after ~4 PM positional run
 
@@ -274,7 +274,7 @@ Log files (10 MB rotating, 3 backups each):
 
 | File | Service |
 |------|---------|
-| `logs/monolith.log` | Monolith (intraday + positional) |
+| `logs/orchestrator.log` | Orchestrator (intraday + positional) |
 | `logs/data-gateway.log` | Data gateway |
 | `logs/market-data.log` | Market-data (WebSocket ingestion) |
 | `logs/analysis-engine.log` | Analysis engine (11 analysers + scoring) |

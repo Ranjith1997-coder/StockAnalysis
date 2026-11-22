@@ -10,7 +10,7 @@ _cached_redis = None
 
 
 def _get_redis():
-    """Get a Redis connection — cached, direct-first to avoid slow monolith import."""
+    """Get a Redis connection — cached, direct-first to avoid slow orchestrator import."""
     global _cached_redis
     if _cached_redis is not None:
         try:
@@ -20,7 +20,8 @@ def _get_redis():
             _cached_redis = None
 
     try:
-        import redis, os
+        import redis
+        import os
         _cached_redis = redis.from_url(
             os.environ.get("REDIS_URL", "redis://localhost:6379"),
             decode_responses=True,

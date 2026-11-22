@@ -25,7 +25,7 @@ import json
 import signal
 import subprocess
 import argparse
-from datetime import datetime, date, timedelta
+from datetime import datetime, date
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
@@ -282,20 +282,23 @@ def discover_services(rc: sync_redis.Redis) -> dict[str, dict]:
     except Exception as e:
         logger.debug(f"[discovery] Failed to scan service registry: {e}")
 
-    # Discover monolith (doesn't write to registry)
-    monolith_pid = _discover_monolith_pid()
-    if monolith_pid:
-        services["monolith"] = {
-            "pid": monolith_pid,
-            "status": "healthy",
-            "last_heartbeat": str(time.time()),
-        }
+    # Fallback only: the orchestrator publishes service:registry:orchestrator.
+    # If that key is missing (e.g. very early in boot), discover the process so
+    # it still appears, without overwriting a real heartbeat.
+    if "orchestrator" not in services:
+        orchestrator_pid = _discover_orchestrator_pid()
+        if orchestrator_pid:
+            services["orchestrator"] = {
+                "pid": orchestrator_pid,
+                "status": "healthy",
+                "last_heartbeat": str(time.time()),
+            }
 
     return services
 
 
-def _discover_monolith_pid() -> int:
-    """Find the monolith PID via systemctl or pgrep."""
+def _discover_orchestrator_pid() -> int:
+    """Find the orchestrator PID via systemctl or pgrep."""
     try:
         result = subprocess.run(
             ["systemctl", "show", "stockanalysis.service", "--property=MainPID"],
@@ -312,7 +315,7 @@ def _discover_monolith_pid() -> int:
 
     try:
         result = subprocess.run(
-            ["pgrep", "-f", "intraday_monitor"],
+            ["pgrep", "-f", "services.orchestrator.main"],
             capture_output=True, text=True, timeout=5,
         )
         if result.returncode == 0 and result.stdout.strip():
@@ -613,8 +616,6 @@ def check_alerts(rc: sync_redis.Redis, sys_metrics: dict, services: dict, redis_
     for name, info in services.items():
         last_hb = float(info.get("last_heartbeat", 0))
         if last_hb > 0 and (now - last_hb) > ALERT_SERVICE_OFFLINE_SECS:
-            if name == "monolith":
-                continue  # monolith doesn't write heartbeat
             if _alert_cooldown_ok(rc, f"service_offline:{name}", COOLDOWN_SERVICE_OFFLINE):
                 lag = now - last_hb
                 msg = (
@@ -628,7 +629,7 @@ def check_alerts(rc: sync_redis.Redis, sys_metrics: dict, services: dict, redis_
 def _get_service_memmax(name: str) -> float:
     """Get the MemoryMax (in MB) for a service from systemd."""
     unit_map = {
-        "monolith": "stockanalysis.service",
+        "orchestrator": "stockanalysis.service",
         "data-gateway": "stockanalysis-data-gateway.service",
         "market-data": "stockanalysis-market-data.service",
         "analysis-engine": "stockanalysis-analysis-engine.service",
@@ -680,7 +681,7 @@ def main():
     global _running
 
     parser = argparse.ArgumentParser(description="StockAnalysis Resource Monitor")
-    args = parser.parse_args()
+    parser.parse_args()
 
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)

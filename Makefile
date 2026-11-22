@@ -52,11 +52,11 @@ help:
 	@echo ""
 	@echo "  Maintenance"
 	@echo "    update-derivatives  Refresh final_derivatives_list.json from Zerodha + NSE"
-	@echo "    logs          Monolith log — tail monolith.log"
-	@echo "    logs-500      Tail monolith.log (last 500 lines)"
-	@echo "    logs-1000     Tail monolith.log (last 1000 lines)"
-	@echo "    logs-follow   Follow monolith.log live"
-	@echo "    logs-grep     Grep monolith.log: make logs-grep Q=RELIANCE"
+	@echo "    logs          Orchestrator log — tail orchestrator.log"
+	@echo "    logs-500      Tail orchestrator.log (last 500 lines)"
+	@echo "    logs-1000     Tail orchestrator.log (last 1000 lines)"
+	@echo "    logs-follow   Follow orchestrator.log live"
+	@echo "    logs-grep     Grep orchestrator.log: make logs-grep Q=RELIANCE"
 	@echo "    logs-all      View last 20 lines of every service log"
 	@echo "    logs-all-follow  Follow all service logs live"
 	@echo "    logs-svc      View one service: make logs-svc SVC_LOG=data-gateway"
@@ -72,9 +72,9 @@ help:
 	@echo ""
 	@echo "  Server (hacker@100.92.21.31)"
 	@echo "    server-ssh          Open interactive SSH session"
-	@echo "    server-logs         Tail last 50 lines of monolith.log on server"
-	@echo "    server-logs-500     Tail last 500 lines of monolith.log on server"
-	@echo "    server-logs-1000    Tail last 1000 lines of monolith.log on server"
+	@echo "    server-logs         Tail last 50 lines of orchestrator.log on server"
+	@echo "    server-logs-500     Tail last 500 lines of orchestrator.log on server"
+	@echo "    server-logs-1000    Tail last 1000 lines of orchestrator.log on server"
 	@echo "    server-logs-follow  Live-follow monolith.log on server"
 	@echo "    server-logs-copy    Copy monolith.log from server to local logs/"
 	@echo "    server-status       Show stock_analysis.service status"
@@ -395,7 +395,7 @@ typecheck:
 # ──────────────────────────────────────────────────────────────────────────────
 # Maintenance
 # ──────────────────────────────────────────────────────────────────────────────
-LOG_FILE := logs/monolith.log
+LOG_FILE := logs/orchestrator.log
 
 .PHONY: backup
 backup:

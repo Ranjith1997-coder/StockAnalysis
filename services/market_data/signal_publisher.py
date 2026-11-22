@@ -3,7 +3,7 @@ RedisSignalBus — drop-in replacement for in-memory SignalBus.
 
 Live engines (LiveOptionsEngine, LiveStockEngine) emit Signal objects
 to this bus instead of the in-process thread pub/sub. Signals are
-published to the Redis stream `intelligence:signals` so the monolith's
+published to the Redis stream `intelligence:signals` so the orchestrator's
 SignalCorrelator can consume them cross-process.
 
 Implements the same interface as intelligence.signal_bus.SignalBus so
@@ -12,7 +12,6 @@ it can be used as a transparent replacement.
 from __future__ import annotations
 
 import json
-import time
 from typing import TYPE_CHECKING, Callable
 
 if TYPE_CHECKING:
@@ -30,7 +29,7 @@ class RedisSignalBus:
     """
     Publishes signals to Redis stream `intelligence:signals`.
 
-    The monolith's SignalCorrelator subscribes to this stream via a
+    The orchestrator's SignalCorrelator subscribes to this stream via a
     consumer group to detect cross-layer confluence.
     """
 

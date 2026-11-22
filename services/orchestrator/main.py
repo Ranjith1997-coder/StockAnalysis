@@ -618,7 +618,7 @@ def _analysis_collection_deadline(reporting_buffer: int = 15) -> float:
 def _publish_options_snapshot(index_objs: list) -> None:
     """Publish live options tick snapshot to Redis for GEX analyser in workers.
 
-    For each index in LIVE_OPTIONS_INDICES, serialises the monolith's in-memory
+    For each index in LIVE_OPTIONS_INDICES, serialises the orchestrator's in-memory
     options_live (WS2 + Sensibull greeks) to a Redis hash so stateless analysis
     workers can run GEXAnalyser.  Uses DELETE + HSET to remove stale strikes
     from WS2 re-centering.
@@ -1188,13 +1188,13 @@ def report_52_week_high_low(max_items: int = 40, clear_after: bool = False):
     return msg
 
 def _init_signal_intelligence():
-    """Wire the monolith's own signal emissions (morning bias + 8pm positional
+    """Wire the orchestrator's own signal emissions (morning bias + 8pm positional
     run) into the shared intelligence:signals stream.
 
     Cross-layer confluence detection itself now lives in the standalone
     signal-intelligence service (services/signal_intelligence/) — it's the
     only process that ever sees LIVE + INTRADAY + POSITIONAL signals
-    together. The monolith no longer runs its own local SignalCorrelator;
+    together. The orchestrator no longer runs its own local SignalCorrelator;
     it only consumes the resulting intelligence:confluence stream for
     HIGH-level LLM narration (see _start_confluence_narrator_subscriber),
     since that's the one piece that needs this process's live Stock/
@@ -1217,7 +1217,7 @@ def _start_confluence_narrator_subscriber():
     import threading as _th
 
     consumer_group = constant.CONFLUENCE_GROUP
-    consumer_name = "monolith-1"
+    consumer_name = "orchestrator-1"
 
     try:
         redis_proxy.xgroup_create(consumer_group, constant.CONFLUENCE_STREAM, mkstream=True)
@@ -1225,7 +1225,7 @@ def _start_confluence_narrator_subscriber():
         pass  # Group already exists
 
     def _listen():
-        logger.info(f"[monolith] Subscribed to {constant.CONFLUENCE_STREAM} (HIGH-only narration)")
+        logger.info(f"[orchestrator] Subscribed to {constant.CONFLUENCE_STREAM} (HIGH-only narration)")
         while True:
             try:
                 messages = redis_proxy.xreadgroup(
@@ -1234,7 +1234,7 @@ def _start_confluence_narrator_subscriber():
                     count=10, block=5000,
                 )
             except Exception as e:
-                logger.error(f"[monolith] confluence xreadgroup error: {e}")
+                logger.error(f"[orchestrator] confluence xreadgroup error: {e}")
                 sleep(2)
                 continue
 
@@ -1248,7 +1248,7 @@ def _start_confluence_narrator_subscriber():
                     if confluence.level == "HIGH" and shared.app_ctx.narrator:
                         shared.app_ctx.narrator.narrate_async(confluence)
                 except Exception as e:
-                    logger.error(f"[monolith] Failed to process confluence {msg_id}: {e}")
+                    logger.error(f"[orchestrator] Failed to process confluence {msg_id}: {e}")
                 finally:
                     try:
                         redis_proxy.xack(constant.CONFLUENCE_STREAM, consumer_group, msg_id)
@@ -1268,7 +1268,7 @@ def _start_confluence_narrator_subscriber():
 def update_morning_bias():
     """Fast path: extract bias signals from 8 PM positional analysis results.
 
-    Since the monolith is always running, stock.analysis is still populated
+    Since the orchestrator is always running, stock.analysis is still populated
     from yesterday's 8 PM positional_analysis() run. Just extract the BULLISH/
     BEARISH results as POSITIONAL layer signals → SignalBus. Zero HTTP, zero
     re-computation. ~0.5s for 213 stocks.
@@ -1314,18 +1314,18 @@ def update_morning_bias():
 # Sensibull WS helpers — used when OPTIONS_SOURCE=sensibull
 # ---------------------------------------------------------------------------
 
-def _write_monolith_heartbeat(redis_proxy) -> None:
+def _write_orchestrator_heartbeat(redis_proxy) -> None:
     """Publish this process's build to the service registry.
 
     Runs from a dedicated thread (every 60 s) as well as from the intraday
-    loop, so /version can see the monolith outside market hours too.
+    loop, so /version can see the orchestrator outside market hours too.
     """
     if redis_proxy is None:
         return
     try:
         from services.common.version import BUILD_LABEL, GIT_COMMIT, GIT_DIRTY
-        redis_proxy.hset("service:registry:monolith", mapping={
-            "name": "monolith",
+        redis_proxy.hset("service:registry:orchestrator", mapping={
+            "name": "orchestrator",
             "pid": str(os.getpid()),
             "status": "healthy",
             "last_heartbeat": str(_time.time()),
@@ -1333,14 +1333,14 @@ def _write_monolith_heartbeat(redis_proxy) -> None:
             "commit": GIT_COMMIT,
             "dirty": str(GIT_DIRTY),
         })
-        redis_proxy.expire("service:registry:monolith", 180)
+        redis_proxy.expire("service:registry:orchestrator", 180)
     except Exception:
-        logger.debug("[monolith] heartbeat write failed", exc_info=True)
+        logger.debug("[orchestrator] heartbeat write failed", exc_info=True)
 
 
-def _monolith_heartbeat_loop(redis_proxy) -> None:
+def _orchestrator_heartbeat_loop(redis_proxy) -> None:
     while True:
-        _write_monolith_heartbeat(redis_proxy)
+        _write_orchestrator_heartbeat(redis_proxy)
         sleep(60)
 
 
@@ -1411,7 +1411,7 @@ def intraday_analysis(loop = True, loop_wait_time = 30, max_cycles = 0):
         # Layer 2: Heartbeat — signal liveness to healthchecks.io
         _ping_healthcheck()
 
-        _write_monolith_heartbeat(redis_proxy)
+        _write_orchestrator_heartbeat(redis_proxy)
 
         if PRODUCTION:
             sleeptime = (constant.INTRADAY_SLEEP_TIME) - (datetime.now().second + ((datetime.now().minute % 5) * 60))
@@ -1547,7 +1547,7 @@ def init():
             logger.info("DEV_NOTIFY=1 — Telegram alerts enabled in dev mode")
 
     from services.common.version import BUILD_LABEL
-    logger.info(f"[monolith] v{BUILD_LABEL} starting")
+    logger.info(f"[orchestrator] v{BUILD_LABEL} starting")
 
     redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
     redis_proxy = RedisProxy(redis_url)
@@ -1559,10 +1559,10 @@ def init():
         sys.exit(1)
 
     threading.Thread(
-        target=_monolith_heartbeat_loop,
+        target=_orchestrator_heartbeat_loop,
         args=(redis_proxy,),
         daemon=True,
-        name="monolith-heartbeat",
+        name="orchestrator-heartbeat",
     ).start()
 
     cycle_subscriber = CycleSubscriber(redis_proxy)
@@ -1689,9 +1689,9 @@ def init():
         if not encToken_raw:
             encToken_raw = os.getenv(constant.ENV_ZERODHA_ENC_TOKEN)
             if encToken_raw:
-                logger.info("[monolith] Enctoken loaded from .env (auth-service may not have published yet)")
+                logger.info("[orchestrator] Enctoken loaded from .env (auth-service may not have published yet)")
         else:
-            logger.info("[monolith] Enctoken loaded from Redis (auth-service)")
+            logger.info("[orchestrator] Enctoken loaded from Redis (auth-service)")
         shared.app_ctx.zd_kc = KiteConnect(constant.DUMMY_API_KEY_ZERODHA, root="https://kite.zerodha.com/", enctoken=encToken_raw)
 
         # Set options_source (used by market-data service via shared.app_ctx)
@@ -1743,7 +1743,7 @@ def _start_enctoken_subscriber():
     """Listen for auth:enctoken_refreshed and update zd_kc.
 
     The auth-service publishes new enctokens to Redis after TOTP login.
-    This subscriber keeps the monolith's KiteConnect instance (zd_kc) updated
+    This subscriber keeps the orchestrator's KiteConnect instance (zd_kc) updated
     for the /enctoken bot command and deprecated Stock shims.
     """
     import threading as _th
@@ -1751,16 +1751,16 @@ def _start_enctoken_subscriber():
     def _listen():
         ps = redis_proxy.pubsub()
         ps.subscribe("auth:enctoken_refreshed")
-        logger.info("[monolith] Subscribed to auth:enctoken_refreshed")
+        logger.info("[orchestrator] Subscribed to auth:enctoken_refreshed")
         for message in ps.listen():
             if message["type"] == "message":
                 enctoken = redis_proxy.hget("auth:zerodha", "enctoken")
                 if enctoken and shared.app_ctx.zd_kc:
                     try:
                         shared.app_ctx.zd_kc.update_enctoken(enctoken)
-                        logger.info("[monolith] zd_kc enctoken updated via Pub/Sub")
+                        logger.info("[orchestrator] zd_kc enctoken updated via Pub/Sub")
                     except Exception as e:
-                        logger.error(f"[monolith] zd_kc enctoken update failed: {e}")
+                        logger.error(f"[orchestrator] zd_kc enctoken update failed: {e}")
 
     t = _th.Thread(target=_listen, daemon=True, name="enctoken-subscriber")
     t.start()
@@ -1876,7 +1876,7 @@ def start_stock_analysis():
                 logger.error(f"Morning bias computation failed: {e}")
 
         # Live options analysis is handled by the market-data service.
-        # The monolith always runs the standard intraday analysis loop.
+        # The orchestrator always runs the standard intraday analysis loop.
         if shared.app_ctx.mode and shared.app_ctx.mode.name == shared.Mode.INTRADAY.name:
             intraday_analysis(
                 max_cycles=int(os.getenv(constant.ENV_DEV_MAX_CYCLES, "0")),

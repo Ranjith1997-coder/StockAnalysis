@@ -1,7 +1,7 @@
 """
 RedisProxy — synchronous wrapper around Redis for use by data-gateway.
 
-In Phase 1A, the data-gateway runs synchronously (same pattern as the monolith).
+In Phase 1A, the data-gateway runs synchronously (same pattern as the orchestrator).
 This proxy wraps the redis-py client for synchronous operations.
 In Phase 2, this will be replaced by the async redis.asyncio client.
 """

@@ -2,7 +2,7 @@
 from lib.notification.commands.system import _VERSION_SERVICES
 
 EXPECTED = {
-    "monolith",
+    "orchestrator",
     "data-gateway",
     "market-data",
     "analysis-engine",

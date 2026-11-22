@@ -221,7 +221,7 @@ async def cmd_debug_cycle(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     lines = [
         "🔧 <b>Cycle Sync</b>",
-        f"  Monolith cycle: <b>{d['monolith_cycle_count']}</b>  (last: {d['last_cycle_time']})",
+        f"  Orchestrator cycle: <b>{d['orchestrator_cycle_count']}</b>  (last: {d['last_cycle_time']})",
         "",
     ]
 

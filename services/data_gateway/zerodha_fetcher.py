@@ -5,7 +5,7 @@ Two-phase design:
   1. Instruments fetch (public API, no enctoken needed) — once at startup.
   2. Historical data fetch (needs enctoken) — every cycle.
 
-The enctoken is published to Redis by the monolith after TOTP login at 09:00.
+The enctoken is published to Redis by the orchestrator after TOTP login at 09:00.
 The data-gateway subscribes to auth:enctoken_refreshed Pub/Sub to get it.
 """
 
@@ -166,7 +166,7 @@ class ZerodhaFuturesManager:
     """Manages the enctoken lifecycle and parallel futures fetching.
 
     Must be initialised after the data-gateway's Redis connection is established.
-    The enctoken arrives via Redis (published by the monolith after TOTP login).
+    The enctoken arrives via Redis (published by the orchestrator after TOTP login).
     """
 
     def __init__(self, redis, futures_mdata: dict):
@@ -176,7 +176,7 @@ class ZerodhaFuturesManager:
         self._has_enctoken = False
         self._lock = threading.Lock()
 
-        # Check if monolith already published an enctoken
+        # Check if the orchestrator already published an enctoken
         enctoken = redis.hget(AUTH_HASH, "enctoken")
         if enctoken:
             self._init_kite(enctoken)
@@ -216,7 +216,7 @@ class ZerodhaFuturesManager:
     def request_refresh(self, reason: str = "403"):
         """Publish a refresh request to the auth:commands stream.
         
-        The monolith subscribes to this stream and runs _refresh_zerodha_auth()
+        The orchestrator subscribes to this stream and runs _refresh_zerodha_auth()
         on demand, which publishes the new enctoken to auth:zerodha.
         
         Cooldown: at most one request per 30 seconds to prevent refresh storms

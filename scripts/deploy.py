@@ -33,11 +33,11 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 SSH_OPTS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]
 
-# Restart order: dependencies first, monolith (stockanalysis) last.
+# Restart order: dependencies first, orchestrator (stockanalysis.service) last.
 # stockanalysis-auth IS long-running (Type=simple, Restart=always) and must be
 # restarted, or it keeps serving the old build indefinitely.
 # No systemd timers are used; the 20:00 positional run is internal to the
-# monolith.
+# orchestrator.
 # volatility-engine and pinn-trainer are restarted too so a deploy that
 # changes their code actually takes effect.
 # Note: a deploy between 21:00-23:00 can abort a nightly training run; it

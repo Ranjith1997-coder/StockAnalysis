@@ -38,7 +38,6 @@ logger = get_logger("data-gateway")
 from datetime import time as _time
 from common.helperFunctions import get_stock_objects_from_json, isNowInTimePeriod
 from common.market_calendar import is_trading_day
-from common import constants as constant
 from services.common.redis_proxy import RedisProxy
 from services.data_gateway.yfinance_fetcher import fetch_initial_daily_data, fetch_cycle_data, refresh_prev_day_ohlcv
 from services.data_gateway.sensibull_fetcher import (
@@ -55,7 +54,7 @@ CYCLE_CHANNEL = "data:cycle_ready"
 
 
 # Configuration
-CYCLE_SLEEP = 310         # seconds between intraday cycles (same as monolith)
+CYCLE_SLEEP = 310         # seconds between intraday cycles (same as orchestrator)
 DEV_LOOP_WAIT_TIME = int(os.environ.get("DEV_LOOP_WAIT_TIME", "30"))
 MARKET_OPEN = _time(9, 15)
 MARKET_CLOSE = _time(15, 30)
@@ -249,7 +248,7 @@ def main():
     # Initialise Zerodha futures manager (fetches instruments via public API)
     all_futures_mdata = fetch_instruments()
     zerodha_mgr = ZerodhaFuturesManager(redis, all_futures_mdata)
-    has_enc = "available" if zerodha_mgr.has_enctoken() else "pending (monolith TOTP at 09:00)"
+    has_enc = "available" if zerodha_mgr.has_enctoken() else "pending (orchestrator TOTP at 09:00)"
     logger.info(f"[data-gateway] ZerodhaFuturesManager ready — enctoken={has_enc}")
 
     # Build instrument token map for prevDayOHLCV Zerodha fallback
@@ -298,7 +297,7 @@ def main():
         logger.error(f"[data-gateway] Initial Sensibull fetch failed: {e}")
         logger.error(traceback.format_exc())
 
-    # Publish initial cycle signal for monolith's catch_up_on_startup()
+    # Publish initial cycle signal for the orchestrator's catch_up_on_startup()
     initial_ts = datetime.datetime.now().isoformat()
     redis.xadd(CYCLE_STREAM, {
         "cycle": "0",

@@ -89,7 +89,7 @@ def inspect_overview() -> dict:
             llm_tokens = getattr(client, "_daily_tokens", 0)
             llm_limit = getattr(client, "DAILY_TOKEN_LIMIT", 900_000)
 
-    # Read WS stats from market-data service registry (fallback to monolith's tm)
+    # Read WS stats from market-data service registry (fallback to orchestrator's tm)
     md = _read_market_data_registry()
     if md:
         ws_connected = md["ws_connected"]
@@ -104,7 +104,7 @@ def inspect_overview() -> dict:
         last_equity_tick = md["last_equity_tick"]
         sensibull_info = {"active": md["sensibull_feeds"] > 0, "feed_count": md["sensibull_feeds"], "feeds": []}
     else:
-        # Fallback: read from monolith's own tm (dev mode or transition period)
+        # Fallback: read from the orchestrator's own tm (dev mode or transition period)
         ws2_subscribed = 0
         ws2_reconnects = 0
         if tm and getattr(tm, "_kt_options", None):
@@ -295,7 +295,7 @@ def inspect_signals(symbol: str | None = None) -> dict:
 def inspect_cycle() -> dict:
     ctx = shared.app_ctx
     result: dict = {
-        "monolith_cycle_count": ctx.intraday_cycle_count,
+        "orchestrator_cycle_count": ctx.intraday_cycle_count,
         "last_cycle_time": _fmt_age(ctx.last_cycle_time),
     }
 

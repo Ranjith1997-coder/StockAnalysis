@@ -2,7 +2,7 @@
 SnapshotPublisher — publishes in-memory TickStore state to Redis every 1 second.
 
 Reads from the market-data service's own Stock objects (populated by WS ticks)
-and writes to Redis hashes so that the monolith (bot commands, narrator,
+and writes to Redis hashes so that the orchestrator (bot commands, narrator,
 check_data_freshness) and analysis-engine workers can read live tick data
 without holding WebSocket connections.
 
@@ -25,7 +25,6 @@ if TYPE_CHECKING:
 import common.constants as constant
 from lib.logging_util import get_logger
 logger = get_logger("market-data")
-from services.common.metrics import set_stock
 
 
 class SnapshotPublisher:
@@ -76,9 +75,6 @@ class SnapshotPublisher:
             zd = ts._zerodha_data
             if zd.get("last_price", 0) <= 0:
                 continue
-            now = time.time()
-            last_ts = float(zd.get("timestamp", 0) or 0)
-            last_tick_age_s = int(now - last_ts) if last_ts > 0 else 0
             self._redis.hset(f"data:tick:{obj.stock_symbol}", mapping={
                 "last_price": str(zd["last_price"]),
                 "open": str(zd["open"]),
