@@ -193,6 +193,7 @@ live execution — the box currently has no runtime protection.
 |---|---|---|
 | 2026-11-22 | M0 | Plan created; tooling (skills/commands/CI/backups) added |
 | 2026-11-22 | M0 | CI green after fixing 2 logger-format bugs; fixed options/paper/analysis/data layers deployed (`7ec9294`); 11/11 services active. PINN: only an accepted BANKNIFTY model (2026-10-01) is loaded; recent nightly runs reject both symbols (NIFTY 4.77 %, BANKNIFTY 5.38 % wings) |
+| 2026-11-22 | M0 | Versioning repaired: `dirty` ignores untracked data artefacts; `/version` covers all 11 services; deploy restarts every long-running service (auth included — it was wrongly treated as a oneshot); monolith heartbeat fixed (it used `time.time()` where `time` is `datetime.time`, so it had never been written) and now runs on a 60 s thread. All 11 report `1.0.0+c218df7`, clean |
 
 ---
 
