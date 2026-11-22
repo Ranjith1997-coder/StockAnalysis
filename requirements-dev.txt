@@ -14,5 +14,7 @@ pytest-asyncio
 pytest-cov
 
 # Code quality
-ruff
+# Pinned: ruff's default rule set changes between minor versions (0.17 enables
+# G/flake8-logging-format by default), which makes CI disagree with local runs.
+ruff==0.15.20
 pyright

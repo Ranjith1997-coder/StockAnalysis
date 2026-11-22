@@ -134,7 +134,7 @@ def _run_inference_iteration(redis, model_manager: ModelManager, now: datetime) 
                 logger.info("[vol-engine] %s %s z=%.2f dir=%s",
                             symbol, sig.signal_type, sig.z_score, sig.direction)
         except Exception as e:
-            logger.error("[vol-engine] Error evaluating %s: %s", symbol, e, exc_info=True)
+            logger.exception("[vol-engine] Error evaluating %s: %s", symbol, e)
             _alert_throttled(
                 f"eval:{symbol}",
                 f"⚠️ <b>Vol-engine</b>: evaluation failing for {symbol} "
@@ -157,7 +157,7 @@ def inference_loop(redis, model_manager: ModelManager) -> None:
         try:
             _run_inference_iteration(redis, model_manager, now)
         except Exception as e:
-            logger.error("[vol-engine] Inference iteration failed: %s", e, exc_info=True)
+            logger.exception("[vol-engine] Inference iteration failed: %s", e)
             _alert_throttled(
                 "inference-iteration",
                 f"⚠️ <b>Vol-engine</b>: inference iteration failed "
@@ -209,7 +209,7 @@ def arbitrage_monitor(redis, model_manager: ModelManager) -> None:
             try:
                 audit_model_surface(redis, symbol, model)
             except Exception as e:
-                logger.error("[vol-engine] Arbitrage check failed for %s: %s", symbol, e, exc_info=True)
+                logger.exception("[vol-engine] Arbitrage check failed for %s: %s", symbol, e)
                 _alert_throttled(
                     f"arbitrage:{symbol}",
                     f"⚠️ <b>Vol-engine</b>: arbitrage audit failing for {symbol} "
@@ -252,7 +252,7 @@ def main():
         logger.info("[vol-engine] Connected to Redis at %s", redis_url)
         logger.info("[vol-engine] v%s starting", BUILD_LABEL)
     except Exception as e:
-        logger.error("[vol-engine] Cannot connect to Redis at %s: %s", redis_url, e, exc_info=True)
+        logger.exception("[vol-engine] Cannot connect to Redis at %s: %s", redis_url, e)
         sys.exit(1)
 
     from services.common.crash_handler import install_crash_handler

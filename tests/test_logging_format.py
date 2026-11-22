@@ -9,8 +9,6 @@ import ast
 import pathlib
 import re
 
-import pytest
-
 LEVELS = {"debug", "info", "warning", "warn", "error", "exception", "critical"}
 PLACEHOLDER = re.compile(r"%(?!%)[#0\- +]?\d*(?:\.\d+)?[sdifr]")
 SKIP_PARTS = (".venv", "node_modules", "/.git/", "/.kilo/", "/backups/")
