@@ -28,7 +28,10 @@ def _capture_git_info() -> tuple[str, bool]:
         commit = result.stdout.strip() or "unknown"
 
         dirty_result = subprocess.run(
-            ["git", "status", "--porcelain"],
+            # Tracked modifications only. Untracked runtime artefacts under
+            # data/ (trades DB, model files, recorded chains) otherwise mark
+            # every production build as dirty, which makes the flag useless.
+            ["git", "status", "--porcelain", "--untracked-files=no"],
             capture_output=True,
             text=True,
             timeout=5,

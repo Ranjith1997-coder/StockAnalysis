@@ -31,12 +31,20 @@ units → restart the 8 services below → verify `is-active`.
 ## Restart set and order (`scripts/deploy.py`)
 
 notification → data-gateway → market-data → analysis-engine →
-signal-intelligence → resource-monitor → paper-trading → stockanalysis (last).
+**volatility-engine** → signal-intelligence → resource-monitor →
+paper-trading → **pinn-trainer** → stockanalysis (last).
 
-Do **not** restart `stockanalysis-auth` (timer-triggered oneshot) or the
-positional timer unit. `stockanalysis-pinn-trainer` and
-`stockanalysis-volatility-engine` are not in the deploy list; restart them
-explicitly if their code changed.
+Do **not** restart `stockanalysis-auth` (timer-triggered oneshot; it picks up
+the new build on its next run) or the positional timer unit. A deploy between
+21:00–23:00 can abort a nightly PINN training run; it retries the next day.
+
+## Versioning
+
+Every service writes `version`/`commit`/`dirty` from
+`services/common/version.py` into `service:registry:*`; `/version` shows all
+of them. `dirty` counts **tracked** modifications only (untracked `data/`
+artefacts are ignored). The SHA is the real build identity — the `1.0.0`
+prefix is shared and not per-service.
 
 ## Launch mode rule (this has broken production twice)
 

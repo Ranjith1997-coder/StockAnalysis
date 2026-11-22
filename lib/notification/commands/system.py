@@ -338,8 +338,13 @@ _VERSION_SERVICES = [
     "data-gateway",
     "market-data",
     "analysis-engine",
+    "signal-intelligence",
     "notification-service",
     "resource-monitor",
+    "paper-trading",
+    "volatility-engine",
+    "pinn-trainer",
+    "auth-service",
 ]
 
 
@@ -364,9 +369,9 @@ async def cmd_version(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     for name in _VERSION_SERVICES:
         raw = rc.hgetall(f"service:registry:{name}") or {}
         version = raw.get("version", "?")
-        commit = raw.get("commit", "?")
         dirty_str = raw.get("dirty", "")
         hb = raw.get("last_heartbeat", "0")
+        dirty_icon = ""
 
         if not raw:
             icon = "⚪"
@@ -389,7 +394,7 @@ async def cmd_version(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 status_str = "?"
 
         lines.append(
-            f"  {icon} {name:<22} <code>{version:<20}</code> {status_str}"
+            f"  {icon} {name:<22} <code>{version:<20}</code> {status_str}{dirty_icon}"
         )
 
     from services.common.version import BUILD_LABEL, GIT_COMMIT
