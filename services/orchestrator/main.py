@@ -24,7 +24,6 @@ import threading
 from lib.zerodha.zerodha_connect import KiteConnect
 from .post_market_analysis.runner import run_and_summarize
 from .premarket.premarket_report import run_global_cues_report, run_preopen_report
-from urllib.parse import quote
 from common.token_registry import TokenRegistry, TokenInfo, TokenType
 from lib.intelligence.correlator import Confluence
 from lib.intelligence.signal import Signal, Direction, Layer, weight_to_strength
@@ -33,9 +32,7 @@ from services.market_data.signal_publisher import RedisSignalBus
 from services.common.stock_loader import (
     load_price_data_from_redis,
     load_sensibull_from_redis,
-    load_zerodha_from_redis,
     load_tick_from_redis,
-    load_options_live_from_redis,
 )
 from services.common.metrics import incr_stock, incr_system, set_system, incr_daily
 from services.common.cycle_subscriber import CycleSubscriber
@@ -411,8 +408,6 @@ def create_stock_and_index_objects(stockName = None, indexName = None, commodity
         return now.weekday() < 5 and now.time() < time(9, 15)
     
     stock_list, index_list, commodity_list, global_indices_list = get_stock_objects_from_json()
-
-    is_intraday = shared.app_ctx.mode and shared.app_ctx.mode.name == shared.Mode.INTRADAY.name
 
     count = 0
     yfinanceIndexSymbols = []
@@ -910,8 +905,8 @@ def _compute_position_pnl(pos: dict) -> float:
     lot_size = pos.get("lot_size", 15)
     lots = legs[0].get("lots", 1) if legs else 1
     qty = lot_size * lots
-    sell_val = sum(l.get("current_premium", 0) for l in legs if l.get("side") == "SELL") * qty
-    buy_val = sum(l.get("current_premium", 0) for l in legs if l.get("side") == "BUY") * qty
+    sell_val = sum(leg.get("current_premium", 0) for leg in legs if leg.get("side") == "SELL") * qty
+    buy_val = sum(leg.get("current_premium", 0) for leg in legs if leg.get("side") == "BUY") * qty
     current_debit = sell_val - buy_val
     return entry_credit - current_debit
 
@@ -1319,6 +1314,36 @@ def update_morning_bias():
 # Sensibull WS helpers — used when OPTIONS_SOURCE=sensibull
 # ---------------------------------------------------------------------------
 
+def _write_monolith_heartbeat(redis_proxy) -> None:
+    """Publish this process's build to the service registry.
+
+    Runs from a dedicated thread (every 60 s) as well as from the intraday
+    loop, so /version can see the monolith outside market hours too.
+    """
+    if redis_proxy is None:
+        return
+    try:
+        from services.common.version import BUILD_LABEL, GIT_COMMIT, GIT_DIRTY
+        redis_proxy.hset("service:registry:monolith", mapping={
+            "name": "monolith",
+            "pid": str(os.getpid()),
+            "status": "healthy",
+            "last_heartbeat": str(_time.time()),
+            "version": BUILD_LABEL,
+            "commit": GIT_COMMIT,
+            "dirty": str(GIT_DIRTY),
+        })
+        redis_proxy.expire("service:registry:monolith", 180)
+    except Exception:
+        logger.debug("[monolith] heartbeat write failed", exc_info=True)
+
+
+def _monolith_heartbeat_loop(redis_proxy) -> None:
+    while True:
+        _write_monolith_heartbeat(redis_proxy)
+        sleep(60)
+
+
 def intraday_analysis(loop = True, loop_wait_time = 30, max_cycles = 0):
     """
     Run intraday analysis loop.
@@ -1386,22 +1411,7 @@ def intraday_analysis(loop = True, loop_wait_time = 30, max_cycles = 0):
         # Layer 2: Heartbeat — signal liveness to healthchecks.io
         _ping_healthcheck()
 
-        # Write monolith version + heartbeat to service registry
-        if redis_proxy is not None:
-            try:
-                from services.common.version import BUILD_LABEL, GIT_COMMIT, GIT_DIRTY
-                redis_proxy.hset("service:registry:monolith", mapping={
-                    "name": "monolith",
-                    "pid": str(os.getpid()),
-                    "status": "healthy",
-                    "last_heartbeat": str(time.time()),
-                    "version": BUILD_LABEL,
-                    "commit": GIT_COMMIT,
-                    "dirty": str(GIT_DIRTY),
-                })
-                redis_proxy.expire("service:registry:monolith", 600)
-            except Exception:
-                pass
+        _write_monolith_heartbeat(redis_proxy)
 
         if PRODUCTION:
             sleeptime = (constant.INTRADAY_SLEEP_TIME) - (datetime.now().second + ((datetime.now().minute % 5) * 60))
@@ -1547,6 +1557,13 @@ def init():
     except Exception as e:
         logger.error(f"[cycle] Cannot connect to Redis at {redis_url}: {e}")
         sys.exit(1)
+
+    threading.Thread(
+        target=_monolith_heartbeat_loop,
+        args=(redis_proxy,),
+        daemon=True,
+        name="monolith-heartbeat",
+    ).start()
 
     cycle_subscriber = CycleSubscriber(redis_proxy)
     cycle_subscriber.start()

@@ -1,0 +1,17 @@
+# Ruff configuration for StockAnalysis.
+#
+# The repo has two deliberate conventions that the default rule set flags:
+#  - E402: services create the logger between imports (module-level logger
+#    must exist before the remaining imports run). Accepted repo-wide.
+#  - F403/F405: the monolith still uses `from common.helperFunctions import *`;
+#    enumerating those imports is a separate refactor, so the fallout is
+#    ignored for that file only.
+#
+# Keep this file small: add ignores only for accepted conventions, not to hide
+# new issues.
+
+[lint]
+ignore = ["E402"]
+
+[lint.per-file-ignores]
+"services/orchestrator/main.py" = ["F403", "F405"]
