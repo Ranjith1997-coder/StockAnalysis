@@ -134,7 +134,7 @@ def _run_inference_iteration(redis, model_manager: ModelManager, now: datetime) 
                 logger.info("[vol-engine] %s %s z=%.2f dir=%s",
                             symbol, sig.signal_type, sig.z_score, sig.direction)
         except Exception as e:
-            logger.error("[vol-engine] Error evaluating %s", symbol, e, exc_info=True)
+            logger.error("[vol-engine] Error evaluating %s: %s", symbol, e, exc_info=True)
             _alert_throttled(
                 f"eval:{symbol}",
                 f"⚠️ <b>Vol-engine</b>: evaluation failing for {symbol} "
@@ -209,7 +209,7 @@ def arbitrage_monitor(redis, model_manager: ModelManager) -> None:
             try:
                 audit_model_surface(redis, symbol, model)
             except Exception as e:
-                logger.error("[vol-engine] Arbitrage check failed for %s", symbol, e, exc_info=True)
+                logger.error("[vol-engine] Arbitrage check failed for %s: %s", symbol, e, exc_info=True)
                 _alert_throttled(
                     f"arbitrage:{symbol}",
                     f"⚠️ <b>Vol-engine</b>: arbitrage audit failing for {symbol} "

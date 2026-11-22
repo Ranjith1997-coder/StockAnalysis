@@ -45,6 +45,7 @@
 - `make backup` : pull production data (trades, models, chains) into `./backups/` (keeps 14)
 
 # Agent Tooling
+- **GitHub account:** always use **`Ranjith1997-coder`** (the repo owner) for `gh`/`git push`. Never use `ns-rkumark` for this repo. Check with `gh auth status`; switch with `gh auth switch --user Ranjith1997-coder`.
 - Skills (`.kilo/skills/`): `stockanalysis-deploy`, `add-analyser`, `options-data-contract`, `backtest-methodology`.
 - Commands (`.kilo/command/`): `/deploy`, `/verify-session`, `/pre-pr`, `/backtest`.
 - CI: `.github/workflows/ci.yml` — diff-based ruff (E402 ignored) + full pytest on PR/push to master.

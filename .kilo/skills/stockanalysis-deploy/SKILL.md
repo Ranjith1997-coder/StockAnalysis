@@ -4,6 +4,13 @@ description: "Deploy StockAnalysis to the production server (physical machine vi
 
 # Deploying StockAnalysis
 
+## GitHub account
+
+Push/deploy as **`Ranjith1997-coder`** (repo owner). Never use `ns-rkumark`
+for this repo. Verify with `gh auth status`; switch with
+`gh auth switch --user Ranjith1997-coder`. CI runs are read with
+`gh run list` / `gh run watch`.
+
 ## Target
 
 Production is a **physical machine**, not EC2:
