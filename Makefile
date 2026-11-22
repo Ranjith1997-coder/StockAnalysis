@@ -62,6 +62,7 @@ help:
 	@echo "    logs-svc      View one service: make logs-svc SVC_LOG=data-gateway"
 	@echo "    logs-svc-follow  Follow one service live"
 	@echo "    logs-service  List all available service logs"
+	@echo "    backup        Pull prod data (trades, models, chains) to ./backups/"
 	@echo "    clean         Remove __pycache__, .pyc, pytest cache"
 	@echo "    clean-all     clean + remove .venv"
 	@echo ""
@@ -395,6 +396,10 @@ typecheck:
 # Maintenance
 # ──────────────────────────────────────────────────────────────────────────────
 LOG_FILE := logs/monolith.log
+
+.PHONY: backup
+backup:
+	@bash scripts/backup_server_data.sh
 
 .PHONY: logs
 logs:

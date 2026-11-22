@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"   # matches production (Ubuntu 24.04)
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+          pip install -r requirements-ml.txt   # CPU torch: tests/pinn imports it
+
+      - name: Lint changed Python files
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git fetch --no-tags origin "${{ github.base_ref }}"
+            base="origin/${{ github.base_ref }}"
+          else
+            base="HEAD~1"
+          fi
+          mapfile -t files < <(git diff --name-only "$base"...HEAD -- '*.py' || true)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "No Python changes - skipping lint."
+            exit 0
+          fi
+          printf 'Linting:\n%s\n' "${files[@]}"
+          # E402 is a deliberate repo convention (logger between imports).
+          ruff check --ignore E402 "${files[@]}"
+
+      - name: Tests
+        run: PYTHONPATH=. python -m pytest tests/ -x -q

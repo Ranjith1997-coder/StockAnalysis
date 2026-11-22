@@ -19,7 +19,7 @@
 - **Entry point:** `python -m services.orchestrator.main` → `_run_daily_loop()` (production) or `start_stock_analysis()` (dev).
 - **Signal Correlation:** every process (monolith, analysis-engine, market-data) emits `Signal` objects via `RedisSignalBus` → `intelligence:signals` stream. The standalone `signal-intelligence` service (single instance — NOT horizontally scalable) is the only consumer that combines LIVE+INTRADAY+POSITIONAL into one `SignalCorrelator`; on confluence it sends the base Telegram alert directly and publishes `intelligence:confluence` → monolith's `MarketNarrator` (Gemini Flash LLM) for HIGH-level narratives only.
 - **Registration Order:** `OptionSellerCompositeAnalyser` MUST be registered last.
-- **Options Source:** When `OPTIONS_SOURCE=both`, Zerodha is authoritative. Sensibull enriches ONLY `{delta, gamma, theta, vega, iv, iv_change}` via `TickStore.update_option_tick(merge=True)`.
+- **Options Source:** `OPTIONS_SOURCE=zerodha` (default): Zerodha is authoritative and Sensibull enriches ONLY `{delta, gamma, theta, vega, iv, iv_change}` — it must never overwrite `ltp/oi/prev_oi/timestamp` or recompute aggregates. `OPTIONS_SOURCE=sensibull`: Sensibull is the full writer. Contract: `.kilo/skills/options-data-contract/SKILL.md`.
 - **Logging:** All services use `services/common/logging.py` via `get_logger()`. Monolith's `common/logging_util.py` is a shim.
 
 
@@ -42,3 +42,10 @@
 - `make lint` / `make format` / `make typecheck` : Ruff / Pyright
 - `make deploy` : git pull + unit sync + service restarts on the production server (Tailscale SSH — NOT EC2)
 - `make server-logs-500` : Check production `monolith.log`
+- `make backup` : pull production data (trades, models, chains) into `./backups/` (keeps 14)
+
+# Agent Tooling
+- Skills (`.kilo/skills/`): `stockanalysis-deploy`, `add-analyser`, `options-data-contract`, `backtest-methodology`.
+- Commands (`.kilo/command/`): `/deploy`, `/verify-session`, `/pre-pr`, `/backtest`.
+- CI: `.github/workflows/ci.yml` — diff-based ruff (E402 ignored) + full pytest on PR/push to master.
+- Programme plan: `.kilo/plans/options-programme-plan.md` · task specs: `.kilo/plans/options-indicators-roadmap.md`.

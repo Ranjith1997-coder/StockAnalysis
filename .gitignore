@@ -62,3 +62,6 @@ data/stocks/
 *.parquet
 # CocoIndex Code (ccc)
 /.cocoindex_code/
+
+# local backups pulled from the production server
+backups/
