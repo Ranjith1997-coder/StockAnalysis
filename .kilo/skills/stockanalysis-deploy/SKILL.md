@@ -30,13 +30,15 @@ units → restart the 8 services below → verify `is-active`.
 
 ## Restart set and order (`scripts/deploy.py`)
 
-notification → data-gateway → market-data → analysis-engine →
-**volatility-engine** → signal-intelligence → resource-monitor →
-paper-trading → **pinn-trainer** → stockanalysis (last).
+auth → notification → data-gateway → market-data → analysis-engine →
+volatility-engine → signal-intelligence → resource-monitor → paper-trading →
+pinn-trainer → stockanalysis (last).
 
-Do **not** restart `stockanalysis-auth` (timer-triggered oneshot; it picks up
-the new build on its next run) or the positional timer unit. A deploy between
-21:00–23:00 can abort a nightly PINN training run; it retries the next day.
+`stockanalysis-auth` is **long-running** (`Type=simple`, `Restart=always`), not
+a oneshot — it must be restarted or it serves the old build indefinitely.
+There are no systemd timers; the 20:00 positional run is internal to the
+monolith. A deploy between 21:00–23:00 can abort a nightly PINN training run;
+it retries the next day.
 
 ## Versioning
 
