@@ -456,3 +456,53 @@ class TestEvaluatePosition:
         assert result is not None
         assert result.status == "CLOSED"
         assert result.exit_reason == "STOP_LOSS"
+
+
+class TestOptionFieldKey:
+    """The publisher writes ``float(strike)_SIDE``; lookups must match it."""
+
+    def test_int_and_float_strikes_share_one_key(self):
+        from services.paper_trading.engine import option_field_key
+
+        assert option_field_key(25350, "PE") == "25350.0_PE"
+        assert option_field_key(25350.0, "PE") == "25350.0_PE"
+
+    def test_update_leg_premiums_finds_int_strike_legs(self):
+        from services.paper_trading.engine import update_leg_premiums
+        from services.paper_trading.models import OptionLeg, PaperPosition
+
+        position = PaperPosition(
+            position_id="p", symbol="NIFTY", strategy="IRON_CONDOR", mode="intraday",
+            direction="NEUTRAL",
+            legs=[
+                OptionLeg(strike=25350, option_type="PE", side="SELL", lots=1,
+                          entry_premium=4.13),
+                OptionLeg(strike=25250, option_type="PE", side="BUY", lots=1,
+                          entry_premium=1.06),
+            ],
+            expiry="2026-11-25", scrip="NIFTY", lot_size=75,
+            entry_timestamp=0.0, entry_credit=1000.0, margin_blocked=1000.0,
+        )
+        live = {
+            "25350.0_PE": json.dumps({"ltp": 30.5}),
+            "25250.0_PE": json.dumps({"ltp": 12.25}),
+        }
+
+        assert update_leg_premiums(position, live) is True
+        assert position.legs[0].current_premium == 30.5
+        assert position.legs[1].current_premium == 12.25
+
+    def test_missing_tick_keeps_the_last_premium(self):
+        from services.paper_trading.engine import update_leg_premiums
+        from services.paper_trading.models import OptionLeg, PaperPosition
+
+        leg = OptionLeg(strike=25350, option_type="PE", side="SELL", lots=1,
+                        entry_premium=4.13)
+        position = PaperPosition(
+            position_id="p", symbol="NIFTY", strategy="IRON_CONDOR", mode="intraday",
+            direction="NEUTRAL", legs=[leg], expiry="2026-11-25", scrip="NIFTY",
+            lot_size=75, entry_timestamp=0.0, entry_credit=1000.0, margin_blocked=1000.0,
+        )
+        before = leg.current_premium
+        assert update_leg_premiums(position, {}) is False
+        assert leg.current_premium == before

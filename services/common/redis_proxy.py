@@ -86,6 +86,12 @@ class RedisProxy:
     def xlen(self, stream: str) -> int:
         return self._client.xlen(stream)
 
+    def xrange(self, stream: str, min: str = "-", max: str = "+",
+               count: int | None = None) -> list:
+        if count is not None:
+            return self._client.xrange(stream, min=min, max=max, count=count)
+        return self._client.xrange(stream, min=min, max=max)
+
     def xread(self, streams: dict, count: int | None = None, block: int | None = None) -> list | None:
         return self._client.xread(streams, count=count, block=block)
 

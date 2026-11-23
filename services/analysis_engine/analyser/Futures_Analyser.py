@@ -8,7 +8,6 @@ from lib.logging_util import get_logger
 logger = get_logger("analyser")
 from collections import namedtuple
 import common.shared as shared
-import common.constants as constant
 
 
 class FuturesAnalyser(BaseAnalyzer):
@@ -225,8 +224,6 @@ class FuturesAnalyser(BaseAnalyzer):
             Tuple of (price_threshold, oi_threshold)
         """
         try:
-            cache_key = f"{stock.stock_symbol}_{len(futures_data)}"
-            
             # Calculate ATR-based price threshold
             atr_pct = self.calculate_atr_percentage(futures_data, self.ATR_PERIOD)
             price_threshold = max(atr_pct * 0.5, self.MIN_PRICE_THRESHOLD)
@@ -715,9 +712,12 @@ class FuturesAnalyser(BaseAnalyzer):
             prev = fut_curr.iloc[-2]
             curr = fut_curr.iloc[-1]
 
-            prev_close = prev.get("close"); curr_close = curr.get("close")
-            prev_vol = prev.get("volume", 0); curr_vol = curr.get("volume", 0)
-            prev_oi = prev.get("oi", 0); curr_oi = curr.get("oi", 0)
+            prev_close = prev.get("close")
+            curr_close = curr.get("close")
+            prev_vol = prev.get("volume", 0)
+            curr_vol = curr.get("volume", 0)
+            prev_oi = prev.get("oi", 0)
+            curr_oi = curr.get("oi", 0)
             if None in (prev_close, curr_close):
                 logger.debug(f"[FUT_PVO] {stock.stock_symbol} — prev/curr close missing, skip")
                 return False
@@ -909,8 +909,10 @@ class FuturesAnalyser(BaseAnalyzer):
             last = fut_today.iloc[-1]
             prev = fut_today.iloc[-2]
 
-            last_close = last['close']; prev_close = prev['close']
-            last_oi = last.get('oi', 0); prev_oi = prev.get('oi', 0)
+            last_close = last['close']
+            prev_close = prev['close']
+            last_oi = last.get('oi', 0)
+            prev_oi = prev.get('oi', 0)
             last_vol = last.get('volume', 0)
 
             if any(v is None for v in [last_close, prev_close, last_oi, prev_oi]):
@@ -1239,7 +1241,17 @@ class FuturesAnalyser(BaseAnalyzer):
             if fmdata is not None and not fmdata.empty and "expiry" in fmdata.columns:
                 from datetime import date
                 expiry_date = fmdata["expiry"].iloc[0]
-                days_to_expiry = (expiry_date - date.today()).days
+                # Redis-sourced futures_mdata round-trips through JSON, so expiry
+                # arrives as an ISO string while the live object holds a date.
+                if isinstance(expiry_date, str):
+                    try:
+                        expiry_date = date.fromisoformat(expiry_date[:10])
+                    except ValueError:
+                        expiry_date = None
+                elif hasattr(expiry_date, "date"):
+                    expiry_date = expiry_date.date()
+                if expiry_date is not None:
+                    days_to_expiry = (expiry_date - date.today()).days
 
             ann_coc = None
             if is_positional and days_to_expiry and days_to_expiry >= 10:

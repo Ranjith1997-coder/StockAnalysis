@@ -8,6 +8,7 @@ datetime/numpy types.
 
 from __future__ import annotations
 
+import io
 import json
 import pandas as pd
 from typing import Any
@@ -24,7 +25,7 @@ def dataframe_from_json(json_str: str) -> pd.DataFrame:
     """Deserialize a JSON string back to a DataFrame."""
     if not json_str or json_str == "{}":
         return pd.DataFrame()
-    return pd.read_json(json_str, orient="split")
+    return pd.read_json(io.StringIO(json_str), orient="split")
 
 
 def safe_json_dumps(obj: Any) -> str:

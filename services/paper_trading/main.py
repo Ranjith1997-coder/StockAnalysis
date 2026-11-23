@@ -299,11 +299,7 @@ def analysis_consumer(redis):
         entries = messages[0][1] if isinstance(messages, list) and messages else []
         for msg_id, fields in entries:
             try:
-                new_entries, new_exits = parse_analysis_result(fields)
-                for e in new_entries:
-                    entry_queue.put(e)
-                for x in new_exits:
-                    exit_queue.put(x)
+                process_analysis_fields(redis, fields)
             except Exception as e:
                 logger.exception("[paper-trading] Error parsing analysis result %s: %s", msg_id, e)
             finally:
@@ -311,6 +307,36 @@ def analysis_consumer(redis):
                     redis.xack(constant.ANALYSIS_RESULTS_STREAM, ANALYSIS_GROUP, msg_id)
                 except Exception as e:
                     logger.debug("[paper-trading] xack analysis %s: %s", msg_id, e)
+
+
+def process_analysis_fields(redis, fields) -> "tuple[list, list]":
+    """Parse one analysis:results entry and queue its signals (T5 seam).
+
+    The stream plumbing stays in ``analysis_consumer``; this is the unit the
+    e2e harness drives so a simulated cycle exercises the real parser.
+    """
+    entries, exits = parse_analysis_result(fields)
+    for exit_signal in exits:
+        exit_queue.put(exit_signal)
+    for entry_signal in entries:
+        entry_queue.put(entry_signal)
+    return entries, exits
+
+
+def process_confluence_fields(fields):
+    """Parse one signals:confluence entry and queue it (T5 seam)."""
+    signal = parse_confluence_message(fields)
+    if signal:
+        entry_queue.put(signal)
+    return signal
+
+
+def process_pinn_fields(fields):
+    """Parse one pinn:signals entry and queue it (T5 seam)."""
+    signal = parse_pinn_signal(fields)
+    if signal:
+        entry_queue.put(signal)
+    return signal
 
 
 def confluence_consumer(redis):
@@ -334,9 +360,7 @@ def confluence_consumer(redis):
         entries = messages[0][1] if isinstance(messages, list) and messages else []
         for msg_id, fields in entries:
             try:
-                signal = parse_confluence_message(fields)
-                if signal:
-                    entry_queue.put(signal)
+                process_confluence_fields(fields)
             except Exception as e:
                 logger.exception("[paper-trading] Error parsing confluence %s: %s", msg_id, e)
             finally:
@@ -367,9 +391,7 @@ def pinn_signal_consumer(redis):
         entries = messages[0][1] if isinstance(messages, list) and messages else []
         for msg_id, fields in entries:
             try:
-                signal = parse_pinn_signal(fields)
-                if signal:
-                    entry_queue.put(signal)
+                process_pinn_fields(fields)
             except Exception as e:
                 logger.exception("[paper-trading] Error parsing pinn signal %s: %s", msg_id, e)
             finally:
@@ -467,22 +489,29 @@ def _handle_entry_signal(redis, span_calculator: SpanCalculator, signal) -> None
         persist_new_position(redis, position)
 
 
+def drain_signal_queues(redis, span_calculator: SpanCalculator) -> int:
+    """Handle at most one queued exit and one queued entry.
+
+    Returns the number handled (0 means the caller should idle). Extracted from
+    ``strategy_processor`` so the e2e harness can drain deterministically.
+    """
+    handled = 0
+    try:
+        _handle_exit_signal(redis, exit_queue.get_nowait())
+        handled += 1
+    except queue.Empty:
+        pass
+    try:
+        _handle_entry_signal(redis, span_calculator, entry_queue.get_nowait())
+        handled += 1
+    except queue.Empty:
+        pass
+    return handled
+
+
 def strategy_processor(redis, span_calculator: SpanCalculator):
     while _running:
-        drained = False
-        try:
-            signal = exit_queue.get_nowait()
-            _handle_exit_signal(redis, signal)
-            drained = True
-        except queue.Empty:
-            pass
-        try:
-            signal = entry_queue.get_nowait()
-            _handle_entry_signal(redis, span_calculator, signal)
-            drained = True
-        except queue.Empty:
-            pass
-        if not drained:
+        if not drain_signal_queues(redis, span_calculator):
             time.sleep(0.5)
 
 
@@ -510,44 +539,49 @@ def settle_expired_positions(redis, now: datetime) -> None:
                 apply_mtm_result(redis, result)
 
 
+def mtm_once(redis, now: datetime, spot_tracker) -> int:
+    """Evaluate every open position once. Returns the number evaluated (T5 seam)."""
+    if not is_market_hours(now):
+        try:
+            settle_expired_positions(redis, now)
+        except Exception as e:
+            logger.error("[paper-trading] expiry settlement error: %s", e, exc_info=True)
+        return 0
+
+    move_pct: dict[str, float] = {}
+    total_unrealized = 0.0
+    evaluated = 0
+
+    for position in load_open_positions(redis):
+        if position.symbol not in move_pct:
+            spot = engine.read_spot(redis, position.symbol)
+            if spot is not None:
+                spot_tracker.update(position.symbol, spot, now.timestamp())
+            move_pct[position.symbol] = spot_tracker.move_pct(position.symbol)
+
+        result = engine.evaluate_position(
+            position, redis, now=now,
+            gamma_trap_triggered=engine.check_gamma_trap_proxy(position, move_pct[position.symbol]),
+        )
+        if result is None:
+            continue
+        evaluated += 1
+        if apply_mtm_result(redis, result) and result.status != "CLOSED":
+            total_unrealized += engine.compute_unrealized_pnl(
+                result, engine.compute_current_debit(result)
+            )
+
+    with _state_lock:
+        account = get_account(redis)
+        account.unrealized_pnl = total_unrealized
+        save_account(redis, account)
+    return evaluated
+
+
 def mtm_engine(redis):
     spot_tracker = engine.SpotMoveTracker()
     while _running:
-        now = datetime.now()
-        if not is_market_hours(now):
-            try:
-                settle_expired_positions(redis, now)
-            except Exception as e:
-                logger.error("[paper-trading] expiry settlement error: %s", e, exc_info=True)
-            time.sleep(MTM_CYCLE_SECONDS)
-            continue
-
-        move_pct: dict[str, float] = {}
-        total_unrealized = 0.0
-
-        for position in load_open_positions(redis):
-            if position.symbol not in move_pct:
-                spot = engine.read_spot(redis, position.symbol)
-                if spot is not None:
-                    spot_tracker.update(position.symbol, spot, now.timestamp())
-                move_pct[position.symbol] = spot_tracker.move_pct(position.symbol)
-
-            result = engine.evaluate_position(
-                position, redis, now=now,
-                gamma_trap_triggered=engine.check_gamma_trap_proxy(position, move_pct[position.symbol]),
-            )
-            if result is None:
-                continue
-            if apply_mtm_result(redis, result) and result.status != "CLOSED":
-                total_unrealized += engine.compute_unrealized_pnl(
-                    result, engine.compute_current_debit(result)
-                )
-
-        with _state_lock:
-            account = get_account(redis)
-            account.unrealized_pnl = total_unrealized
-            save_account(redis, account)
-
+        mtm_once(redis, datetime.now(), spot_tracker)
         time.sleep(MTM_CYCLE_SECONDS)
 
 

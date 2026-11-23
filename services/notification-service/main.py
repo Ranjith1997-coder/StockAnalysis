@@ -27,7 +27,6 @@ import json
 import time
 import signal
 import argparse
-import traceback
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
@@ -46,7 +45,6 @@ from common.constants import (
     DISCORD_INTRADAY_WEBHOOK_URL,
     DISCORD_POSITIONAL_WEBHOOK_URL,
     DISCORD_LIVE_OPTIONS_WEBHOOK_URL,
-    ENV_PRODUCTION,
 )
 import requests
 import re
@@ -145,7 +143,7 @@ def _send_discord(webhook_url: str, message: str, parse_mode: str | None = None)
 def _send_telegram(token: str, chat_id: str, message: str, parse_mode: str | None = None) -> bool:
     """Send a single Telegram message with 3x retry + exponential backoff."""
     if not token or not chat_id:
-        logger.debug(f"[notification] Telegram token/chat_id not configured")
+        logger.debug("[notification] Telegram token/chat_id not configured")
         return False
 
     payload = {"chat_id": chat_id, "text": message}
@@ -265,6 +263,14 @@ def main():
     rc = sync_redis.from_url(redis_url, decode_responses=True)
     consumer_name = args.consumer_name
 
+    # Fail fast and loudly: without this, the xgroup_create below swallows the
+    # connection error and the first uncaught hset prints a bare traceback.
+    try:
+        rc.ping()
+    except Exception as e:
+        logger.error(f"[notification-service] Cannot connect to Redis at {redis_url}: {e}")
+        sys.exit(1)
+
     logger.info(f"[notification-service] Starting (consumer={consumer_name}, redis={redis_url})")
     from services.common.version import BUILD_LABEL
     logger.info(f"[notification-service] v{BUILD_LABEL} starting")
@@ -340,7 +346,7 @@ def main():
                 job = dict(fields)
                 success = dispatch_notification(job)
                 if not success:
-                    error = f"Failed to send after 3 retries"
+                    error = "Failed to send after 3 retries"
                     _send_to_dead_letter(rc, job, error)
                     sym = job.get("symbol", "")
                     if sym:

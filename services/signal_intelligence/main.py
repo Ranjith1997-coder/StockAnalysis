@@ -53,6 +53,13 @@ def _update_heartbeat(redis: RedisProxy, total_confluences: int):
     redis.expire("service:registry:signal-intelligence", 120)
 
 
+def handle_signal(redis, correlator, fields):
+    """Reconstruct and correlate one signals entry (T5 seam)."""
+    signal_obj = reconstruct_signal(fields)
+    correlator.on_signal(signal_obj)
+    return signal_obj
+
+
 def main():
     global _running
 
@@ -118,8 +125,7 @@ def main():
                 break
 
             try:
-                signal_obj = reconstruct_signal(fields)
-                correlator.on_signal(signal_obj)
+                handle_signal(redis, correlator, fields)
             except Exception as e:
                 logger.exception(f"[signal-intelligence] Error processing signal {msg_id}: {e}")
             finally:

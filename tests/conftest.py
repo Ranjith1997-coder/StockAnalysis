@@ -7,7 +7,7 @@ Provides:
 - make_update()     : Telegram Update + ContextTypes mock pair
 """
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 
 # ── Minimal Stock-like object ─────────────────────────────────────────────
@@ -34,6 +34,9 @@ class FakeStock:
         self.zerodha_ctx = {}
         self.futures_live = {}
         self.zerodha_data = {}
+        # Real tick store: process_job hydrates Redis ticks into it before ltp.
+        from lib.zerodha.tick_store import TickStore
+        self._tick_store = TickStore()
         self.sensibull_ctx = {
             "last_fetch_time": None,
             "current": {},
@@ -102,6 +105,27 @@ def patch_app_ctx(fake_ctx):
     shared.app_ctx = fake_ctx
     yield fake_ctx
     shared.app_ctx = original
+
+
+# ── In-process Redis ──────────────────────────────────────────────────────
+
+@pytest.fixture
+def fake_redis():
+    """Real RedisProxy wired to fakeredis (no server, no network).
+
+    RedisProxy.__init__ only builds a client, so swapping ``_client`` gives the
+    production code path without patching the proxy's methods.
+    """
+    fakeredis = pytest.importorskip("fakeredis")
+    from services.common.redis_proxy import RedisProxy
+
+    proxy = RedisProxy.__new__(RedisProxy)
+    proxy._client = fakeredis.FakeRedis(decode_responses=True)
+    try:
+        yield proxy
+    finally:
+        proxy._client.flushall()
+        proxy._client.close()
 
 
 # ── Telegram mock helpers ─────────────────────────────────────────────────

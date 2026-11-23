@@ -187,6 +187,10 @@ def process_job(
         )
 
     stock.reset_analysis()
+    # Hydrate the live tick first: update_latest_data() prefers a fresh WS tick
+    # over the last 5-minute close, but it was being called before the tick was
+    # loaded, so stock.ltp always came from the bar (up to 5 min stale).
+    load_equity_tick_from_redis(redis, stock)
     stock.update_latest_data()
 
     if mode == shared.Mode.POSITIONAL:
@@ -225,7 +229,6 @@ def process_job(
         )
 
     load_zerodha_from_redis(redis, stock)
-    load_equity_tick_from_redis(redis, stock)
 
     if is_index and symbol in constant.LIVE_OPTIONS_INDICES:
         load_options_live_from_redis(redis, stock)

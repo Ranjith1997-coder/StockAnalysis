@@ -68,6 +68,17 @@ def is_agg_data_stale(options_agg: dict, now: Optional[float] = None,
 
 # ── Leg premium updates (docs/PAPER_TRADING_DESIGN.md section 8.1 step 3) ───
 
+def option_field_key(strike: float, option_type: str) -> str:
+    """Canonical Redis field for an option tick.
+
+    Strikes reach the engine as int (from YAML/JSON) or float (from Sensibull);
+    the publisher always writes ``f"{float(strike)}_{side}"``. Normalising here
+    keeps the two from silently diverging — a mismatch leaves the leg on its
+    entry premium, which hides real P&L.
+    """
+    return f"{float(strike)}_{option_type}"
+
+
 def update_leg_premiums(position: PaperPosition, options_live: dict) -> bool:
     """Update each leg's current_premium from the options_live hash.
 
@@ -78,7 +89,7 @@ def update_leg_premiums(position: PaperPosition, options_live: dict) -> bool:
     """
     all_found = True
     for leg in position.legs:
-        raw = options_live.get(f"{leg.strike}_{leg.option_type}")
+        raw = options_live.get(option_field_key(leg.strike, leg.option_type))
         if raw is None:
             logger.warning(
                 f"[engine] {position.symbol} {position.position_id}: no tick for "
@@ -343,7 +354,7 @@ def compute_exit_fills(position: PaperPosition, options_live: Optional[dict] = N
     for leg in position.legs:
         action = _exit_action(leg)
         tick = None
-        raw = (options_live or {}).get(f"{leg.strike}_{leg.option_type}")
+        raw = (options_live or {}).get(option_field_key(leg.strike, leg.option_type))
         if raw:
             try:
                 tick = json.loads(raw) if isinstance(raw, (str, bytes)) else raw

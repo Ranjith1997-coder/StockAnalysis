@@ -314,6 +314,8 @@ class FuturesFetcher:
                 "oi": candle.get("oi"),
                 "underlying_price": underlying,
             })
+        if not rows:
+            return pd.DataFrame()
         return pd.DataFrame(rows).set_index("date")
 
     @staticmethod

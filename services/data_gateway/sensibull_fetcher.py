@@ -9,10 +9,10 @@ from __future__ import annotations
 
 import concurrent.futures
 import datetime
+import io
 import json
 import os
 import threading
-import time
 from urllib.parse import quote
 
 import requests
@@ -20,7 +20,6 @@ import pandas as pd
 
 from lib.logging_util import get_logger
 logger = get_logger("data-gateway")
-from services.common.stock_proxy import StockProxy
 from services.common.rate_limiter import get_sensibull_limiter, retry_on_429
 
 
@@ -239,9 +238,14 @@ def _fetch_insights_fallback(symbol: str, cookies: dict | None,
             iv_ohlc = iv_data["payload"].get("iv_ohlc_data", {})
             if iv_ohlc:
                 sorted_dates = sorted(iv_ohlc.keys())
-                latest_iv = iv_ohlc[sorted_dates[-1]].get("iv")
-                if latest_iv is not None:
-                    atm_iv = float(latest_iv)
+                # Walk back from the newest day: today's chart entry can be
+                # present but unpopulated, and nulling atm_iv in that case
+                # disables the IV-based setups for the whole cycle.
+                for date_key in reversed(sorted_dates):
+                    latest_iv = iv_ohlc[date_key].get("iv")
+                    if latest_iv is not None:
+                        atm_iv = float(latest_iv)
+                        break
                 iv_df = pd.DataFrame([
                     {"date": d, "iv_close": float(e.get("iv", 0))}
                     for d, e in iv_ohlc.items() if e.get("iv") is not None
@@ -259,8 +263,6 @@ def _fetch_insights_fallback(symbol: str, cookies: dict | None,
     nearest = available_expiries[0]
     pcr = payload.get("pcr")
     atm_strike = payload.get("atm_strike")
-    total_call_oi = payload.get("total_call_oi", 0)
-    total_put_oi = payload.get("total_put_oi", 0)
 
     per_expiry_map = {}
     for exp in available_expiries:
@@ -635,7 +637,9 @@ def publish_to_redis(redis_proxy, symbol: str, current_data: dict | None,
         iv_chart: fetched iv_chart_history DataFrame (or None to keep existing)
         oi_history: fetched oi_history DataFrame (or None to keep existing)
     """
-    ctx = existing_ctx or {}
+    # ``existing_ctx or {}`` silently discarded an empty dict, so a caller that
+    # keeps its own context dict never saw the appended history.
+    ctx = existing_ctx if existing_ctx is not None else {}
     if current_data:
         ctx["current"] = current_data
         ctx["last_fetch_time"] = str(datetime.datetime.now())
@@ -849,7 +853,7 @@ def _deserialize_sensibull_ctx(raw: dict) -> dict:
     ctx["last_fetch_time"] = raw.get("last_fetch_time")
 
     hist_json = raw.get("historical_data_json", "{}")
-    ctx["historical_data"] = pd.read_json(hist_json, orient="split") if hist_json != "{}" else pd.DataFrame()
+    ctx["historical_data"] = pd.read_json(io.StringIO(hist_json), orient="split") if hist_json != "{}" else pd.DataFrame()
 
     oi_chain_raw = raw.get("oi_chain_json", "null")
     ctx["oi_chain"] = json.loads(oi_chain_raw) if oi_chain_raw != "null" else None
@@ -858,9 +862,9 @@ def _deserialize_sensibull_ctx(raw: dict) -> dict:
     ctx["oi_chain_history"] = json.loads(hist_list_raw) if hist_list_raw != "[]" else []
 
     iv_chart_raw = raw.get("iv_chart_history_json", "{}")
-    ctx["iv_chart_history"] = pd.read_json(iv_chart_raw, orient="split") if iv_chart_raw != "{}" else pd.DataFrame()
+    ctx["iv_chart_history"] = pd.read_json(io.StringIO(iv_chart_raw), orient="split") if iv_chart_raw != "{}" else pd.DataFrame()
 
     oi_hist_raw = raw.get("oi_history_json", "{}")
-    ctx["oi_history"] = pd.read_json(oi_hist_raw, orient="split") if oi_hist_raw != "{}" else pd.DataFrame()
+    ctx["oi_history"] = pd.read_json(io.StringIO(oi_hist_raw), orient="split") if oi_hist_raw != "{}" else pd.DataFrame()
 
     return ctx

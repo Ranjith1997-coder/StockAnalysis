@@ -10,7 +10,6 @@ from tests.conftest import FakeStock
 def _fake_stock_with_data(symbol="NIFTY", is_index=True):
     """Return a FakeStock with minimal price data for analysis."""
     import pandas as pd
-    import common.shared as shared
 
     stock = FakeStock(symbol=symbol)
     stock.is_index = is_index
@@ -74,6 +73,27 @@ def _real_stock_with_data(symbol="RELIANCE", is_index=False):
     }
     stock.reset_analysis = lambda: None
     stock.update_latest_data = lambda: None
+    return stock
+
+
+def _live_ltp_stock(symbol="NIFTY", is_index=True):
+    """Real Stock whose update_latest_data prefers a fresh WS tick, like prod."""
+    import pandas as pd
+    from common.Stock import Stock
+
+    stock = Stock(symbol, symbol, is_index=is_index)
+    stock._priceData = pd.DataFrame({
+        "Close": [24_400.0, 24_450.0, 24_500.0],
+        "Volume": [1, 2, 3],
+    })
+    stock.prevDayOHLCV = {"OPEN": 24_400.0, "HIGH": 24_600.0,
+                          "LOW": 24_300.0, "CLOSE": 24_450.0}
+    stock.daily_hv = 18.5
+    stock.sensibull_ctx = {
+        "last_fetch_time": None, "current": {}, "historical_data": pd.DataFrame(),
+        "oi_chain_history": [], "iv_chart_history": pd.DataFrame(), "oi_history": pd.DataFrame(),
+    }
+    stock.reset_analysis = lambda: None
     return stock
 
 
@@ -430,3 +450,38 @@ class TestLoadIndiaVix:
         redis = MagicMock()
         redis.hgetall.side_effect = ConnectionError("down")
         assert _load_india_vix(redis) is None
+
+
+class TestLiveTickOrdering:
+    @patch("services.analysis_engine.worker.load_stock_from_redis")
+    @patch("services.analysis_engine.worker.load_sensibull_from_redis")
+    @patch("services.analysis_engine.worker.load_zerodha_from_redis")
+    def test_ltp_uses_the_live_tick_not_the_last_bar(
+        self, mock_load_zerodha, mock_load_sensibull, mock_load_stock, patch_app_ctx,
+    ):
+        """The tick must be hydrated before update_latest_data runs (real method)."""
+        import common.shared as shared
+        from services.analysis_engine.worker import process_job
+
+        patch_app_ctx.mode = shared.Mode.INTRADAY
+        stock = _live_ltp_stock("RELIANCE", is_index=False)
+        mock_load_stock.return_value = stock
+        mock_load_sensibull.return_value = True
+
+        redis = MagicMock()
+        redis.hgetall.side_effect = lambda key: (
+            {"last_price": "2525.0", "timestamp": str(__import__("time").time())}
+            if key == "data:tick:RELIANCE" else {}
+        )
+        orchestrator = MagicMock()
+        score = MagicMock()
+        score.total_score = 0
+        score.priority.name = "LOW"
+        score.priority.value = 1
+        orchestrator.run_all_intraday.return_value = (False, score)
+
+        job = {"job_id": "j", "cycle_id": "c", "symbol": "RELIANCE",
+               "is_index": "false", "mode": "intraday"}
+        process_job(redis, orchestrator, job)
+
+        assert stock.ltp == 2525.0, "ltp fell back to the 5-minute close"
