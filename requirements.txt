@@ -41,6 +41,8 @@ multitasking==0.0.12
 numpy==2.3.2
 packaging==25.0
 pandas==2.3.1
+# Parquet writer for the intraday options capture (services/market_data/chain_recorder.py)
+pyarrow==23.0.1
 psutil==6.1.1
 pyotp==2.9.0
 pandas_market_calendars==5.1.1

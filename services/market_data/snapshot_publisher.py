@@ -158,5 +158,11 @@ class SnapshotPublisher:
                 for field in ("ltp", "oi", "volume", "change", "buy_qty", "sell_qty"):
                     if ft.get(field) is not None:
                         mapping[f"{expiry_key}_{field}"] = str(ft[field])
+                depth = ft.get("depth") or {}
+                for side in ("buy", "sell"):
+                    for i, level in enumerate((depth.get(side) or [])[:5], start=1):
+                        mapping[f"{expiry_key}_{side}_px_{i}"] = str(level.get("price", ""))
+                        mapping[f"{expiry_key}_{side}_qty_{i}"] = str(level.get("quantity", ""))
+                        mapping[f"{expiry_key}_{side}_ord_{i}"] = str(level.get("orders", ""))
             if mapping:
                 self._redis.hset(f"data:futures_live:{obj.stock_symbol}", mapping=mapping)

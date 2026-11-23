@@ -378,6 +378,10 @@ class TickStore:
                 entry["low"] = tick["ohlc"].get("low", 0)
                 entry["close"] = tick["ohlc"].get("close", 0)
 
+            # 5-level depth (full-mode ticks). Order-flow features need it.
+            if "depth" in tick:
+                entry["depth"] = tick["depth"]
+
             self.futures_live[expiry_key] = entry
         logger.debug("[TickStore] futures %s ltp=%.2f oi=%d", expiry_key,
                      entry.get("ltp", 0), entry.get("oi", 0))

@@ -50,6 +50,7 @@ from common.token_registry import (
 from services.common.version import BUILD_LABEL as _BUILD_LABEL, GIT_COMMIT as _GIT_COMMIT, GIT_DIRTY as _GIT_DIRTY
 from services.common.redis_proxy import RedisProxy
 from services.market_data.snapshot_publisher import SnapshotPublisher
+from services.market_data.chain_recorder import ChainRecorder
 from services.market_data.signal_publisher import RedisSignalBus
 from services.common.metrics import set_stock, incr_system, set_system
 
@@ -563,6 +564,11 @@ def main():
     publisher = SnapshotPublisher(redis, stock_objs, index_objs)
     publisher.start()
 
+    # 10b. Intraday capture (options chain + futures depth + spot/GIFT/VIX)
+    recorder = ChainRecorder(index_objs)
+    recorder.prune_old()
+    recorder.start()
+
     # 11. Enctoken subscribers
     _start_enctoken_subscriber(redis, tm)
     _start_auth_commands_consumer(redis, tm)
@@ -585,6 +591,9 @@ def main():
         heartbeat_counter += 1
 
     # ── Shutdown ────────────────────────────────────────────────────────────
+    if "recorder" in locals():
+        recorder.stop()
+
     logger.info("[market-data] Shutting down...")
     publisher.stop()
 

@@ -89,6 +89,7 @@ def check_local_state():
 
 
 def pull_on_server(expected_head):
+    before_head = ssh(f"cd {APP_DIR} && git rev-parse HEAD").stdout.strip()
     print(f"Pulling latest master on {SERVER}:{APP_DIR} ...")
     pull = ssh(f"cd {APP_DIR} && git pull --ff-only origin master", timeout=300)
     output = (pull.stdout + pull.stderr).strip()
@@ -102,6 +103,30 @@ def pull_on_server(expected_head):
     if server_head != expected_head:
         die(f"server is at {server_head[:7]}, expected {expected_head[:7]}")
     print(f"Server at {server_head[:7]} [ok]")
+    _sync_dependencies(before_head, server_head)
+
+
+def _sync_dependencies(old_head, new_head):
+    """pip-install requirements when the pull changed them.
+
+    Without this, a deploy that adds a dependency leaves the service running
+    with an ImportError at runtime (e.g. pyarrow for the options capture).
+    """
+    if not old_head or not new_head or old_head == new_head:
+        return
+    changed = ssh(
+        f"cd {APP_DIR} && git diff --name-only {old_head} {new_head} -- 'requirements*.txt'"
+    ).stdout.split()
+    targets = [f for f in changed
+               if f in ("requirements.txt", "requirements-ml.txt")]
+    if not targets:
+        return
+    print(f"Dependencies changed ({', '.join(targets)}) — installing ...")
+    for req in targets:
+        result = ssh(f"cd {APP_DIR} && .venv/bin/pip install -q -r {req}", timeout=900)
+        if result.returncode != 0:
+            die(f"pip install -r {req} failed: {result.stderr.strip()[-500:]}")
+    print("Dependencies installed [ok]")
 
 
 def sync_unit_files():

@@ -58,7 +58,13 @@ Blocking decision: deploy now or hold for diff review?
 
 ---
 
-## Milestone 2 — Measurement (≈5 d) ⬜ · **start M1 capture immediately**
+## Milestone 2 — Measurement (≈5 d) 🟨 · **capture implemented**
+
+**Status (2026-11-23):** chain/context/futures/index capture implemented
+(`services/market_data/chain_recorder.py`, Parquet, 30 s / 1 s / 10 s, L5
+depth for CORE legs, 180-day retention, daily manifest), plus futures depth
+publishing (O0) and deploy-time dependency install. GIFT Nifty subscription,
+signal/trade export and the EOD summary remain. Not deployed yet.
 
 | ID | Item | Output | Acceptance | Effort |
 |---|---|---|---|---|
