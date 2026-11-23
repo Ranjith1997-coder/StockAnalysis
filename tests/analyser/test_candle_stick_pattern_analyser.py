@@ -1,12 +1,11 @@
 """Tests for analyser/candleStickPatternAnalyser.py."""
 import pytest
 import pandas as pd
-import numpy as np
 from unittest.mock import patch, MagicMock
 
 import common.shared as shared
 from services.analysis_engine.analyser.candleStickPatternAnalyser import CandleStickAnalyser
-from tests.analyser.conftest import make_stock, make_ohlcv_df, patch_ctx
+from tests.analyser.conftest import make_stock
 
 
 def _make_candle(open_, high, low, close, volume=100_000):
@@ -88,11 +87,9 @@ class TestDoubleCandlestickContinuationPattern:
             if trend == "up":
                 # Bullish candles: Open < Close
                 row_open = c * 0.998
-                row_close = c
             else:
                 # Bearish candles: Open > Close
                 row_open = c * 1.002
-                row_close = c
             rows.append({
                 "Open": row_open,
                 "High": c * 1.003,
@@ -187,3 +184,113 @@ class TestResetConstants:
             a = CandleStickAnalyser()
             a.reset_constants(is_index=True)
             assert CandleStickAnalyser.THREE_CONT_INC_OR_DEC_THRESHOLD == 2.5
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Gap-coverage tests (audit 2026-11-23): the three REVERSAL analysers sat at
+# 50-54 % line coverage — only reached via run_all_*(), with no test asserting
+# that a reversal actually fires or that the trend-context gate blocks it.
+#
+# Positional-stock constants after reset_constants(): TREND_LOOKBACK_PERIOD=3,
+# DOWNTREND_MIN_DECLINE=1.75, UPTREND_MIN_INCREASE=3.0,
+# HAMMER_BODY_RATIO=0.25, HAMMER_WICK_MULTIPLIER=3.0, STAR_MAX_BODY_RATIO=0.15.
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _trend_rows(n, start, step):
+    """n consecutive candles moving by ``step`` each (negative = downtrend)."""
+    rows, price = [], start
+    for _ in range(n):
+        open_, close = price, price + step
+        rows.append({
+            "Open": open_, "High": max(open_, close) + 0.2,
+            "Low": min(open_, close) - 0.2, "Close": close, "Volume": 100_000,
+        })
+        price = close
+    return rows
+
+
+def _candle(open_, close, high, low):
+    return {"Open": open_, "High": high, "Low": low, "Close": close, "Volume": 100_000}
+
+
+class TestSingleCandleReversal:
+    def _run(self, rows):
+        s = make_stock()
+        s.priceData = pd.DataFrame(rows)
+        return CandleStickAnalyser().analyse_single_candle_reversal(s), s
+
+    def test_hammer_after_downtrend_is_bullish(self):
+        rows = _trend_rows(7, 110.0, -1.5)
+        rows.append(_candle(open_=99.2, close=99.3, high=99.4, low=96.8))
+        result, s = self._run(rows)
+        assert result is True
+        assert s.analysis["BULLISH"]["Single_candle_reversal_pattern"].pattern == "Hammer"
+
+    def test_shooting_star_after_uptrend_is_bearish(self):
+        rows = _trend_rows(7, 90.0, 1.5)
+        rows.append(_candle(open_=100.8, close=100.7, high=103.4, low=100.65))
+        result, s = self._run(rows)
+        assert result is True
+        assert s.analysis["BEARISH"]["Single_candle_reversal_pattern"].pattern == "Shooting Star"
+
+    def test_hammer_shape_in_uptrend_is_rejected_by_trend_gate(self):
+        rows = _trend_rows(7, 90.0, 1.5)
+        rows.append(_candle(open_=99.2, close=99.3, high=99.4, low=96.8))
+        result, s = self._run(rows)
+        assert result is False
+        assert "Single_candle_reversal_pattern" not in s.analysis["BULLISH"]
+
+
+class TestDoubleCandleReversal:
+    def _run(self, rows):
+        s = make_stock()
+        s.priceData = pd.DataFrame(rows)
+        return CandleStickAnalyser().analyse_double_candle_reversal(s), s
+
+    def test_bullish_engulfing_after_downtrend(self):
+        rows = _trend_rows(6, 110.0, -1.5)
+        rows.append(_candle(open_=101.0, close=99.5, high=101.1, low=99.4))
+        rows.append(_candle(open_=99.0, close=101.5, high=101.6, low=98.9))
+        result, s = self._run(rows)
+        assert result is True
+        assert s.analysis["BULLISH"]["Double_candle_stick_pattern"].pattern == "Bullish Engulfing"
+
+    def test_bearish_engulfing_after_uptrend(self):
+        rows = _trend_rows(6, 90.0, 1.5)
+        rows.append(_candle(open_=99.0, close=100.5, high=100.6, low=98.9))
+        rows.append(_candle(open_=101.0, close=98.5, high=101.1, low=98.4))
+        result, s = self._run(rows)
+        assert result is True
+        assert s.analysis["BEARISH"]["Double_candle_stick_pattern"].pattern == "Bearish Engulfing"
+
+    def test_engulfing_shape_in_wrong_trend_is_rejected(self):
+        rows = _trend_rows(6, 90.0, 1.5)
+        rows.append(_candle(open_=101.0, close=99.5, high=101.1, low=99.4))
+        rows.append(_candle(open_=99.0, close=101.5, high=101.6, low=98.9))
+        result, _ = self._run(rows)
+        assert result is False
+
+
+class TestTripleCandleReversal:
+    def _run(self, rows):
+        s = make_stock()
+        s.priceData = pd.DataFrame(rows)
+        return CandleStickAnalyser().analyse_triple_candle_reversal(s), s
+
+    def test_morning_star_after_downtrend(self):
+        rows = _trend_rows(7, 110.0, -1.5)
+        rows.append(_candle(open_=99.5, close=98.0, high=99.6, low=97.9))
+        rows.append(_candle(open_=98.0, close=97.9, high=98.05, low=97.8))
+        rows.append(_candle(open_=98.05, close=99.0, high=99.1, low=98.0))
+        result, s = self._run(rows)
+        assert result is True
+        assert s.analysis["BULLISH"]["Triple_candle_reversal_pattern"].pattern == "Morning Star"
+
+    def test_evening_star_after_uptrend(self):
+        rows = _trend_rows(7, 90.0, 1.5)
+        rows.append(_candle(open_=100.5, close=102.0, high=102.1, low=100.4))
+        rows.append(_candle(open_=102.0, close=102.1, high=102.15, low=101.95))
+        rows.append(_candle(open_=102.05, close=100.9, high=102.1, low=100.8))
+        result, s = self._run(rows)
+        assert result is True
+        assert s.analysis["BEARISH"]["Triple_candle_reversal_pattern"].pattern == "Evening Star"

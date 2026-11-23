@@ -326,3 +326,58 @@ class TestCompositeFormatting:
             msg = orch.generate_analysis_message(s)
         assert "RANGE PREMIUM" in msg
         assert "format error" not in msg
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Gap-coverage tests (audit 2026-11-23): the G1 wall-migration proxy, the
+# RETREAT non-signal and the stock (non-index) volume path were uncovered.
+# ══════════════════════════════════════════════════════════════════════════════
+
+WallMigration = namedtuple(
+    "OIWallMigration",
+    ["side", "prev_wall_strike", "curr_wall_strike", "migration_direction",
+     "migration_pts", "migration_pct", "signal", "expiry"],
+)
+VolBreak = namedtuple(
+    "VolumeBreakoutAnalysis",
+    ["volume", "volume_ma", "volume_ratio", "price_change_pct", "volume_trend"],
+)
+
+
+class TestGammaTrapGapCoverage:
+    def test_call_wall_migrating_higher_counts_as_breach(self):
+        with patch("common.shared.app_ctx", _intraday_ctx()):
+            s = _index_stock(chain=_chain())
+            s.analysis["BULLISH"]["OI_WALL_MIGRATION"] = WallMigration(
+                "CALL", 24200, 24500, "HIGHER", 300, 1.2, "ceiling raised", "2024-01-25")
+            s.zerodha_ctx["futures_data"]["current"] = _fut_df(surge=True, up=True)
+            s.analysis["BULLISH"]["FUTURE_ACTION"] = FutAction(
+                "current", "long_buildup", 0.4, 0.6, 60, "MEDIUM")
+            assert OptionSellerCompositeAnalyser().detect_gamma_trap_warning(s) is True
+            gt = s.analysis["NEUTRAL"]["GAMMA_TRAP"]
+            assert gt["direction"] == "BULLISH"
+            assert gt["breach_signal"] == "OI_WALL_MIGRATION"
+
+    def test_wall_retreat_is_not_a_breach(self):
+        with patch("common.shared.app_ctx", _intraday_ctx()):
+            s = _index_stock(chain=_chain())
+            s.analysis["NEUTRAL"]["OI_WALL_MIGRATION"] = WallMigration(
+                "PUT", 24000, None, "RETREAT", None, None, "floor removed", "2024-01-25")
+            s.zerodha_ctx["futures_data"]["current"] = _fut_df(surge=True, up=True)
+            s.analysis["BULLISH"]["FUTURE_ACTION"] = FutAction(
+                "current", "long_buildup", 0.4, 0.6, 60, "MEDIUM")
+            assert OptionSellerCompositeAnalyser().detect_gamma_trap_warning(s) is False
+
+    def test_stock_volume_breakout_satisfies_g2(self):
+        with patch("common.shared.app_ctx", _intraday_ctx()):
+            s = make_stock()
+            s.is_index = False
+            s.analysis["BULLISH"]["OI_CAPITULATION"] = OICap("CALL", 45.0, [24500])
+            s.analysis["BULLISH"]["VOLUME_BREAKOUT"] = VolBreak(
+                500_000, 120_000, 4.1, 2.5, "rising")
+            s.analysis["BULLISH"]["FUTURE_ACTION"] = FutAction(
+                "current", "long_buildup", 0.4, 0.6, 60, "MEDIUM")
+            assert OptionSellerCompositeAnalyser().detect_gamma_trap_warning(s) is True
+            gt = s.analysis["NEUTRAL"]["GAMMA_TRAP"]
+            assert gt["volume_signal"] == "VOLUME_BREAKOUT"
+            assert gt["conditions_met"] >= 3

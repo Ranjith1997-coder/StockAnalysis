@@ -141,8 +141,10 @@ class TestAnalyseTrendInATMIV:
             a.reset_constants()
             s = self._stock_with_iv_history([30.0, 25.0, 22.0])  # falling -26.7%
             result = a.analyse_trend_in_ATM_IV(s)
-            if result:
-                assert "IV_TREND" in s.analysis.get("NEUTRAL", {})
+            assert result is True
+            trend = s.analysis["NEUTRAL"]["IV_TREND"]
+            assert trend.trend == "DOWNWARD"
+            assert trend.atm_iv == pytest.approx(22.0)
 
 
 class TestAnalyseIVRank:
@@ -226,3 +228,78 @@ class TestIvSpikeDirectionSplit:
             assert not isinstance(spike, list)   # one entry, not one per expiry
             assert spike.expiry == "2024-01-25"
             assert s.analysis["NoOfTrends"] == 1
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Gap-coverage tests (audit 2026-11-23): analyse_iv_vs_hv was 61 % covered and
+# no test exercised the zone thresholds or the signal/no-signal split.
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _alternating_closes(n=120):
+    """Deterministic ±1 % daily returns → HV ≈ 15.8 % in positional mode."""
+    closes = [100.0]
+    for i in range(1, n):
+        closes.append(closes[-1] * (1.01 if i % 2 else 0.99))
+    return closes
+
+
+def _price_frame(closes):
+    return pd.DataFrame(
+        {"Open": closes, "High": closes, "Low": closes, "Close": closes,
+         "Volume": [1_000] * len(closes)},
+        index=pd.date_range("2023-01-01", periods=len(closes), freq="D"),
+    )
+
+
+class TestAnalyseIvVsHv:
+    def _stock(self, atm_iv):
+        s = make_stock()
+        s.priceData = _price_frame(_alternating_closes())
+        s.sensibull_ctx = make_sensibull_ctx(atm_iv=atm_iv)
+        return s
+
+    def _run(self, atm_iv):
+        with patch("common.shared.app_ctx", _positional_ctx()):
+            a = IVAnalyser()
+            a.reset_constants()
+            s = self._stock(atm_iv)
+            result = a.analyse_iv_vs_hv(s)
+        return result, s
+
+    def test_extreme_premium_emits_neutral_signal(self):
+        result, s = self._run(200.0)
+        assert result is True
+        premium = s.analysis["NEUTRAL"]["IV_PREMIUM"]
+        assert premium.zone == "EXTREME"
+        assert premium.iv_hv_ratio >= IVAnalyser.IV_HV_EXTREME_RATIO
+        assert premium.hv > 0
+
+    def test_expensive_premium_emits_neutral_signal(self):
+        result, s = self._run(28.0)
+        assert result is True
+        premium = s.analysis["NEUTRAL"]["IV_PREMIUM"]
+        assert premium.zone == "EXPENSIVE"
+        assert premium.iv_hv_ratio == pytest.approx(1.72, abs=0.1)
+
+    def test_fair_premium_emits_nothing(self):
+        result, s = self._run(15.0)
+        assert result is False
+        assert "IV_PREMIUM" not in s.analysis["NEUTRAL"]
+
+    def test_cheap_premium_emits_nothing(self):
+        result, s = self._run(2.0)
+        assert result is False
+        assert "IV_PREMIUM" not in s.analysis["NEUTRAL"]
+
+    def test_zero_atm_iv_is_skipped(self):
+        result, _ = self._run(0.0)
+        assert result is False
+
+    def test_insufficient_price_history_is_skipped(self):
+        with patch("common.shared.app_ctx", _positional_ctx()):
+            a = IVAnalyser()
+            a.reset_constants()
+            s = make_stock()
+            s.priceData = _price_frame(_alternating_closes(10))
+            s.sensibull_ctx = make_sensibull_ctx(atm_iv=200.0)
+            assert a.analyse_iv_vs_hv(s) is False

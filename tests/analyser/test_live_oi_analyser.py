@@ -1,5 +1,4 @@
 """Tests for analyser/LiveOIAnalyser.py."""
-import pytest
 from services.analysis_engine.analyser.LiveOIAnalyser import LiveOIAnalyser
 from services.analysis_engine.analyser.LiveOptionsHistory import LiveOptionsHistory
 
@@ -122,7 +121,7 @@ class TestPcrSustainedTrend:
         now = __import__("time").time() - 20 * 60
         for i in range(20):
             h._last_ts = 0.0
-            snap = h.record(
+            h.record(
                 _make_agg(pcr=0.90 + i * 0.02),
                 _make_options_live(),
                 20000.0,
@@ -206,3 +205,62 @@ class TestPcrBiasNaming:
         alert_type, msg = a.check_pcr_extreme({"live_pcr": 1.35})
         assert alert_type == "PCR_EXTREME_PE"
         assert "BULLISH" in msg and "Contrarian" not in msg
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Gap-coverage tests (audit 2026-11-23): check_oi_wall_breach was 55 % covered
+# and is called by lib/zerodha/live_options_engine.py in production.
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestCheckOiWallBreach:
+    """Deque fallback path (first minutes of the session, history=None)."""
+
+    def _analyser(self):
+        # strike_gap 100 → proximity threshold = 60 points
+        return LiveOIAnalyser("NIFTY", 100)
+
+    def _tick(self, analyser, ce_oi, pe_oi, spot):
+        return analyser.check_oi_wall_breach(
+            _make_agg(ce_wall=20200, pe_wall=19800),
+            _make_options_live(ce_wall=20200, ce_oi=ce_oi, pe_wall=19800, pe_oi=pe_oi),
+            spot,
+        )
+
+    def test_ce_wall_weakening_near_spot_is_breakout(self):
+        analyser = self._analyser()
+        assert self._tick(analyser, 100_000, 50_000, 20180) is None
+        assert self._tick(analyser, 95_000, 50_000, 20180) is None
+        result = self._tick(analyser, 90_000, 50_000, 20180)
+        assert result is not None
+        assert result[0] == "CE_WALL_BREACH"
+        assert "20200" in result[1]
+
+    def test_pe_wall_weakening_near_spot_is_breakdown(self):
+        analyser = self._analyser()
+        assert self._tick(analyser, 60_000, 50_000, 19820) is None
+        assert self._tick(analyser, 60_000, 48_000, 19820) is None
+        result = self._tick(analyser, 60_000, 45_000, 19820)
+        assert result is not None
+        assert result[0] == "PE_WALL_BREACH"
+        assert "19800" in result[1]
+
+    def test_stable_wall_oi_does_not_fire(self):
+        analyser = self._analyser()
+        for _ in range(5):
+            assert self._tick(analyser, 100_000, 50_000, 20180) is None
+
+    def test_wall_far_from_spot_does_not_fire(self):
+        analyser = self._analyser()
+        for oi in (100_000, 95_000, 90_000, 85_000):
+            assert self._tick(analyser, oi, 50_000, 20500) is None
+
+    def test_invalid_spot_returns_none(self):
+        analyser = self._analyser()
+        assert self._tick(analyser, 90_000, 45_000, 0) is None
+
+    def test_missing_walls_return_none(self):
+        analyser = self._analyser()
+        agg = _make_agg()
+        agg["max_oi_ce_strike"] = None
+        agg["max_oi_pe_strike"] = None
+        assert analyser.check_oi_wall_breach(agg, {}, 20000.0) is None

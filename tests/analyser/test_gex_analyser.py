@@ -1,10 +1,8 @@
 """Tests for analyser/GEXAnalyser.py."""
 import pytest
-from unittest.mock import patch, MagicMock
 
-import common.shared as shared
 from services.analysis_engine.analyser.GEXAnalyser import GEXAnalyser
-from tests.analyser.conftest import make_stock, patch_ctx
+from tests.analyser.conftest import make_stock
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────

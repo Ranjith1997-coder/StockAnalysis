@@ -5,7 +5,7 @@ from unittest.mock import patch, MagicMock
 
 import common.shared as shared
 from services.analysis_engine.analyser.PanicModeAnalyser import PanicModeAnalyser
-from tests.analyser.conftest import make_stock, make_sensibull_ctx
+from tests.analyser.conftest import make_stock
 
 
 def _positional_ctx():
@@ -405,7 +405,6 @@ class TestAnalysePanicExhaustion:
             s.ltp_change_perc = -4.0  # BEARISH panic
 
             IVRankEx = namedtuple("IV_RANK", ["expiry", "atm_iv", "iv_percentile", "category", "ivp_type"])
-            PCREx    = namedtuple("PCR_EXTREME", ["pcr_value", "zone", "signal"])
             FakeNt   = namedtuple("FakeNt", ["signal"])
 
             s.analysis["NEUTRAL"]["IV_RANK_EXTREME"] = IVRankEx(

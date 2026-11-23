@@ -137,10 +137,8 @@ class TestAnalyseOiBuildup:
             s.sensibull_ctx = make_sensibull_ctx()
             s.sensibull_ctx["oi_chain"] = oi
             result = a.analyse_oi_buildup(s)
-            if result:
-                assert "OI_BUILDUP" in (
-                    s.analysis.get("BEARISH", {}) | s.analysis.get("NEUTRAL", {})
-                )
+            assert result is True
+            assert "OI_BUILDUP" in s.analysis["BEARISH"]
 
     def test_no_oi_data_returns_false(self):
         with patch("common.shared.app_ctx", _positional_ctx()):
@@ -156,24 +154,25 @@ class TestAnalyseOiWall:
         with patch("common.shared.app_ctx", _positional_ctx()):
             a = OIChainAnalyser()
             a.reset_constants()
-            # Most strikes have 10k call OI; 20200 has 70k (7x avg)
+            # Nine strikes at 10k call OI; 20200 at 150k is > mean + 2σ
+            # (mean 24k, std 42k → threshold 108k), 1 % above spot.
             strikes = {
-                19800: {"call_oi": 10_000, "put_oi": 15_000, "prev_call_oi": 9_500, "prev_put_oi": 14_000},
-                19900: {"call_oi": 10_000, "put_oi": 15_000, "prev_call_oi": 9_500, "prev_put_oi": 14_000},
-                20000: {"call_oi": 10_000, "put_oi": 15_000, "prev_call_oi": 9_500, "prev_put_oi": 14_000},
-                20100: {"call_oi": 10_000, "put_oi": 10_000, "prev_call_oi": 9_500, "prev_put_oi": 9_500},
-                20200: {"call_oi": 70_000, "put_oi": 5_000,  "prev_call_oi": 65_000, "prev_put_oi": 4_500},
+                strike: {"call_oi": 10_000, "put_oi": 15_000,
+                         "prev_call_oi": 9_500, "prev_put_oi": 14_000}
+                for strike in (19600, 19700, 19800, 19900, 20000, 20100, 20300, 20400, 20500)
             }
+            strikes[20200] = {"call_oi": 150_000, "put_oi": 5_000,
+                              "prev_call_oi": 65_000, "prev_put_oi": 4_500}
             oi = make_oi_chain(strikes=strikes, spot=20000.0)
             s = make_stock()
             s.ltp = 20000.0
             s.sensibull_ctx = make_sensibull_ctx()
             s.sensibull_ctx["oi_chain"] = oi
             result = a.analyse_oi_wall(s)
-            if result:
-                assert "OI_WALL" in (
-                    s.analysis.get("BEARISH", {}) | s.analysis.get("BULLISH", {}) | s.analysis.get("NEUTRAL", {})
-                )
+            assert result is True
+            wall = s.analysis["BEARISH"]["OI_WALL"]
+            assert wall.wall_type == "CALL_WALL_ONLY"
+            assert wall.nearest_call_wall[0] == 20200
 
     def test_no_oi_data_returns_false(self):
         with patch("common.shared.app_ctx", _positional_ctx()):
@@ -191,13 +190,33 @@ class TestAnalyseOiShift:
             s.sensibull_ctx = make_sensibull_ctx()
             assert a.analyse_oi_shift(s) is False
 
-    def test_returns_bool_with_data(self):
+    def test_no_new_oi_additions_returns_false(self):
+        """The default chain has no day-over-day OI additions → no shift."""
         with patch("common.shared.app_ctx", _positional_ctx()):
             a = OIChainAnalyser()
             a.reset_constants()
             s = _stock_with_oi_chain(spot=20000.0)
-            result = a.analyse_oi_shift(s)
-            assert isinstance(result, bool)
+            assert a.analyse_oi_shift(s) is False
+
+    def test_call_writing_imbalance_is_bearish(self):
+        """Call OI +20k at every strike vs +200 put → 100× writing imbalance."""
+        with patch("common.shared.app_ctx", _positional_ctx()):
+            a = OIChainAnalyser()
+            a.reset_constants()
+            strikes = {
+                strike: {"call_oi": 100_000, "put_oi": 100_000,
+                         "prev_call_oi": 80_000, "prev_put_oi": 99_800}
+                for strike in (19800, 19900, 20000, 20100, 20200, 20300, 20400)
+            }
+            oi = make_oi_chain(strikes=strikes, spot=20000.0)
+            s = make_stock()
+            s.ltp = 20000.0
+            s.sensibull_ctx = make_sensibull_ctx()
+            s.sensibull_ctx["oi_chain"] = oi
+            assert a.analyse_oi_shift(s) is True
+            shift = s.analysis["BEARISH"]["OI_SHIFT"]
+            assert shift.total_new_call_oi == 140_000
+            assert shift.total_new_put_oi == 1_400
 
 
 class TestAnalyseIntradayOiTrend:
@@ -237,7 +256,10 @@ class TestAnalyseIntradayOiTrend:
             ]
             s.sensibull_ctx["oi_chain_history"] = history
             result = a.analyse_intraday_oi_trend(s)
-            assert isinstance(result, bool)
+            assert result is True
+            trend = s.analysis["BEARISH"]["OI_INTRADAY_TREND"]
+            assert trend.call_oi_change_pct == pytest.approx(25.0)
+            assert trend.pcr_change_pct == pytest.approx(-20.0)
 
 
 class TestAnalysePositionalOiTrend:
@@ -308,11 +330,9 @@ class TestAnalysePositionalOiTrend:
                 futures_trend="flat",
             )
             result = a.analyse_positional_oi_trend(s)
-            if result:
-                # If it signals, must be NEUTRAL balanced
-                assert "OI_POSITIONAL_TREND" in s.analysis.get("NEUTRAL", {})
-                data = s.analysis["NEUTRAL"]["OI_POSITIONAL_TREND"]
-                assert data.buildup_type == "BALANCED_ACCUMULATION"
+            assert result is True
+            data = s.analysis["NEUTRAL"]["OI_POSITIONAL_TREND"]
+            assert data.buildup_type == "BALANCED_ACCUMULATION"
 
     def test_both_declining_returns_false(self):
         """Both sides declining → no signal."""
@@ -503,3 +523,144 @@ class TestResetConstants:
             assert OIChainAnalyser.OI_POSITIONAL_TREND_DAYS     == 5
             assert OIChainAnalyser.OI_ACCEL_MIN_RATIO           == 2.0
             assert OIChainAnalyser.OI_ACCEL_MIN_VELOCITY        == 2_000_000
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Gap-coverage tests (audit 2026-11-23): capitulation (63 %), wall migration
+# (64 %) and intraday S/R shift (51 %) had no test asserting an emitted signal.
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestAnalyseOiCapitulation:
+    def _run(self, strikes, spot=20000.0):
+        with patch("common.shared.app_ctx", _positional_ctx()):
+            a = OIChainAnalyser()
+            a.reset_constants()
+            oi = make_oi_chain(strikes=strikes, spot=spot)
+            s = make_stock()
+            s.ltp = spot
+            s.sensibull_ctx = make_sensibull_ctx()
+            s.sensibull_ctx["oi_chain"] = oi
+            return a.analyse_oi_capitulation(s), s
+
+    def test_call_unwinding_near_money_is_bullish(self):
+        strikes = {}
+        for strike in (19700, 19800, 19900, 20000, 20100, 20200, 20300):
+            prior = 300_000 if strike in (19900, 20000, 20100) else 100_000
+            strikes[strike] = {"call_oi": 100_000, "put_oi": 100_000,
+                               "prev_call_oi": prior, "prev_put_oi": 100_000}
+        result, s = self._run(strikes)
+        assert result is True
+        cap = s.analysis["BULLISH"]["OI_CAPITULATION"]
+        assert cap.side == "CALL"
+        assert cap.total_unwound == 600_000
+        assert cap.num_significant_strikes == 3
+        assert cap.unwound_pct > 8.0
+
+    def test_put_unwinding_near_money_is_bearish(self):
+        strikes = {}
+        for strike in (19700, 19800, 19900, 20000, 20100, 20200, 20300):
+            prior = 300_000 if strike in (19800, 19900, 20000) else 100_000
+            strikes[strike] = {"call_oi": 100_000, "put_oi": 100_000,
+                               "prev_call_oi": 100_000, "prev_put_oi": prior}
+        result, s = self._run(strikes)
+        assert result is True
+        assert s.analysis["BEARISH"]["OI_CAPITULATION"].side == "PUT"
+
+    def test_small_unwinding_is_ignored(self):
+        strikes = {
+            strike: {"call_oi": 100_000, "put_oi": 100_000,
+                     "prev_call_oi": 105_000, "prev_put_oi": 105_000}
+            for strike in (19800, 19900, 20000, 20100, 20200)
+        }
+        result, _ = self._run(strikes)
+        assert result is False
+
+
+class TestAnalyseOiWallMigration:
+    def _run(self, strikes, spot=20000.0, prev_spot=19950.0):
+        with patch("common.shared.app_ctx", _positional_ctx()):
+            a = OIChainAnalyser()
+            a.reset_constants()
+            oi = make_oi_chain(strikes=strikes, spot=spot)
+            oi["prev_ltp"] = prev_spot
+            s = make_stock()
+            s.ltp = spot
+            s.sensibull_ctx = make_sensibull_ctx()
+            s.sensibull_ctx["oi_chain"] = oi
+            return a.analyse_oi_wall_migration(s), s
+
+    def _strikes(self):
+        strikes = {
+            strike: {"call_oi": 10_000, "put_oi": 10_000,
+                     "prev_call_oi": 9_500, "prev_put_oi": 9_500}
+            for strike in (19600, 19700, 19800, 19900, 20000, 20100, 20200, 20300, 20400)
+        }
+        strikes[19800]["put_oi"] = 150_000        # today's put wall
+        strikes[19600]["prev_put_oi"] = 150_000   # yesterday's put wall
+        return strikes
+
+    def test_put_wall_rising_overnight_is_bullish(self):
+        result, s = self._run(self._strikes())
+        assert result is True
+        migration = s.analysis["BULLISH"]["OI_WALL_MIGRATION"]
+        assert migration.side == "PUT"
+        assert migration.migration_direction == "HIGHER"
+        assert migration.prev_wall_strike == 19600
+        assert migration.curr_wall_strike == 19800
+        assert migration.migration_pts == 200
+
+    def test_unchanged_walls_emit_nothing(self):
+        strikes = self._strikes()
+        strikes[19600]["prev_put_oi"] = 10_000
+        strikes[19800]["prev_put_oi"] = 150_000
+        result, _ = self._run(strikes)
+        assert result is False
+
+
+class TestAnalyseIntradayOiSrShift:
+    def _snapshot(self, call_wall, put_wall=19800, spot=20000.0):
+        data = {
+            strike: {"call_oi": 100_000 if strike == call_wall else 20_000,
+                     "put_oi": 100_000 if strike == put_wall else 20_000,
+                     "prev_call_oi": 20_000, "prev_put_oi": 20_000}
+            for strike in range(19600, 20500, 100)
+        }
+        return {"timestamp": None, "current_ltp": spot, "total_call_oi": 0,
+                "total_put_oi": 0, "pcr": 1.0, "per_strike_data": data,
+                "expiry": "2024-01-25"}
+
+    def _run(self, history):
+        with patch("common.shared.app_ctx", _positional_ctx()):
+            a = OIChainAnalyser()
+            a.reset_constants()
+            s = make_stock()
+            s.sensibull_ctx = make_sensibull_ctx()
+            s.sensibull_ctx["oi_chain_history"] = history
+            return a.analyse_intraday_oi_sr_shift(s), s
+
+    def test_rising_resistance_is_bullish(self):
+        history = [self._snapshot(w) for w in (20200, 20200, 20300, 20300, 20400, 20400)]
+        result, s = self._run(history)
+        assert result is True
+        shift = s.analysis["BULLISH"]["OI_SR_SHIFT"]
+        assert shift.first_resistance == 20200
+        assert shift.last_resistance == 20400
+        assert shift.resistance_shift == 200
+        assert shift.support_shift == 0
+
+    def test_falling_support_is_bearish(self):
+        history = [self._snapshot(20200, w) for w in (19800, 19800, 19700, 19700, 19600, 19600)]
+        result, s = self._run(history)
+        assert result is True
+        shift = s.analysis["BEARISH"]["OI_SR_SHIFT"]
+        assert shift.support_shift == -200
+        assert shift.resistance_shift == 0
+
+    def test_static_levels_emit_nothing(self):
+        history = [self._snapshot(20200) for _ in range(6)]
+        result, _ = self._run(history)
+        assert result is False
+
+    def test_insufficient_history_returns_false(self):
+        result, _ = self._run([self._snapshot(20200)] * 3)
+        assert result is False

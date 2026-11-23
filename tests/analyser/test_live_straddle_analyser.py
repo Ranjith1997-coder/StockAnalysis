@@ -220,3 +220,60 @@ class TestCheckSkewReversal:
         result = a.check_iv_skew_reversal(agg, options_live, 20000.0)
         # With valid options_live, the method should fire or return None based on history
         assert isinstance(result, (tuple, type(None)))
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Gap-coverage tests (audit 2026-11-23): check_iv_trend was 57 % covered and
+# is called by lib/zerodha/live_options_engine.py in production.
+# ══════════════════════════════════════════════════════════════════════════════
+
+class _IvTrendHistory:
+    """Duck-typed history: the analyser only uses these three methods."""
+
+    def __init__(self, minutes, series, slope):
+        self._minutes = minutes
+        self._series = series
+        self._slope = slope
+
+    def minutes_of_data(self):
+        return self._minutes
+
+    def atm_iv_series(self, minutes):
+        return self._series
+
+    def atm_iv_trend_slope(self, minutes):
+        return self._slope
+
+
+class TestCheckIvTrend:
+    def _analyser(self):
+        return LiveStraddleAnalyser("NIFTY")
+
+    def test_rising_iv_over_the_window_alerts(self):
+        history = _IvTrendHistory(15, [0.190, 0.200, 0.212], slope=0.001)
+        result = self._analyser().check_iv_trend(_make_agg(), spot=20000.0, history=history)
+        assert result is not None
+        assert result[0] == "IV_TREND_RISING"
+        assert "19.0%" in result[1] and "21.2%" in result[1]
+
+    def test_falling_iv_over_the_window_alerts(self):
+        history = _IvTrendHistory(15, [0.210, 0.200, 0.190], slope=-0.001)
+        result = self._analyser().check_iv_trend(_make_agg(), spot=20000.0, history=history)
+        assert result is not None
+        assert result[0] == "IV_TREND_FALLING"
+
+    def test_flat_iv_does_not_alert(self):
+        history = _IvTrendHistory(15, [0.200, 0.200, 0.200], slope=0.0)
+        assert self._analyser().check_iv_trend(_make_agg(), spot=20000.0, history=history) is None
+
+    def test_change_below_threshold_does_not_alert(self):
+        # +0.5 pp is below IV_TREND_RISE_PP (1.5 pp) even though the slope is up.
+        history = _IvTrendHistory(15, [0.200, 0.202, 0.205], slope=0.001)
+        assert self._analyser().check_iv_trend(_make_agg(), spot=20000.0, history=history) is None
+
+    def test_insufficient_history_returns_none(self):
+        history = _IvTrendHistory(4, [0.19, 0.20, 0.21], slope=0.001)
+        assert self._analyser().check_iv_trend(_make_agg(), spot=20000.0, history=history) is None
+
+    def test_missing_history_returns_none(self):
+        assert self._analyser().check_iv_trend(_make_agg(), spot=20000.0, history=None) is None

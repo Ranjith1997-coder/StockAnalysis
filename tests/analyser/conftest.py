@@ -1,8 +1,6 @@
 """Shared fixtures for the analyser/ test suite."""
-import time
 import pytest
 import pandas as pd
-import numpy as np
 from unittest.mock import patch, MagicMock
 
 from common.Stock import Stock

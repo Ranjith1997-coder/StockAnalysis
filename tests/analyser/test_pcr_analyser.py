@@ -399,11 +399,10 @@ class TestAnalysePcrPositionalReversal:
             # old avg=0.35 BEARISH, new avg=(0.5+0.5+1.4)/3=0.8 NEUTRAL
             # → neutral_transition fires, not zone_crossover
             result = a.analyse_pcr_positional_reversal(s)
-            if result:
-                data = s.analysis.get("BULLISH", {}).get("PCR_POS_REVERSAL")
-                if data:
-                    # Should be NEUTRAL_TRANSITION, not ZONE_CROSSOVER
-                    assert data.reversal_type == "NEUTRAL_TRANSITION"
+            assert result is True
+            data = s.analysis["BULLISH"]["PCR_POS_REVERSAL"]
+            # Should be NEUTRAL_TRANSITION, not ZONE_CROSSOVER
+            assert data.reversal_type == "NEUTRAL_TRANSITION"
 
     def test_namedtuple_fields(self):
         with patch("common.shared.app_ctx", _positional_ctx()):
@@ -641,10 +640,13 @@ class TestAnalysePcrReversal:
 
 class TestResetConstants:
     def test_core_thresholds_same_for_both_modes(self):
-        mock_i = MagicMock(); mock_i.mode = shared.Mode.INTRADAY
-        mock_p = MagicMock(); mock_p.mode = shared.Mode.POSITIONAL
+        mock_i = MagicMock()
+        mock_i.mode = shared.Mode.INTRADAY
+        mock_p = MagicMock()
+        mock_p.mode = shared.Mode.POSITIONAL
         with patch("common.shared.app_ctx", mock_i):
-            a = PCRAnalyser(); a.reset_constants()
+            a = PCRAnalyser()
+            a.reset_constants()
             intra = PCRAnalyser.PCR_BULLISH_THRESHOLD
         with patch("common.shared.app_ctx", mock_p):
             a.reset_constants()
@@ -652,28 +654,36 @@ class TestResetConstants:
         assert intra == pos == 1.2
 
     def test_positional_reversal_constants_set_in_positional_mode(self):
-        mock = MagicMock(); mock.mode = shared.Mode.POSITIONAL
+        mock = MagicMock()
+        mock.mode = shared.Mode.POSITIONAL
         with patch("common.shared.app_ctx", mock):
-            a = PCRAnalyser(); a.reset_constants()
+            a = PCRAnalyser()
+            a.reset_constants()
             assert PCRAnalyser.PCR_POS_REVERSAL_MIN_ROWS  == 6
             assert PCRAnalyser.PCR_POS_REVERSAL_TREND_PCT == 8.0
 
     def test_intraday_reversal_constants_set_in_intraday_mode(self):
-        mock = MagicMock(); mock.mode = shared.Mode.INTRADAY
+        mock = MagicMock()
+        mock.mode = shared.Mode.INTRADAY
         with patch("common.shared.app_ctx", mock):
-            a = PCRAnalyser(); a.reset_constants()
+            a = PCRAnalyser()
+            a.reset_constants()
             assert PCRAnalyser.PCR_REVERSAL_MIN_SNAPSHOTS == 4
             assert PCRAnalyser.PCR_REVERSAL_TREND_MIN_PCT == 8.0
 
     def test_intraday_trend_constants_set_in_intraday_mode(self):
-        mock = MagicMock(); mock.mode = shared.Mode.INTRADAY
+        mock = MagicMock()
+        mock.mode = shared.Mode.INTRADAY
         with patch("common.shared.app_ctx", mock):
-            a = PCRAnalyser(); a.reset_constants()
+            a = PCRAnalyser()
+            a.reset_constants()
             assert PCRAnalyser.PCR_INTRADAY_MIN_SNAPSHOTS == 3
             assert PCRAnalyser.PCR_INTRADAY_TREND_MIN_PCT == 5.0
 
     def test_divergence_threshold_set(self):
-        mock = MagicMock(); mock.mode = shared.Mode.POSITIONAL
+        mock = MagicMock()
+        mock.mode = shared.Mode.POSITIONAL
         with patch("common.shared.app_ctx", mock):
-            a = PCRAnalyser(); a.reset_constants()
+            a = PCRAnalyser()
+            a.reset_constants()
             assert PCRAnalyser.PCR_DIVERGENCE_THRESHOLD == 0.35

@@ -154,7 +154,6 @@ class TestAnalyserOrchestrator:
             stock = make_stock()
             with patch("common.shared.app_ctx", mock_ctx):
                 mock_ctx.mode = shared.Mode.INTRADAY
-                from common.scoring import NotificationPriority
                 orch.run_all_intraday(stock, use_scoring=False)
             assert a.intraday_called or a.both_called
 
