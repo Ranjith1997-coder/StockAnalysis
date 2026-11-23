@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 import pytest
 import redis as redis_lib
 
+import lib.zerodha.pubsub as pubsub_module
 from lib.zerodha.pubsub import listen_until_closed
 
 
@@ -68,3 +69,29 @@ def test_non_redis_errors_propagate():
 
     with pytest.raises(ValueError, match="not a redis error"):
         listen_until_closed(pubsub, lambda _m: None, logger=logger, label="test")
+
+
+def test_no_logging_during_interpreter_shutdown(monkeypatch):
+    """Logging after handlers close raises and re-prints the traceback."""
+    monkeypatch.setattr(pubsub_module.sys, "is_finalizing", lambda: True)
+    logger = MagicMock()
+    pubsub = _FakePubSub(
+        [], error=redis_lib.exceptions.ConnectionError("Connection closed by server.")
+    )
+
+    listen_until_closed(pubsub, lambda _m: None, logger=logger, label="test")
+
+    logger.debug.assert_not_called()
+    assert pubsub.closed
+
+
+def test_a_failing_logger_never_breaks_shutdown():
+    logger = MagicMock()
+    logger.debug.side_effect = ValueError("I/O operation on closed file")
+    pubsub = _FakePubSub(
+        [], error=redis_lib.exceptions.ConnectionError("Connection closed by server.")
+    )
+
+    listen_until_closed(pubsub, lambda _m: None, logger=logger, label="test")
+
+    assert pubsub.closed

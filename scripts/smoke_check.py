@@ -227,13 +227,17 @@ def check_recent_errors() -> list[Check]:
     A deploy restarts every unit; scanning a fixed 5-minute window would blame
     the new build for shutdown noise from the old process.
     """
+    # Filter by the unit's *current* MainPID: on a restart the outgoing process
+    # logs its shutdown traceback in the same second the new one becomes active,
+    # so a time window alone misattributes it to the new build.
     loop = (
         'for u in ' + " ".join(UNITS) + '; do '
         'ts=$(systemctl show -p ActiveEnterTimestamp --value "$u"); '
         'if [ -n "$ts" ]; then since="$ts"; else since="5 minutes ago"; fi; '
-        'n=$(journalctl --since "$since" --no-pager -o cat -u "$u" 2>/dev/null '
-        "| grep -c Traceback); "
-        'echo "$u $n"; done'
+        'pid=$(systemctl show -p MainPID --value "$u"); '
+        'n=$(journalctl --since "$since" --no-pager -o short -u "$u" 2>/dev/null '
+        "| grep -F \"python[$pid]\" | grep -c Traceback); "
+        'echo "$u ${n:-0}"; done'
     )
     _, out = ssh(loop, timeout=120)
     checks: list[Check] = []
