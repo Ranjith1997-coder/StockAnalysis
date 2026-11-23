@@ -210,3 +210,5 @@ live execution — the box currently has no runtime protection.
 - [`options-indicators-roadmap.md`](./options-indicators-roadmap.md) — task-level specs (I/M/O/S/X items)
 - `docs/pinn-volatility-engine.md` — PINN model status and experiment log
 - `docs/PAPER_TRADING_DESIGN.md` — paper trading design
+- `docs/testing-strategy.md` — test layers, task specs (T0–T8), E2E market simulator
+- `docs/options-data-capture.md` — intraday capture schemas and usage

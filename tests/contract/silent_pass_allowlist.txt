@@ -1,0 +1,59 @@
+# Frozen inventory of legacy `except: pass` / `except: continue` handlers.
+#
+# Goal: no NEW silent handlers. When you touch a file, replace the silent
+# handler with a log line and delete its entry here.
+#
+# Format: <path relative to repo root>::<function qualname>
+# Regenerate deliberately (question the churn):
+#   PYTHONPATH=. .venv/bin/python scripts/gen_silent_allowlist.py
+common/market_calendar.py::_fetch_nse_holidays
+lib/fno/sensibull_adapter.py::SensibullAdapter.apply
+lib/intelligence/context_builder.py::ContextBuilder._nearest_expiry
+lib/notification/commands/_guard.py::init_guard
+lib/notification/commands/_helpers.py::_get_redis
+lib/notification/commands/sysstats.py::_build_live_text
+lib/zerodha/zerodha_analysis.py::ZerodhaTickerManager.process_ticks
+lib/zerodha/zerodha_ticker.py::KiteTicker.unsubscribe
+services/analysis_engine/analyser/Futures_Analyser.py::FuturesAnalyser._session_date_of
+services/analysis_engine/analyser/Futures_Analyser.py::FuturesAnalyser.analyse_positional_oi_trend
+services/analysis_engine/analyser/IVAnalyser.py::nearest_expiry
+services/analysis_engine/analyser/MaxPainAnalyser.py::MaxPainAnalyser.analyse_max_pain_deviation
+services/analysis_engine/analyser/PanicModeAnalyser.py::PanicModeAnalyser._price_threshold
+services/analysis_engine/main.py::main
+services/auth_service/auth/auth_login.py::_already_ran_today
+services/auth_service/main.py::_send_alert
+services/auth_service/main.py::_start_auth_commands_consumer
+services/auth_service/main.py::_start_auth_commands_consumer._consume
+services/auth_service/main.py::main
+services/common/crash_handler.py::install_crash_handler._crash_handler
+services/common/cycle_subscriber.py::CycleSubscriber._pubsub_loop
+services/common/rate_limiter.py::retry_on_429.decorator.wrapper
+services/common/stock_loader.py::load_equity_tick_from_redis
+services/common/stock_loader.py::load_options_live_from_redis
+services/data_gateway/sensibull_fetcher.py::_get_sensibull_cookies
+services/data_gateway/yfinance_fetcher.py::_download_group
+services/market_data/chain_recorder.py::ChainRecorder.prune_old
+services/market_data/main.py::_start_auth_commands_consumer
+services/market_data/main.py::_start_auth_commands_consumer._consume
+services/market_data/main.py::_update_heartbeat
+services/market_data/main.py::main
+services/notification-service/main.py::main
+services/orchestrator/main.py::_crash_handler
+services/orchestrator/main.py::_dispatch_and_collect_stream
+services/orchestrator/main.py::_start_confluence_narrator_subscriber
+services/orchestrator/main.py::_start_confluence_narrator_subscriber._listen
+services/orchestrator/main.py::check_data_freshness
+services/orchestrator/main.py::fetch_and_analyze_stocks
+services/orchestrator/main.py::init
+services/orchestrator/main.py::intraday_analysis
+services/orchestrator/main.py::report_52_week_high_low.price_and_change
+services/orchestrator/premarket/premarket_report.py::PreMarketReport._format_fii_dii
+services/paper_trading/main.py::drain_signal_queues
+services/paper_trading/strategy_builder.py::resolve_expiry
+services/resource_monitor/main.py::_discover_orchestrator_pid
+services/resource_monitor/main.py::_get_service_memmax
+services/resource_monitor/main.py::collect_redis
+services/resource_monitor/main.py::discover_services
+services/resource_monitor/main.py::write_heartbeat
+services/signal_intelligence/main.py::main
+services/volatility_engine/comparator.py::build_strikes_data

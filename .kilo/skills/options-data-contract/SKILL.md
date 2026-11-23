@@ -36,6 +36,11 @@ net_ce_oi_change, net_pe_oi_change, net_ce_oi_change_tick,
 net_pe_oi_change_tick, atm_iv, atm_iv_percentile, atm_ivp_type, last_updated,
 option_tick_count, tick_count`.
 
+A **stale mirror** of the GEX fields is also published here:
+`gex_total, gex_ce, gex_pe, gex_regime, gex_flip_level`. They are copied from
+the TickStore by the 1 s publisher, so they lag the 5-min GEXAnalyser run — read
+`data:gex_state:{SYM}` when the value must be authoritative.
+
 - `net_ce/pe_oi_change` = **since session open**.
   `*_tick` = tick-to-tick (do not use for daily flow).
 - PCR and OI totals count only legs with `oi > 0`; `pcr_window_pct` states the

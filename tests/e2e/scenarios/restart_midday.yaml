@@ -1,0 +1,26 @@
+name: restart_midday
+description: Market-data restart at noon resets open_oi baselines; no position resurrection.
+date: "2026-11-24"
+symbols: [NIFTY]
+start: "11:15"
+end: "13:15"
+step_seconds: 30
+seed: 23
+spot: {NIFTY: 25500}
+strike_gap: {NIFTY: 50}
+expiry: {NIFTY: "2026-11-25"}
+drift_pct_per_day: 0.0
+vol_annual: 0.04
+expect_exits: 0
+faults:
+  - kind: restart_service
+    at_seconds: 2700
+signals:
+  - at: "11:30"
+    symbol: NIFTY
+    strategy: IRON_CONDOR
+    put_wall_strike: 25350
+    call_wall_strike: 25650
+oracles: [no_errors, subs_within_cap, chain_follows_spot, capture_coverage,
+          entry_gates, exits_valid, legs_priced_from_market,
+          pnl_reconciles, risk_limits, heartbeats_present, analysis_ran]

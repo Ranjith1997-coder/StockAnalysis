@@ -24,7 +24,8 @@ units → restart the 8 services below → verify `is-active`.
 ## Preflight (never skip)
 
 1. `git status` clean except known untracked `data/` artifacts.
-2. Full suite green: `make test-fast` (currently ~1894 tests).
+2. `make test-layers` green (unit + contract + property + integration,
+   ~2094 tests) and `ruff` clean on changed files.
 3. Branch is `master` and local == `origin/master`. Deploy pulls origin, so
    unpushed commits are silently not deployed.
 
@@ -89,6 +90,17 @@ make server-svcs-status
 
 Restarting during market hours is safe but expect a ~30 s gap; do it before
 09:15 or after 15:30 IST unless urgent.
+
+### One-command verification
+
+```bash
+make smoke        # scripts/smoke_check.py — read-only, over SSH
+```
+
+Checks every unit active, heartbeat age vs TTL, fresh `options_agg` during
+market hours, `ws2_subs <= 480`, today's capture manifest, and zero
+`Traceback` in the last 5 min of any journal. Exit 1 lists only FAILs.
+See `.kilo/skills/test-validation/SKILL.md`.
 
 ## Rollback
 

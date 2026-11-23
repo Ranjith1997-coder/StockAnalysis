@@ -51,5 +51,12 @@ jobs:
           # E402 is a deliberate repo convention (logger between imports).
           ruff check --ignore E402 "${files[@]}"
 
+      # Fast layers only: unit + contract + property + integration.
+      # e2e/slow/perf/smoke run in nightly.yml (docs/testing-strategy.md).
       - name: Tests
-        run: PYTHONPATH=. python -m pytest tests/ -x -q
+        run: |
+          PYTHONPATH=. python -m pytest tests/ -x -q \
+            -m "not e2e and not slow and not perf and not smoke" \
+            --cov=services --cov=lib --cov=common \
+            --cov-report=term-missing:skip-covered \
+            --cov-fail-under=60

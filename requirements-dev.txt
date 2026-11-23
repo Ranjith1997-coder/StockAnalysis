@@ -13,6 +13,11 @@ pytest
 pytest-asyncio
 pytest-cov
 
+# Test layers (docs/testing-strategy.md) — pinned for reproducible CI
+fakeredis==2.33.0      # in-process Redis for integration tests
+hypothesis==6.152.9    # property-based tests
+time-machine==3.2.0    # frozen/travelled clocks
+
 # Code quality
 # Pinned: ruff's default rule set changes between minor versions (0.17 enables
 # G/flake8-logging-format by default), which makes CI disagree with local runs.

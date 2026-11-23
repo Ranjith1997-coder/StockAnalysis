@@ -1,0 +1,23 @@
+name: cap_pressure
+description: >-
+  Three indices with dense chains (500 candidate strikes in the 5 % window):
+  the registry must evict down to 480 and keep the ATM subscribed while spot
+  drifts.
+date: "2026-11-24"
+symbols: [NIFTY, BANKNIFTY, SENSEX]
+start: "09:15"
+end: "10:45"
+step_seconds: 30
+seed: 21
+spot: {NIFTY: 25500, BANKNIFTY: 63300, SENSEX: 83200}
+strike_gap: {NIFTY: 25, BANKNIFTY: 50, SENSEX: 50}
+expiry: {NIFTY: "2026-11-25", BANKNIFTY: "2026-11-25", SENSEX: "2026-11-27"}
+drift_pct_per_day: 4.0
+vol_annual: 0.08
+vix: {start: 14.0, end: 16.0}
+oi_flow: {ce_writing_pct_per_min: 0.004, pe_writing_pct_per_min: 0.002}
+expect_exits: 0
+signals: []
+oracles: [no_errors, subs_within_cap, chain_follows_spot, capture_coverage,
+          entry_gates, exits_valid, legs_priced_from_market,
+          pnl_reconciles, risk_limits, heartbeats_present, analysis_ran]

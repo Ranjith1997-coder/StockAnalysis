@@ -42,6 +42,10 @@ help:
 	@echo "    test          Run full test suite"
 	@echo "    test-fast     Run tests, stop on first failure"
 	@echo "    test-cov      Run tests with coverage report"
+	@echo "    test-layers   PR layers: unit + contract + property + integration"
+	@echo "    test-e2e      Market-simulation scenarios (T5, ~10 s)"
+	@echo "    test-deep     Deep layers: e2e/soak/chaos (nightly)"
+	@echo "    smoke         Post-deploy smoke check against the live server (SSH)"
 	@echo "    test-module   Run tests for a specific module:"
 	@echo "                    make test-module MODULE=premarket"
 	@echo ""
@@ -363,6 +367,25 @@ test:
 .PHONY: test-fast
 test-fast:
 	PYTHONPATH=$(CURDIR) $(PYTHON) -m pytest tests/ -x
+
+# Fast layers run on every PR (docs/testing-strategy.md): unit + contract +
+# property + integration. Deep layers (e2e/soak/chaos) run nightly.
+.PHONY: test-layers
+test-layers:
+	PYTHONPATH=$(CURDIR) $(PYTHON) -m pytest tests/ -q \
+	    -m "not e2e and not slow and not perf and not smoke"
+
+.PHONY: test-e2e
+test-e2e:
+	PYTHONPATH=$(CURDIR) $(PYTHON) -m pytest tests/e2e -q -m e2e
+
+.PHONY: test-deep
+test-deep:
+	PYTHONPATH=$(CURDIR) $(PYTHON) -m pytest tests/ -q -m "e2e or slow or perf"
+
+.PHONY: smoke
+smoke:
+	PYTHONPATH=$(CURDIR) $(PYTHON) scripts/smoke_check.py
 
 .PHONY: test-cov
 test-cov:

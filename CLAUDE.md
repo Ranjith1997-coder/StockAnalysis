@@ -38,7 +38,11 @@
 # Commands
 - `make run-dev` : Dev intraday loop
 - `make run-dev-positional` : Dev EOD run
-- `make test-fast` : Pytest suite (stop on first fail)
+- `make test-fast`  : Pytest suite (stop on first fail)
+- `make test-layers`: unit + contract + property + integration (same as PR CI)
+- `make test-e2e`   : market-simulation scenarios (4 trading days, ~10 s)
+- `make test-deep`  : e2e/soak/chaos layers (nightly)
+- `make smoke`      : post-deploy live-server check over SSH (never in CI)
 - `make lint` / `make format` / `make typecheck` : Ruff / Pyright
 - `make deploy` : git pull + unit sync + service restarts on the production server (Tailscale SSH — NOT EC2)
 - `make server-logs-500` : Check production `orchestrator.log`
@@ -46,7 +50,9 @@
 
 # Agent Tooling
 - **GitHub account:** always use **`Ranjith1997-coder`** (the repo owner) for `gh`/`git push`. Never use `ns-rkumark` for this repo. Check with `gh auth status`; switch with `gh auth switch --user Ranjith1997-coder`.
-- Skills (`.kilo/skills/`): `stockanalysis-deploy`, `add-analyser`, `options-data-contract`, `backtest-methodology`.
+- Skills (`.kilo/skills/`): `stockanalysis-deploy`, `test-validation`, `add-analyser`, `options-data-contract`, `backtest-methodology`.
 - Commands (`.kilo/command/`): `/deploy`, `/verify-session`, `/pre-pr`, `/backtest`.
 - CI: `.github/workflows/ci.yml` — diff-based ruff (E402 ignored) + full pytest on PR/push to master.
 - Programme plan: `.kilo/plans/options-programme-plan.md` · task specs: `.kilo/plans/options-indicators-roadmap.md`.
+- Test strategy: `docs/testing-strategy.md` (layers, markers, task specs T0–T8).
+- E2E simulator design: `docs/e2e-simulator-design.md` (T5 task plan).

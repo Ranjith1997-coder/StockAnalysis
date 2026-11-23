@@ -1,0 +1,27 @@
+name: range_day
+description: Flat session with balanced OI; a scripted condor must open and stay funded.
+date: "2026-11-24"
+symbols: [NIFTY, BANKNIFTY]
+start: "09:15"
+end: "11:30"
+step_seconds: 30
+seed: 7
+spot: {NIFTY: 25500, BANKNIFTY: 63300}
+strike_gap: {NIFTY: 50, BANKNIFTY: 100}
+expiry: {NIFTY: "2026-11-25", BANKNIFTY: "2026-11-25"}
+drift_pct_per_day: 0.0
+vol_annual: 0.05
+vix: {start: 14.0, end: 14.0}
+iv_smile: {atm: 0.12, skew: -0.08, smile: 0.40}
+oi_flow: {ce_writing_pct_per_min: 0.002, pe_writing_pct_per_min: 0.002}
+expect_exits: 0
+signals:
+  - at: "10:05"
+    symbol: NIFTY
+    strategy: IRON_CONDOR
+    put_wall_strike: 25350
+    call_wall_strike: 25650
+oracles: [no_errors, subs_within_cap, chain_follows_spot, capture_coverage,
+          entry_gates, exits_valid, legs_priced_from_market,
+          pnl_reconciles, risk_limits,
+          heartbeats_present, analysis_ran]

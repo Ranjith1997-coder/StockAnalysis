@@ -1,0 +1,44 @@
+name: Nightly tests
+
+on:
+  schedule:
+    # 00:30 UTC = 06:00 IST, weekdays
+    - cron: "30 0 * * 1-5"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+          pip install -r requirements-ml.txt
+
+      # Everything except the live-server smoke tests. e2e/slow/perf are
+      # currently empty, so selecting only those would run nothing.
+      - name: Deep tests
+        env:
+          E2E_MULTI_SEED: "1"
+        run: |
+          PYTHONPATH=. python -m pytest tests/ -q \
+            -m "not smoke" \
+            -p no:cacheprovider

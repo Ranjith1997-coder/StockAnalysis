@@ -70,3 +70,9 @@ data/options_history/
 
 # local backups pulled from the production server
 backups/
+# coverage
+.coverage
+coverage.xml
+htmlcov/
+# e2e failure artifacts
+artifacts/

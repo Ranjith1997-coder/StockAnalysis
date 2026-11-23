@@ -1,0 +1,21 @@
+name: sensibull_outage
+description: Sensibull feed down for 15 minutes; analysis degrades, no crash, no entries.
+date: "2026-11-24"
+symbols: [NIFTY]
+start: "09:30"
+end: "11:30"
+step_seconds: 30
+seed: 17
+spot: {NIFTY: 25500}
+strike_gap: {NIFTY: 50}
+expiry: {NIFTY: "2026-11-25"}
+drift_pct_per_day: 0.0
+vol_annual: 0.04
+expect_exits: 0
+faults:
+  - kind: sensibull_5xx
+    at_seconds: 1200
+    duration_seconds: 900
+oracles: [no_errors, subs_within_cap, chain_follows_spot, capture_coverage,
+          entry_gates, exits_valid, legs_priced_from_market,
+          pnl_reconciles, risk_limits, heartbeats_present, analysis_ran]
