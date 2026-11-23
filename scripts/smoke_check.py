@@ -51,6 +51,8 @@ UNITS = [
 
 LIVE_INDICES = ("NIFTY", "BANKNIFTY", "SENSEX")
 WS_LIMIT = 480
+MAX_HEARTBEAT_AGE = 120        # seconds; a writer beating every 60 s must be well inside
+CLOCK_SKEW_TOLERANCE = 15      # laptop vs server NTP drift, seconds
 MARKET_OPEN = dtime(9, 15)
 MARKET_CLOSE = dtime(15, 30)
 
@@ -126,7 +128,7 @@ def check_heartbeats() -> list[Check]:
         try:
             ttl = int(ttl_raw)
         except ValueError:
-            ttl = 120
+            ttl = -1
         status = mapping.get("status", "unknown")
         if status == "shutdown":
             # A restart writes "shutdown" from the outgoing process before the
@@ -134,11 +136,20 @@ def check_heartbeats() -> list[Check]:
             time.sleep(5)
             refreshed = redis_cli("HGET", registry_key, "status")
             status = refreshed.strip() or status
-        ok = status != "shutdown" and 0 <= age < max(ttl, 120)
-        checks.append(Check(
-            f"heartbeat:{name}", ok,
-            f"status={status} age={age:.0f}s ttl={ttl}s",
-        ))
+        # Redis returns *remaining* TTL, so "age < ttl" would be meaningless;
+        # the meaningful invariants are: the key has not expired and the last
+        # beat is recent. Negative age is NTP skew between laptop and server.
+        ok = (
+            status != "shutdown"
+            and ttl > 0
+            and -CLOCK_SKEW_TOLERANCE <= age < MAX_HEARTBEAT_AGE
+        )
+        detail = f"status={status} age={age:.0f}s ttl={ttl}s"
+        if age < -CLOCK_SKEW_TOLERANCE:
+            detail += " (clock skew > tolerance)"
+        elif ttl <= 0:
+            detail += " (key has no TTL)"
+        checks.append(Check(f"heartbeat:{name}", ok, detail))
     return checks
 
 
