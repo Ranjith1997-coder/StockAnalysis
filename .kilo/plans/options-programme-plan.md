@@ -160,7 +160,7 @@ and explicit risk limits from the owner.
 
 | # | Decision | Options | Recommendation | Status |
 |---|---|---|---|---|
-| D1 | Deploy Milestone 0 now? | yes / review diffs first | Push, let CI run, then deploy today (Sunday, market closed) and verify Monday | ⬜ |
+| D1 | Deploy Milestone 0 now? | yes / review diffs first | Push, let CI run, then deploy today (Sunday, market closed) and verify Monday | ✅ deployed 2026-11-22; Monday session verification pending (M0.3) |
 | D2 | Paper capital & risk defaults | ₹10 L, 1 %/trade, 6 % open max loss | ₹10 L; 1 % risk/trade by **max loss**; 5 % total open max loss; max 6 positions, max 2 per index | ⬜ |
 | D3 | Index priority | NIFTY+BANKNIFTY → SENSEX | Agree; add SENSEX after a BSE Bhavcopy fetcher exists | ⬜ |
 | D4 | Order-book work timing | now / after Strategy v1 | Record depth early (O0 in M2); build O1–O5 only after S1 is validated | ⬜ |
