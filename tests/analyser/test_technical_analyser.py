@@ -1,7 +1,6 @@
 """Tests for analyser/TechnicalAnalyser.py."""
 import pytest
 import pandas as pd
-import numpy as np
 from unittest.mock import patch, MagicMock
 
 import common.shared as shared
@@ -261,3 +260,11 @@ class TestResetConstants:
             a.reset_constants()
             assert TechnicalAnalyser.RSI_UPPER_THRESHOLD == 80
             assert TechnicalAnalyser.RSI_LOWER_THRESHOLD == 20
+
+
+def test_vwap_skips_cleanly_when_no_intraday_rows():
+    """Empty today_data must return False without hitting vwap.iloc[-1]."""
+    stock = _stock_with_df(_price_df(n=60))   # all rows in 2023
+    with patch("services.analysis_engine.analyser.TechnicalAnalyser.logger") as log:
+        assert TechnicalAnalyser().analyse_vwap(stock) is False
+        log.error.assert_not_called()

@@ -5,7 +5,6 @@ from lib.logging_util import get_logger
 logger = get_logger("analyser")
 from collections import namedtuple
 import pandas as pd
-from datetime import datetime
 from common.helperFunctions import percentageChange
 import numpy as np
 import common.shared as shared
@@ -509,14 +508,17 @@ class TechnicalAnalyser(BaseAnalyzer):
                 vwap = (typical_price * price_data['Volume']).cumsum() / price_data['Volume'].cumsum()
                 return vwap
             logger.debug(f'Inside analyse_vwap for stock {stock.stock_symbol}')
-            import pytz
-            from datetime import datetime, timedelta
-            ist = pytz.timezone('Asia/Kolkata')
-            # yesterday = (datetime.now(ist) - timedelta(days=1)).date()
-            # today_data = stock.priceData[stock.priceData.index.date == yesterday]
+            from datetime import datetime
             today = datetime.now().date()
             today_data = stock.priceData[stock.priceData.index.date == today]
+            if today_data.empty:
+                # No intraday rows for this stock yet (illiquid / pre-market /
+                # feed gap). vwap.iloc[-1] below would raise IndexError.
+                logger.debug(f'[vwap] no intraday rows for {stock.stock_symbol} today — skipping')
+                return False
             vwap = calculate_vwap(today_data)
+            if len(vwap) == 0:
+                return False
 
             latest_close = stock.priceData['Close'].iloc[-1]
             latest_vwap = vwap.iloc[-1]
@@ -625,7 +627,7 @@ class TechnicalAnalyser(BaseAnalyzer):
                 return True
 
             return False
-        except Exception as e:
+        except Exception:
             logger.error(f"Error in analyze_macd for stock {stock.stock_symbol}")
             logger.error(f"Traceback: {traceback.format_exc()}")
             return False

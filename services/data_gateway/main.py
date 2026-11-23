@@ -26,6 +26,7 @@ import time
 import json
 import signal
 import argparse
+import threading
 import traceback
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
@@ -59,6 +60,8 @@ DEV_LOOP_WAIT_TIME = int(os.environ.get("DEV_LOOP_WAIT_TIME", "30"))
 MARKET_OPEN = _time(9, 15)
 MARKET_CLOSE = _time(15, 30)
 IDLE_SLEEP = 300          # seconds between idle heartbeats (5 min)
+HEARTBEAT_INTERVAL = 60   # liveness thread cadence
+HEARTBEAT_TTL = 180       # must exceed HEARTBEAT_INTERVAL with margin
 POSITIONAL_FETCH_START = _time(19, 0)
 POSITIONAL_FETCH_END = _time(19, 30)
 PREVDAY_REFRESH_START = _time(8, 50)   # earliest time to refresh prevDayOHLCV
@@ -181,6 +184,31 @@ def _update_beat(redis, cycle_count: int, status: str, ttl: int = 120, **extra):
     redis.expire("service:registry:data-gateway", ttl)
 
 
+HEARTBEAT_KEY = "service:registry:data-gateway"
+
+
+def _touch_heartbeat(redis) -> None:
+    """Refresh liveness only, leaving cycle_count/status written by the loop.
+
+    A full cycle takes CYCLE_SLEEP (310 s), so a single cycle-time write with a
+    short TTL left the service invisible between cycles.
+    """
+    try:
+        redis.hset(HEARTBEAT_KEY, mapping={
+            "pid": str(os.getpid()),
+            "last_heartbeat": str(time.time()),
+        })
+        redis.expire(HEARTBEAT_KEY, HEARTBEAT_TTL)
+    except Exception:
+        logger.debug("[data-gateway] heartbeat touch failed", exc_info=True)
+
+
+def _heartbeat_loop(redis) -> None:
+    while _running:
+        _touch_heartbeat(redis)
+        _sleep_seconds(HEARTBEAT_INTERVAL)
+
+
 def _sleep_seconds(seconds: int):
     """Sleep in 1s chunks so SIGTERM is responsive."""
     for _ in range(seconds):
@@ -232,7 +260,14 @@ def main():
         "status": "starting",
         "started_at": str(time.time()),
     })
-    redis.expire("service:registry:data-gateway", 120)
+    redis.expire(HEARTBEAT_KEY, HEARTBEAT_TTL)
+
+    threading.Thread(
+        target=_heartbeat_loop,
+        args=(redis,),
+        daemon=True,
+        name="data-gateway-heartbeat",
+    ).start()
 
     # Load symbol lists
     stock_symbols, index_symbols, commodity_symbols, global_indices_symbols = get_symbol_lists()

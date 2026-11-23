@@ -7,6 +7,7 @@ from common.token_registry import (
     TokenType,
     OptionZone,
     ZONE_TO_WS_MODE,
+    WS_MODE_FULL,
 )
 
 
@@ -394,3 +395,71 @@ class TestDeriveStrikeGap:
         r.set_strike_gap("BANKNIFTY", 100.0)
         assert r.round_to_strike(52340.0, "BANKNIFTY") == 52300.0
         assert r.has_strike_gap("BANKNIFTY")
+
+
+class TestSubscriptionCap:
+    """The WS connection rejects >500 instruments; evict farthest non-CORE."""
+
+    def _registry(self, n, zone=OptionZone.PERIPHERAL, atm=20_000.0):
+        reg = TokenRegistry()
+        reg._current_atm["NIFTY"] = atm
+        for i in range(n):
+            strike = atm + (i + 1) * 50
+            token = 100_000 + i
+            reg._registry[token] = TokenInfo(
+                token=token,
+                token_type=TokenType.OPTION,
+                parent_symbol="NIFTY",
+                tradingsymbol=f"NIFTY{strike}CE",
+                strike=strike,
+                option_type="CE",
+                zone=zone,
+                is_subscribed=True,
+            )
+        return reg
+
+    def test_under_cap_makes_no_change(self):
+        reg = self._registry(10)
+        unsub, modes = [], {}
+        assert reg._enforce_subscription_cap([1, 2], unsub, modes) == []
+        assert unsub == []
+
+    def test_evicts_farthest_strike_first(self, monkeypatch):
+        from common import token_registry as tr
+        monkeypatch.setattr(tr, "WS_MAX_OPTION_SUBSCRIPTIONS", 10)
+        reg = self._registry(10)
+        unsub, modes = [], {WS_MODE_FULL: [100_009]}
+        evicted = reg._enforce_subscription_cap([999_999], unsub, modes)
+        assert evicted == [100_009]          # farthest from ATM
+        assert 100_009 in unsub
+        assert reg._registry[100_009].is_subscribed is False
+
+    def test_core_tokens_are_never_evicted(self, monkeypatch):
+        from common import token_registry as tr
+        monkeypatch.setattr(tr, "WS_MAX_OPTION_SUBSCRIPTIONS", 3)
+        reg = TokenRegistry()
+        reg._current_atm["NIFTY"] = 20_000.0
+        for i, strike in enumerate([19_950.0, 20_000.0, 20_050.0]):
+            token = 5_000 + i
+            reg._registry[token] = TokenInfo(
+                token=token,
+                token_type=TokenType.OPTION,
+                parent_symbol="NIFTY",
+                tradingsymbol=f"NIFTY{strike}CE",
+                strike=strike,
+                option_type="CE",
+                zone=OptionZone.CORE,
+                is_subscribed=True,
+            )
+        unsub, modes = [], {}
+        assert reg._enforce_subscription_cap([999_999], unsub, modes) == []
+        assert unsub == []
+
+    def test_eviction_removes_token_from_mode_changes(self, monkeypatch):
+        from common import token_registry as tr
+        monkeypatch.setattr(tr, "WS_MAX_OPTION_SUBSCRIPTIONS", 10)
+        reg = self._registry(10)
+        unsub = []
+        modes = {WS_MODE_FULL: [100_009, 100_000]}
+        reg._enforce_subscription_cap([999_999], unsub, modes)
+        assert 100_009 not in modes.get(WS_MODE_FULL, [])

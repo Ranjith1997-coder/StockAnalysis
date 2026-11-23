@@ -1,5 +1,5 @@
 from enum import Enum
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional, Dict, List, Set, Tuple
 from lib.logging_util import get_logger
 logger = get_logger("common")
@@ -25,6 +25,11 @@ class OptionZone(Enum):
 # Zerodha WebSocket modes (mirrored from KiteTicker for convenience)
 WS_MODE_FULL = "full"
 WS_MODE_QUOTE = "quote"
+
+# Kite rejects a connection once it is asked to hold more than 500 instruments.
+# Keep headroom and evict the farthest non-CORE strikes instead of letting the
+# whole subscribe call fail (which silently stops the chain following spot).
+WS_MAX_OPTION_SUBSCRIPTIONS = 480
 WS_MODE_LTP = "ltp"
 
 # MODE_FULL (184 bytes) = OI + Volume + Depth (5 levels)
@@ -204,6 +209,72 @@ class TokenRegistry:
             # Strikes > 5% away get no zone (won't be subscribed)
         return zone_map
 
+    def _enforce_subscription_cap(
+        self,
+        new_subscribe: List[int],
+        unsubscribe: List[int],
+        mode_changes: Dict[str, List[int]],
+    ) -> List[int]:
+        """Evict the farthest non-CORE strikes when over the broker cap.
+
+        Mutates the change lists and the registry, appending evicted tokens to
+        ``unsubscribe``. CORE strikes (the liquid ATM band) are never evicted.
+        Called with ``self._lock`` held.
+        """
+        unsub_set = set(unsubscribe)
+        new_set = set(new_subscribe)
+        subscribed = [
+            token for token, info in self._registry.items()
+            if info.is_subscribed and token not in unsub_set
+        ]
+        projected = len(subscribed) + len(new_set)
+        if projected <= WS_MAX_OPTION_SUBSCRIPTIONS:
+            return []
+
+        excess = projected - WS_MAX_OPTION_SUBSCRIPTIONS
+        candidates = []
+        for token in subscribed:
+            info = self._registry[token]
+            if token in new_set or info.zone == OptionZone.CORE:
+                continue
+            atm = self._current_atm.get(info.parent_symbol)
+            if info.strike is None or atm is None:
+                continue
+            # PERIPHERAL (quote mode, least useful) goes first at equal distance
+            priority = 0 if info.zone == OptionZone.PERIPHERAL else 1
+            candidates.append((abs(info.strike - atm), priority, token))
+        candidates.sort(key=lambda c: (-c[0], c[1]))
+
+        evicted = []
+        for _, _, token in candidates[:excess]:
+            info = self._registry[token]
+            info.is_subscribed = False
+            info.zone = None
+            unsubscribe.append(token)
+            unsub_set.add(token)
+            evicted.append(token)
+
+        if evicted:
+            evicted_set = set(evicted)
+            for mode in list(mode_changes):
+                pruned = [t for t in mode_changes[mode] if t not in evicted_set]
+                if pruned:
+                    mode_changes[mode] = pruned
+                else:
+                    del mode_changes[mode]
+            logger.warning(
+                "[TokenRegistry] Subscription cap %d reached — evicted %d "
+                "farthest non-core strike token(s)",
+                WS_MAX_OPTION_SUBSCRIPTIONS, len(evicted),
+            )
+            if len(evicted) < excess:
+                logger.warning(
+                    "[TokenRegistry] Only %d of %d required evictions possible "
+                    "(CORE strikes are protected); subscribe may still fail",
+                    len(evicted), excess,
+                )
+        return evicted
+
     def recenter_and_get_subscription_changes(
         self, parent_symbol: str, new_spot: float
     ) -> Tuple[List[int], List[int], Dict[str, List[int]]]:
@@ -261,6 +332,8 @@ class TokenRegistry:
                         ws_mode = ZONE_TO_WS_MODE[new_zone]
                         mode_changes.setdefault(ws_mode, []).append(token)
 
+            self._enforce_subscription_cap(new_subscribe, unsubscribe, mode_changes)
+
         n_sub  = len(new_subscribe)
         n_unsub = len(unsubscribe)
         n_mode = sum(len(v) for v in mode_changes.values())
@@ -293,19 +366,37 @@ class TokenRegistry:
 
         with self._lock:
             strike_map = self._option_strike_map.get(parent_symbol, {})
+            atm = self._current_atm.get(parent_symbol)
+            entries = []
             for strike, strike_tokens in strike_map.items():
                 zone = new_zones.get(strike)
                 if zone is None:
                     continue
+                dist = abs(strike - atm) if atm is not None else 0
                 for opt_type, token in strike_tokens.items():
                     info = self._registry.get(token)
-                    if info is None:
-                        continue
-                    info.zone = zone
-                    info.is_subscribed = True
-                    subscribe_tokens.append(token)
-                    ws_mode = ZONE_TO_WS_MODE[zone]
-                    mode_map.setdefault(ws_mode, []).append(token)
+                    if info is not None:
+                        entries.append((dist, token, zone, info))
+
+            # Never exceed the broker's connection cap; subscribe nearest first
+            # (CORE band is nearest, so it is preserved).
+            already = sum(1 for info in self._registry.values() if info.is_subscribed)
+            budget = max(0, WS_MAX_OPTION_SUBSCRIPTIONS - already)
+            if len(entries) > budget:
+                logger.warning(
+                    "[TokenRegistry] Capping initial subscription for %s: "
+                    "%d candidates, %d budget (already subscribed: %d)",
+                    parent_symbol, len(entries), budget, already,
+                )
+                entries.sort(key=lambda e: e[0])
+                entries = entries[:budget]
+
+            for _, token, zone, info in entries:
+                info.zone = zone
+                info.is_subscribed = True
+                subscribe_tokens.append(token)
+                ws_mode = ZONE_TO_WS_MODE[zone]
+                mode_map.setdefault(ws_mode, []).append(token)
 
         logger.info(
             f"[TokenRegistry] Initial subscribe {parent_symbol}: "
