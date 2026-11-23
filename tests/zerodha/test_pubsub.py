@@ -1,0 +1,70 @@
+"""Tests for the shared Pub/Sub listener (lib/zerodha/pubsub.py)."""
+from __future__ import annotations
+
+from unittest.mock import MagicMock
+
+import pytest
+import redis as redis_lib
+
+from lib.zerodha.pubsub import listen_until_closed
+
+
+class _FakePubSub:
+    def __init__(self, messages, error=None):
+        self._messages = list(messages)
+        self._error = error
+        self.closed = False
+
+    def listen(self):
+        yield from self._messages
+        if self._error is not None:
+            raise self._error
+
+    def close(self):
+        self.closed = True
+
+
+def test_redis_error_on_close_is_quiet():
+    logger = MagicMock()
+    pubsub = _FakePubSub(
+        [{"type": "message", "data": "a"}],
+        error=redis_lib.exceptions.ConnectionError("Connection closed by server."),
+    )
+    seen = []
+
+    listen_until_closed(pubsub, seen.append, logger=logger, label="test")
+
+    assert seen == [{"type": "message", "data": "a"}]
+    assert pubsub.closed
+    logger.debug.assert_called_once()
+    logger.error.assert_not_called()
+
+
+def test_subscribe_messages_are_forwarded():
+    logger = MagicMock()
+    pubsub = _FakePubSub([{"type": "subscribe"}, {"type": "message", "data": "b"}])
+    seen = []
+
+    listen_until_closed(pubsub, seen.append, logger=logger, label="test")
+
+    assert seen == [{"type": "subscribe"}, {"type": "message", "data": "b"}]
+
+
+def test_handler_exceptions_are_not_swallowed():
+    logger = MagicMock()
+    pubsub = _FakePubSub([{"type": "message", "data": "x"}])
+
+    def boom(_message):
+        raise RuntimeError("handler bug")
+
+    with pytest.raises(RuntimeError, match="handler bug"):
+        listen_until_closed(pubsub, boom, logger=logger, label="test")
+    assert pubsub.closed
+
+
+def test_non_redis_errors_propagate():
+    logger = MagicMock()
+    pubsub = _FakePubSub([], error=ValueError("not a redis error"))
+
+    with pytest.raises(ValueError, match="not a redis error"):
+        listen_until_closed(pubsub, lambda _m: None, logger=logger, label="test")

@@ -166,6 +166,19 @@ def check_ws2_subs() -> list[Check]:
     )]
 
 
+def _unit_start_epoch(unit: str) -> float | None:
+    """Wall-clock epoch when systemd last started ``unit`` (None if unknown)."""
+    code, out = ssh(
+        f'ts=$(systemctl show -p ActiveEnterTimestamp --value {unit}); '
+        '[ -z "$ts" ] && exit 3; date -d "$ts" +%s',
+        timeout=30,
+    )
+    try:
+        return float(out.strip().splitlines()[-1]) if code == 0 else None
+    except ValueError:
+        return None
+
+
 def check_capture() -> list[Check]:
     today = _now_ist().strftime("%Y-%m-%d")
     cmd = (
@@ -174,6 +187,19 @@ def check_capture() -> list[Check]:
     )
     _, out = ssh(cmd, timeout=60)
     if out.strip() == "MISSING" or not out.startswith("{"):
+        # A deploy after the close cannot have captured anything yet. Accept it
+        # only when market-data was in fact started after today's close.
+        now = _now_ist()
+        started = _unit_start_epoch("stockanalysis-market-data")
+        close = now.replace(
+            hour=MARKET_CLOSE.hour, minute=MARKET_CLOSE.minute, second=0, microsecond=0
+        )
+        if started is not None and now > close and started > close.timestamp():
+            return [Check(
+                "capture", True,
+                f"deployed after close at {now.strftime('%H:%M')} — "
+                "first manifest expected next session",
+            )]
         return [Check("capture", False, f"no manifest for {today}")]
     files = _json_field(out, "files")
     rows = out.count('"chain:')
@@ -189,16 +215,33 @@ def _json_field(payload: str, field: str) -> int:
 
 
 def check_recent_errors() -> list[Check]:
-    cmd = (
-        "journalctl --since '5 minutes ago' --no-pager -o cat "
-        "-u " + " -u ".join(UNITS) + " 2>/dev/null | grep -c Traceback || true"
+    """Count tracebacks since each unit last started, capped at 5 minutes.
+
+    A deploy restarts every unit; scanning a fixed 5-minute window would blame
+    the new build for shutdown noise from the old process.
+    """
+    loop = (
+        'for u in ' + " ".join(UNITS) + '; do '
+        'ts=$(systemctl show -p ActiveEnterTimestamp --value "$u"); '
+        'if [ -n "$ts" ]; then since="$ts"; else since="5 minutes ago"; fi; '
+        'n=$(journalctl --since "$since" --no-pager -o cat -u "$u" 2>/dev/null '
+        "| grep -c Traceback); "
+        'echo "$u $n"; done'
     )
-    _, out = ssh(cmd, timeout=90)
-    try:
-        count = int(out.strip().splitlines()[-1])
-    except (ValueError, IndexError):
+    _, out = ssh(loop, timeout=120)
+    checks: list[Check] = []
+    total = 0
+    for line in out.splitlines():
+        parts = line.split()
+        if len(parts) != 2 or not parts[1].isdigit():
+            continue
+        unit, count = parts[0], int(parts[1])
+        total += count
+        checks.append(Check(f"errors:{unit.removeprefix('stockanalysis-')}",
+                            count == 0, f"{count} Traceback(s) since start"))
+    if not checks:
         return [Check("errors", False, f"unreadable journal output {out!r}")]
-    return [Check("errors", count == 0, f"{count} Traceback(s) in last 5 minutes")]
+    return checks if total else [Check("errors", True, "no Traceback since start")]
 
 
 def run() -> list[Check]:

@@ -1752,7 +1752,8 @@ def _start_enctoken_subscriber():
         ps = redis_proxy.pubsub()
         ps.subscribe("auth:enctoken_refreshed")
         logger.info("[orchestrator] Subscribed to auth:enctoken_refreshed")
-        for message in ps.listen():
+
+        def _on_message(message):
             if message["type"] == "message":
                 enctoken = redis_proxy.hget("auth:zerodha", "enctoken")
                 if enctoken and shared.app_ctx.zd_kc:
@@ -1761,6 +1762,8 @@ def _start_enctoken_subscriber():
                         logger.info("[orchestrator] zd_kc enctoken updated via Pub/Sub")
                     except Exception as e:
                         logger.error(f"[orchestrator] zd_kc enctoken update failed: {e}")
+
+        listen_until_closed(ps, _on_message, logger=logger, label="orchestrator")
 
     t = _th.Thread(target=_listen, daemon=True, name="enctoken-subscriber")
     t.start()

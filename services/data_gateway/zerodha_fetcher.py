@@ -20,6 +20,7 @@ import pandas as pd
 
 from lib.logging_util import get_logger
 logger = get_logger("data-gateway")
+from lib.zerodha.pubsub import listen_until_closed
 from lib.zerodha.zerodha_connect import KiteConnect
 from common import constants as constant
 from services.common.rate_limiter import get_zerodha_limiter
@@ -200,13 +201,16 @@ class ZerodhaFuturesManager:
             ps = self._redis.pubsub()
             ps.subscribe(AUTH_CHANNEL)
             logger.info(f"[zerodha-fetcher] Subscribed to {AUTH_CHANNEL}")
-            for message in ps.listen():
+
+            def _on_message(message):
                 if message["type"] == "message":
                     enctoken = self._redis.hget(AUTH_HASH, "enctoken")
                     if enctoken:
                         with self._lock:
                             self._init_kite(enctoken)
                         logger.info("[zerodha-fetcher] Enctoken refreshed via Pub/Sub")
+
+            listen_until_closed(ps, _on_message, logger=logger, label="zerodha-fetcher")
         t = threading.Thread(target=_listen, daemon=True, name="enctoken-subscriber")
         t.start()
 

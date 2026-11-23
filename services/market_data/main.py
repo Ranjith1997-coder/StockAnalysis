@@ -55,6 +55,7 @@ from services.market_data.signal_publisher import RedisSignalBus
 from services.common.metrics import set_stock, incr_system, set_system
 
 # ── Lazy imports (heavy deps) ──────────────────────────────────────────────
+from lib.zerodha.pubsub import listen_until_closed
 from lib.zerodha.zerodha_analysis import ZerodhaTickerManager
 from lib.zerodha.zerodha_connect import KiteConnect
 from lib.zerodha.live_options_engine import LiveOptionsEngine
@@ -276,9 +277,10 @@ def _start_enctoken_subscriber(redis: RedisProxy, tm: ZerodhaTickerManager):
         ps = redis.pubsub()
         ps.subscribe(AUTH_CHANNEL)
         logger.info(f"[market-data] Subscribed to {AUTH_CHANNEL}")
-        for message in ps.listen():
+
+        def _on_message(message):
             if not _running:
-                break
+                return
             if message["type"] == "message":
                 enctoken = redis.hget(AUTH_HASH, "enctoken")
                 if enctoken:
@@ -287,6 +289,8 @@ def _start_enctoken_subscriber(redis: RedisProxy, tm: ZerodhaTickerManager):
                         logger.info("[market-data] Enctoken updated via Pub/Sub")
                     except Exception as e:
                         logger.error(f"[market-data] Enctoken update failed: {e}")
+
+        listen_until_closed(ps, _on_message, logger=logger, label="market-data")
 
     t = threading.Thread(target=_listen, daemon=True, name="enctoken-subscriber")
     t.start()
