@@ -23,6 +23,7 @@ from __future__ import annotations
 import os
 import re
 import sys
+import time
 from dataclasses import dataclass
 from datetime import datetime, time as dtime, timezone
 
@@ -127,6 +128,12 @@ def check_heartbeats() -> list[Check]:
         except ValueError:
             ttl = 120
         status = mapping.get("status", "unknown")
+        if status == "shutdown":
+            # A restart writes "shutdown" from the outgoing process before the
+            # new one overwrites it; re-read once before calling it a failure.
+            time.sleep(5)
+            refreshed = redis_cli("HGET", registry_key, "status")
+            status = refreshed.strip() or status
         ok = status != "shutdown" and 0 <= age < max(ttl, 120)
         checks.append(Check(
             f"heartbeat:{name}", ok,

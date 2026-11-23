@@ -144,6 +144,39 @@ def test_no_time_class_shadowing() -> None:
     )
 
 
+def test_shared_listener_is_imported_where_used() -> None:
+    """``from common.helperFunctions import *`` hides undefined names from ruff.
+
+    Every module that calls ``listen_until_closed`` must import it explicitly;
+    otherwise the daemon thread dies with NameError at startup (seen in the
+    orchestrator on 2026-11-23, invisible to lint for exactly that reason).
+    """
+    import ast as _ast
+
+    offenders: list[str] = []
+    for path, tree in _sources():
+        uses = {
+            node.id for node in _ast.walk(tree)
+            if isinstance(node, _ast.Name) and isinstance(node.ctx, _ast.Load)
+            and node.id == "listen_until_closed"
+        }
+        if not uses:
+            continue
+        imported = any(
+            isinstance(node, _ast.ImportFrom)
+            and node.module == "lib.zerodha.pubsub"
+            and any(alias.name == "listen_until_closed" for alias in node.names)
+            for node in _ast.walk(tree)
+        )
+        defined = any(
+            isinstance(node, _ast.FunctionDef) and node.name == "listen_until_closed"
+            for node in _ast.walk(tree)
+        )
+        if not (imported or defined):
+            offenders.append(str(path.relative_to(REPO_ROOT)))
+    assert not offenders, f"listen_until_closed used but not imported: {offenders}"
+
+
 def test_data_key_literals_use_declared_families() -> None:
     offenders: list[str] = []
     for path, tree in _sources():
