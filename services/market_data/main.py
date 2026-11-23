@@ -290,7 +290,8 @@ def _start_enctoken_subscriber(redis: RedisProxy, tm: ZerodhaTickerManager):
                     except Exception as e:
                         logger.error(f"[market-data] Enctoken update failed: {e}")
 
-        listen_until_closed(ps, _on_message, logger=logger, label="market-data")
+        listen_until_closed(ps, _on_message, logger=logger, label="market-data",
+                            should_stop=lambda: not _running)
 
     t = threading.Thread(target=_listen, daemon=True, name="enctoken-subscriber")
     t.start()

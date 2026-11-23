@@ -71,6 +71,28 @@ def test_non_redis_errors_propagate():
         listen_until_closed(pubsub, lambda _m: None, logger=logger, label="test")
 
 
+def test_chained_redis_error_is_swallowed():
+    """The generator-unwind exception is often generic, with Redis as context."""
+    logger = MagicMock()
+    error = RuntimeError("generator ignored GeneratorExit")
+    error.__context__ = redis_lib.exceptions.ConnectionError("closed")
+    pubsub = _FakePubSub([], error=error)
+
+    listen_until_closed(pubsub, lambda _m: None, logger=logger, label="test")
+
+    assert pubsub.closed
+
+
+def test_should_stop_marks_any_error_as_shutdown():
+    logger = MagicMock()
+    pubsub = _FakePubSub([], error=ValueError("misc"))
+
+    listen_until_closed(pubsub, lambda _m: None, logger=logger,
+                        label="test", should_stop=lambda: True)
+
+    assert pubsub.closed
+
+
 def test_no_logging_during_interpreter_shutdown(monkeypatch):
     """Logging after handlers close raises and re-prints the traceback."""
     monkeypatch.setattr(pubsub_module.sys, "is_finalizing", lambda: True)
