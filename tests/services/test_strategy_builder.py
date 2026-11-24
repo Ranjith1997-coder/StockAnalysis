@@ -40,17 +40,17 @@ class TestSelectStrikesIronCondorStrangle:
                               put_wall_strike=24000.0, call_wall_strike=25000.0)
         legs = select_strikes(signal, strike_gap=50.0)
         assert len(legs) == 4
-        sells = [l for l in legs if l.side == "SELL"]
-        buys = [l for l in legs if l.side == "BUY"]
-        assert {l.strike for l in sells} == {24000.0, 25000.0}
-        assert {l.strike for l in buys} == {23900.0, 25100.0}
+        sells = [leg for leg in legs if leg.side == "SELL"]
+        buys = [leg for leg in legs if leg.side == "BUY"]
+        assert {leg.strike for leg in sells} == {24000.0, 25000.0}
+        assert {leg.strike for leg in buys} == {23900.0, 25100.0}
 
     def test_strangle_has_two_naked_legs(self):
         signal = EntrySignal(strategy="STRANGLE", symbol="NIFTY",
                               put_wall_strike=24000.0, call_wall_strike=25000.0)
         legs = select_strikes(signal, strike_gap=50.0)
         assert len(legs) == 2
-        assert all(l.side == "SELL" for l in legs)
+        assert all(leg.side == "SELL" for leg in legs)
 
     def test_missing_wall_strikes_returns_empty(self):
         signal = EntrySignal(strategy="IRON_CONDOR", symbol="NIFTY")
