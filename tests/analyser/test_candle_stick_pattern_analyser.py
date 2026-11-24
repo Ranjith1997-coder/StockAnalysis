@@ -294,3 +294,34 @@ class TestTripleCandleReversal:
         result, s = self._run(rows)
         assert result is True
         assert s.analysis["BEARISH"]["Triple_candle_reversal_pattern"].pattern == "Evening Star"
+
+
+class TestShortPriceHistory:
+    """A replay/backtest can start with 1-2 bars; the analysers must skip."""
+
+    def test_two_rows_skip_triple_patterns_without_raising(self):
+        import pandas as pd
+
+        rows = [
+            {"Open": 100.0, "High": 101.0, "Low": 99.0, "Close": 100.5, "Volume": 1},
+            {"Open": 100.5, "High": 102.0, "Low": 100.0, "Close": 101.5, "Volume": 1},
+        ]
+        s = make_stock()
+        s.priceData = pd.DataFrame(rows, index=pd.date_range("2024-01-01", periods=2))
+        a = CandleStickAnalyser()
+
+        assert a.analyse_triple_candle_reversal(s) is False
+        assert a.analyse_triple_candle_continuation(s) is False
+
+    def test_one_row_skips_two_candle_patterns_without_raising(self):
+        import pandas as pd
+
+        s = make_stock()
+        s.priceData = pd.DataFrame(
+            [{"Open": 100.0, "High": 101.0, "Low": 99.0, "Close": 100.5, "Volume": 1}],
+            index=pd.date_range("2024-01-01", periods=1),
+        )
+        a = CandleStickAnalyser()
+
+        assert a.analyse_single_candle_reversal(s) is False
+        assert a.analyse_double_candle_reversal(s) is False

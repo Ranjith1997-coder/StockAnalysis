@@ -60,17 +60,19 @@ Blocking decision: deploy now or hold for diff review?
 
 ## Milestone 2 — Measurement (≈5 d) 🟨 · **capture implemented**
 
-**Status (2026-11-23):** chain/context/futures/index capture implemented
-(`services/market_data/chain_recorder.py`, Parquet, 30 s / 1 s / 10 s, L5
-depth for CORE legs, 180-day retention, daily manifest), plus futures depth
-publishing (O0) and deploy-time dependency install. GIFT Nifty subscription,
-signal/trade export and the EOD summary remain. Not deployed yet.
+**Status (2026-11-24):** capture deployed and recording; **options backtester
+and signal-outcome logger implemented** (`tools/options_backtest/`, see
+`docs/options-backtest.md`). Live-vs-replay validation: an E2E-recorded day
+replays to the same exit reason and P&L within ₹1 (exact in the demo:
+STOP_LOSS −₹2,839). Once a real trading day is captured, the hit-rate gate can
+be produced. Remaining in M2: GIFT Nifty subscription, live trade/analysis
+export, EOD summary.
 
 | ID | Item | Output | Acceptance | Effort |
 |---|---|---|---|---|
 | M1 | Intraday chain recorder, 60 s snapshots → parquet | `data/options_history/{SYM}/{date}.parquet` | 375 snapshots/day/index, <50 MB, restart-safe | 1.5 d |
 | O0 | Publish + record futures L5 depth | `data/options_history/depth/...` | depth rows present, no CPU regression | 1 d |
-| M2 | Options backtester + signal outcome logger (same cost model as paper) | `tools/options_backtest/` | reproduces hand-computed IC P&L on a fixture | 2.5 d |
+| M2 | Options backtester + signal outcome logger (same cost model as paper) | `tools/options_backtest/` | ✅ live-vs-replay equality + CLI report (`make backtest`) | done |
 
 **Gate M2:** report of current-signal hit rates before any strategy work.
 
@@ -194,6 +196,13 @@ live execution — the box currently has no runtime protection.
 ---
 
 ## Progress log
+
+- 2026-11-24 — M2 backtester: `tools/options_backtest/` (loader, ReplayRedis,
+  context rebuild, simulate, outcomes, CLI). Replays captured Parquet through
+  `process_job` → `parse_analysis_result` → `build_position` →
+  `evaluate_position`. `make backtest`. Tests: live-vs-replay equality,
+  target/stop behaviour, CLI, loader errors. Also fixed: candle triple-pattern
+  analysers crashed on 1–2 row price history (found by the replay).
 
 | Date | Milestone | Note |
 |---|---|---|

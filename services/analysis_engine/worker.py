@@ -29,7 +29,7 @@ from lib.logging_util import get_logger
 logger = get_logger("analysis-engine")
 
 
-def _result_dict(
+def build_result_fields(
     job_id: str,
     cycle_id: str,
     symbol: str,
@@ -62,6 +62,9 @@ def _result_dict(
         "mode": mode_str,
         "timestamp": str(time.time()),
     }
+
+
+_result_dict = build_result_fields
 
 
 def _load_gex_state(redis: RedisProxy, orchestrator: AnalyserOrchestrator, stock) -> None:
@@ -166,7 +169,7 @@ def process_job(
     if stock is None:
         logger.warning(f"[worker] {symbol}: no price data in Redis")
         _record_metrics(symbol, "NO_DATA", int((time.time() - start) * 1000))
-        return _result_dict(
+        return build_result_fields(
             job_id, cycle_id, symbol, is_index,
             "NO_DATA", False, "", "{}", "{}",
             False, False, "",
@@ -178,7 +181,7 @@ def process_job(
     if stock.priceData is None or len(stock.priceData) < min_rows:
         logger.debug(f"[worker] {symbol}: insufficient price data ({len(stock.priceData) if stock.priceData is not None else 0} rows, need {min_rows})")
         _record_metrics(symbol, "NO_DATA", int((time.time() - start) * 1000))
-        return _result_dict(
+        return build_result_fields(
             job_id, cycle_id, symbol, is_index,
             "NO_DATA", False, "", "{}", "{}",
             False, False, "",
@@ -198,7 +201,7 @@ def process_job(
         if stock.ltp_change_perc is not None and abs(stock.ltp_change_perc) < MIN_POSITIONAL_MOVE_PCT:
             logger.debug(f"[worker] {symbol}: skipped — price move {stock.ltp_change_perc:+.2f}% < {MIN_POSITIONAL_MOVE_PCT}%")
             _record_metrics(symbol, "SKIPPED", int((time.time() - start) * 1000))
-            return _result_dict(
+            return build_result_fields(
                 job_id, cycle_id, symbol, is_index,
                 "SUCCESS", False, "", "{}", "{}",
                 False, False, "",
@@ -208,7 +211,7 @@ def process_job(
 
     if symbol in constant.INDEX_ANALYSIS_EXCLUDE:
         _record_metrics(symbol, "SKIPPED", int((time.time() - start) * 1000))
-        return _result_dict(
+        return build_result_fields(
             job_id, cycle_id, symbol, is_index,
             "SUCCESS", False, "", "{}", "{}",
             False, False, "",
@@ -220,7 +223,7 @@ def process_job(
     if not sensibull_ok:
         logger.warning(f"[worker] {symbol}: no sensibull data in Redis")
         _record_metrics(symbol, "NO_DATA", int((time.time() - start) * 1000))
-        return _result_dict(
+        return build_result_fields(
             job_id, cycle_id, symbol, is_index,
             "NO_DATA", False, "", "{}", "{}",
             False, False, "",
@@ -255,7 +258,7 @@ def process_job(
     except Exception as e:
         logger.exception(f"[worker] {symbol}: analyser error: {e}")
         _record_metrics(symbol, "ERROR", int((time.time() - start) * 1000), error=str(e))
-        return _result_dict(
+        return build_result_fields(
             job_id, cycle_id, symbol, is_index,
             "ERROR", False, "", "{}", "{}",
             False, False, str(e),
@@ -287,7 +290,7 @@ def process_job(
     if is_index and symbol in constant.LIVE_OPTIONS_INDICES:
         _persist_gex_state(redis, stock)
 
-    return _result_dict(
+    return build_result_fields(
         job_id, cycle_id, symbol, is_index,
         "SUCCESS", trend_found, message,
         analysis_json, score_result_json,

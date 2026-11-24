@@ -365,6 +365,9 @@ class CandleStickAnalyser(BaseAnalyzer):
             logger.debug(f'[CSP] {stock.stock_symbol} — analyse_double_candle_reversal start')
             currData = stock.current_equity_data
             prevData = stock.previous_equity_data
+            if currData is None or prevData is None:
+                logger.debug(f'[CSP] {stock.stock_symbol} — needs 2 candles, skip')
+                return False
 
             closePrice = currData['Close']
             openPrice = currData['Open']
@@ -373,8 +376,6 @@ class CandleStickAnalyser(BaseAnalyzer):
 
             prevClosePrice = prevData['Close']
             prevOpenPrice = prevData['Open']
-            prevHighPrice = prevData['High']
-            prevLowPrice = prevData['Low']
 
             prev_mid = (prevOpenPrice + prevClosePrice) / 2
             prev_body = abs(prevClosePrice - prevOpenPrice)
@@ -479,6 +480,9 @@ class CandleStickAnalyser(BaseAnalyzer):
             logger.debug(f'[CSP] {stock.stock_symbol} — analyse_double_candle_continuation start')
             currData = stock.current_equity_data
             prevData = stock.previous_equity_data
+            if currData is None or prevData is None:
+                logger.debug(f'[CSP] {stock.stock_symbol} — needs 2 candles, skip')
+                return False
 
             closePrice = currData['Close']
             openPrice = currData['Open']
@@ -537,6 +541,9 @@ class CandleStickAnalyser(BaseAnalyzer):
             currData = stock.current_equity_data
             prevData = stock.previous_equity_data
             prevPrevData = stock.previous_previous_equity_data
+            if currData is None or prevData is None or prevPrevData is None:
+                logger.debug(f'[CSP] {stock.stock_symbol} — triple reversal needs 3 candles, skip')
+                return False
 
             closePrice = currData['Close']
             openPrice = currData['Open']
@@ -616,6 +623,9 @@ class CandleStickAnalyser(BaseAnalyzer):
             currData = stock.current_equity_data
             prevData = stock.previous_equity_data
             prevPrevData = stock.previous_previous_equity_data
+            if currData is None or prevData is None or prevPrevData is None:
+                logger.debug(f'[CSP] {stock.stock_symbol} — triple continuation needs 3 candles, skip')
+                return False
 
             closePrice = currData['Close']
             openPrice = currData['Open']

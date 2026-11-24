@@ -46,6 +46,7 @@ help:
 	@echo "    test-e2e      Market-simulation scenarios (T5, ~10 s)"
 	@echo "    test-deep     Deep layers: e2e/soak/chaos (nightly)"
 	@echo "    smoke         Post-deploy smoke check against the live server (SSH)"
+	@echo "    backtest      Replay a captured day (ARGS=\"--date ... --symbols ...\")"
 	@echo "    test-module   Run tests for a specific module:"
 	@echo "                    make test-module MODULE=premarket"
 	@echo ""
@@ -382,6 +383,12 @@ test-e2e:
 .PHONY: test-deep
 test-deep:
 	PYTHONPATH=$(CURDIR) $(PYTHON) -m pytest tests/ -q -m "e2e or slow or perf"
+
+# Replay a captured day through the real analysers + paper rules.
+#   make backtest ARGS="--date 2026-11-25 --symbols NIFTY,BANKNIFTY"
+.PHONY: backtest
+backtest:
+	PYTHONPATH=$(CURDIR) $(PYTHON) -m tools.options_backtest $(ARGS)
 
 .PHONY: smoke
 smoke:
