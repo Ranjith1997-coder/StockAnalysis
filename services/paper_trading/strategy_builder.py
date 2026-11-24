@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, time as dtime
 from typing import Optional
 
@@ -235,9 +235,19 @@ def fetch_tick(symbol: str, strike: float, option_type: str, redis) -> Optional[
 
 # ── Full entry flow (docs/PAPER_TRADING_DESIGN.md section 7.6) ─────────────
 
+def _min_pop_from_env() -> float:
+    """PAPER_MIN_POP gate (0 = disabled, the shipped default)."""
+    import os
+    try:
+        return max(0.0, float(os.getenv("PAPER_MIN_POP", "0") or 0))
+    except ValueError:
+        return 0.0
+
+
 def build_position(signal: EntrySignal, redis, span_calculator: SpanCalculator,
                     account: PaperAccount, mode: str = "intraday",
-                    risk_scale: float = 1.0, now: Optional[datetime] = None) -> Optional[PaperPosition]:
+                    risk_scale: float = 1.0, now: Optional[datetime] = None,
+                    min_pop: Optional[float] = None) -> Optional[PaperPosition]:
     """Run the full strike-selection -> SPAN -> sizing pipeline for one signal.
 
     Returns None (with a logged reason) if the signal can't produce a valid,
@@ -258,6 +268,33 @@ def build_position(signal: EntrySignal, redis, span_calculator: SpanCalculator,
 
     strike_gap = fetch_strike_gap(symbol, redis)
     atm_strike = fetch_atm_strike(symbol, redis)
+
+    gate_pop = _min_pop_from_env() if min_pop is None else max(0.0, min_pop)
+    if (gate_pop > 0 and signal.strategy in ("IRON_CONDOR", "STRANGLE")
+            and signal.put_wall_strike is not None
+            and signal.call_wall_strike is not None
+            and strike_gap and atm_strike):
+        from lib.fno.option_math import widen_short_strikes
+        agg = redis.hgetall(f"data:options_agg:{symbol}")
+        try:
+            iv = float(agg.get("atm_iv") or 0) / 100.0
+            dte = max(float(agg.get("dte") or 1), 1.0)
+        except (TypeError, ValueError):
+            iv, dte = 0.0, 1.0
+        if iv > 0:
+            widened_put, widened_call = widen_short_strikes(
+                float(signal.put_wall_strike), float(signal.call_wall_strike),
+                float(atm_strike), float(strike_gap), iv, dte / 365.0, gate_pop,
+            )
+            if (widened_put, widened_call) != (float(signal.put_wall_strike),
+                                               float(signal.call_wall_strike)):
+                logger.info(
+                    "[strategy_builder] %s | POP gate %.0f%%: strikes %s/%s -> %s/%s",
+                    symbol, gate_pop * 100, signal.put_wall_strike,
+                    signal.call_wall_strike, widened_put, widened_call,
+                )
+                signal = replace(signal, put_wall_strike=widened_put,
+                                 call_wall_strike=widened_call)
 
     planned_legs = select_strikes(signal, strike_gap, atm_strike)
     if not planned_legs:

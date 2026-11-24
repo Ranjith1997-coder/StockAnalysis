@@ -1,4 +1,3 @@
-import math
 import time
 from collections import deque
 from datetime import date, datetime, timedelta
@@ -61,16 +60,11 @@ def trading_days_to_expiry(
 def daily_expected_move(straddle: float, dte_trading_days: Optional[int]) -> float:
     """1-day expected move implied by an ATM straddle.
 
-    ATM straddle ≈ 0.8·σ·S·√T  (= E|ΔS| over the remaining life, T to expiry).
-    Volatility scales with √time, so the expected absolute move for ONE
-    session is   daily_move ≈ straddle · √(1 / DTE)   with DTE in trading
-    days.  (The 1-SD daily move is daily_move / 0.8.)
-    DTE ≤ 1 (expiry day, or stale/past expiry) → the straddle itself.
+    The formula lives in ``lib.fno.option_math`` so the analysers, paper
+    trading and the backtester cannot drift apart.
     """
-    if straddle <= 0:
-        return 0.0
-    dte = max(1, int(dte_trading_days or 1))
-    return straddle * math.sqrt(1.0 / dte)
+    from lib.fno.option_math import daily_expected_move as _daily
+    return _daily(straddle, dte_trading_days)
 
 
 class LiveStraddleAnalyser:

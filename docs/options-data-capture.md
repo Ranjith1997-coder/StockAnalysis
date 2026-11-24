@@ -106,3 +106,8 @@ data/options_history/
   SQLite; add a daily exporter so outcomes can be joined to `signal_id`.
 - **EOD summary (Tier F)**: daily per-symbol summary (ATM IV, IV rank, PCR,
   max pain, VIX) derived from the raw files.
+| `atm_iv_percentile` | nearest expiry's vendor 252-day IV percentile (0-100) |
+| `atm_iv_near` | nearest expiry ATM IV (%) |
+| `atm_iv_next` | next expiry ATM IV (%) |
+| `next_expiry` | ISO date of the expiry used for `atm_iv_next` |
+| `term_slope` | `atm_iv_next - atm_iv_near` (vol points) |

@@ -97,7 +97,10 @@ class ReplayContext:
         put_oi = sum(v["put_oi"] for v in per_strike.values())
         call_change = sum(v["call_oi"] - v["prev_call_oi"] for v in per_strike.values())
         put_change = sum(v["put_oi"] - v["prev_put_oi"] for v in per_strike.values())
-        atm_iv = sum(atm_ivs) / len(atm_ivs) if atm_ivs else None
+        chain_atm_iv = sum(atm_ivs) / len(atm_ivs) if atm_ivs else None
+        # Prefer the captured vendor ATM IV / percentile; the chain-derived
+        # average is the fallback for days recorded before the schema change.
+        atm_iv = _f(snapshot.ctx.get("atm_iv_near")) or chain_atm_iv
         ts_epoch = snapshot.ts.timestamp()
 
         self.redis.hset(f"data:options_live:{self.symbol}", mapping=live)
@@ -214,11 +217,12 @@ class ReplayContext:
         expiry = snapshot.expiry
         pcr = (put_oi / call_oi) if call_oi else None
         max_pain = _f(snapshot.ctx.get("max_pain_strike"))
+        percentile = _f(snapshot.ctx.get("atm_iv_percentile"))
         per_expiry = {expiry: {
+            "atm_iv_percentile": percentile if percentile is not None else 50.0,
             "atm_strike": atm,
             "atm_iv": atm_iv,
             "atm_iv_change": 0.0,
-            "atm_iv_percentile": 50.0,
             "atm_ivp_type": "MODERATE",
             "max_pain_strike": max_pain,
             "max_pain_type": self._max_pain_type(snapshot.spot, max_pain),
@@ -229,6 +233,15 @@ class ReplayContext:
             "lot_size": self.lot_size,
             "days_to_expiry": int(snapshot.ctx.get("dte") or 0),
         }}
+        next_expiry = str(snapshot.ctx.get("next_expiry") or "")[:10]
+        next_iv = _f(snapshot.ctx.get("atm_iv_next"))
+        if next_expiry and next_iv is not None:
+            far = dict(per_expiry[expiry])
+            far.update({
+                "atm_iv": next_iv,
+                "days_to_expiry": int(snapshot.ctx.get("dte") or 0) + 7,
+            })
+            per_expiry[next_expiry] = far
         return {
             # fetch_expiry() reads the map at the top level; the analysers read
             # it under "stats" (as the fetched payload is shaped). Publish both.

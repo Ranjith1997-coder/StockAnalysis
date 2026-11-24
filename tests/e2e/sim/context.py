@@ -129,11 +129,12 @@ class ContextPublisher:
         pcr = round(put_oi / call_oi, 4) if call_oi else None
         max_pain = _compute_max_pain(per_strike, spot)
 
+        near_iv = round(state.atm_iv[symbol] * 100, 2)
         entry = {
             "atm_strike": agg.get("atm_strike") or self._feed.atm_strike(symbol, spot),
-            "atm_iv": round(state.atm_iv[symbol] * 100, 2),
+            "atm_iv": near_iv,
             "atm_iv_change": 0.2,
-            "atm_iv_percentile": 55.0,
+            "atm_iv_percentile": self._scenario.atm_iv_percentile,
             "atm_ivp_type": "MODERATE",
             "max_pain_strike": max_pain,
             "max_pain_type": self._max_pain_type(spot, max_pain),
@@ -146,6 +147,14 @@ class ContextPublisher:
             "lot_size": self._scenario.lot(symbol),
             "days_to_expiry": max((self._scenario.expiry[symbol] - self._scenario.date).days, 0),
         }
+        far_expiry = (self._scenario.expiry[symbol] + timedelta(days=7)).isoformat()
+        far_entry = dict(entry)
+        far_entry.update({
+            "atm_iv": round(near_iv + self._scenario.term_slope_pct_per_week, 2),
+            "atm_iv_change": 0.0,
+            "atm_iv_percentile": self._scenario.atm_iv_percentile,
+            "days_to_expiry": entry["days_to_expiry"] + 7,
+        })
         return {
             "underlying_info": {"symbol": symbol,
                                 "lot_size": self._scenario.lot(symbol)},
@@ -157,7 +166,7 @@ class ContextPublisher:
                     "oi_change_type": "BUILDUP",
                     "total_pcr": pcr,
                 },
-                "per_expiry_map": {expiry: entry},
+                "per_expiry_map": {expiry: entry, far_expiry: far_entry},
             },
             "nse_stats": {"advances": 30, "declines": 20},
         }

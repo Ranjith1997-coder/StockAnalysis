@@ -246,3 +246,36 @@ class TestCli:
         payload = json.loads(out.read_text())
         assert payload["date"] == DATE
         assert payload["summary"][0]["entries"] == 1
+
+
+class TestReplayVolatilityContext:
+    def test_two_expiries_survive_the_round_trip(self, tmp_path):
+        """Captured ATM IVs rebuild a two-expiry map for the term analyser."""
+        from tools.options_backtest.context import ReplayContext
+
+        base = datetime(2026, 11, 24, 9, 25)
+        write_day(tmp_path, [(base, 25_000.0, ladder())])
+        # add the vol-context columns the recorder now writes
+        import pandas as pd
+
+        from services.market_data.chain_recorder import CONTEXT_COLUMNS
+
+        path = next((tmp_path / "context" / SYMBOL / DATE).glob("*.parquet"))
+        frame = pd.read_parquet(path)
+        frame["atm_iv_percentile"] = 82.0
+        frame["atm_iv_near"] = 13.0
+        frame["atm_iv_next"] = 14.2
+        frame["next_expiry"] = "2026-12-03"
+        frame["term_slope"] = 1.2
+        frame[CONTEXT_COLUMNS].to_parquet(path, index=False)
+
+        day = load_day(tmp_path, DATE, SYMBOL)
+        ctx = ReplayContext.for_symbol(SYMBOL)
+        ctx.update(day.snapshots()[0], analysis_cycle=True)
+
+        current = json.loads(ctx.redis.hget(f"data:sensibull:{SYMBOL}", "current_json"))
+        per_expiry = current["stats"]["per_expiry_map"]
+        assert set(per_expiry) == {"2026-11-26", "2026-12-03"}
+        assert per_expiry["2026-11-26"]["atm_iv"] == pytest.approx(13.0)
+        assert per_expiry["2026-12-03"]["atm_iv"] == pytest.approx(14.2)
+        assert per_expiry["2026-11-26"]["atm_iv_percentile"] == pytest.approx(82.0)

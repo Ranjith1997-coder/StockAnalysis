@@ -103,6 +103,9 @@ CONTEXT_COLUMNS = [
     "snapshot_id", "ts", "symbol", "spot", "future_price", "fut_oi",
     "fut_volume", "vix", "atm_strike", "atm_straddle", "live_pcr",
     "pcr_window_pct", "max_pain_strike", "expiry", "dte", "option_tick_count",
+    # Volatility context read from data:sensibull (nullable: older days and
+    # runs without the hash keep them empty).
+    "atm_iv_percentile", "atm_iv_near", "atm_iv_next", "next_expiry", "term_slope",
 ]
 
 FUTURES_COLUMNS = [
@@ -115,10 +118,11 @@ INDEX_COLUMNS = ["ts", "symbol", "ltp"]
 class ChainRecorder:
     """Daemon thread capturing chain/futures/index snapshots to Parquet."""
 
-    def __init__(self, objects, root: Path = ROOT):
+    def __init__(self, objects, root: Path = ROOT, redis=None):
         # objects: Stock-like objects (index objects + optional GIFTNIFTY/VIX).
         self._objs = {o.stock_symbol: o for o in objects}
         self._root = Path(root)
+        self._redis = redis
         self._running = False
         self._thread: threading.Thread | None = None
         self._chain: dict[str, list] = {}
@@ -233,6 +237,7 @@ class ChainRecorder:
                 "pcr_window_pct": _f(agg.get("pcr_window_pct")),
                 "max_pain_strike": _f(agg.get("max_pain_strike")),
                 "expiry": expiry, "dte": dte, "option_tick_count": opt_ticks,
+                **self._vol_context(symbol),
             })
 
             for strike, sides in legs.items():
@@ -266,6 +271,52 @@ class ChainRecorder:
                         _flatten_depth(row, tick.get("depth"))
                     self._chain.setdefault(symbol, []).append(row)
             self.snapshots_taken += 1
+
+    def _vol_context(self, symbol: str) -> dict:
+        """ATM IV by expiry and its percentile, from data:sensibull.
+
+        The data-gateway publishes every expiry there; the tick store only
+        holds the subscribed (nearest) one, so term structure and IV rank would
+        otherwise be invisible to replay.
+        """
+        empty = {
+            "atm_iv_percentile": None, "atm_iv_near": None,
+            "atm_iv_next": None, "next_expiry": "", "term_slope": None,
+        }
+        if self._redis is None:
+            return empty
+        try:
+            raw = self._redis.hget(f"data:sensibull:{symbol}", "current_json")
+            if not raw:
+                return empty
+            current = json.loads(raw)
+            per_expiry = (
+                current.get("stats", {}).get("per_expiry_map")
+                or current.get("per_expiry_map")
+                or {}
+            )
+            keys = sorted(k for k in per_expiry if k)
+            if not keys:
+                return empty
+            near = per_expiry[keys[0]] or {}
+            near_iv = _f(near.get("atm_iv"))
+            percentile = _f(near.get("atm_iv_percentile"))
+            next_iv = None
+            next_key = ""
+            if len(keys) > 1:
+                next_key = keys[1]
+                next_iv = _f((per_expiry[next_key] or {}).get("atm_iv"))
+            slope = (next_iv - near_iv) if (near_iv is not None and next_iv is not None) else None
+            return {
+                "atm_iv_percentile": percentile,
+                "atm_iv_near": near_iv,
+                "atm_iv_next": next_iv,
+                "next_expiry": next_key,
+                "term_slope": slope,
+            }
+        except Exception as exc:
+            logger.debug("[capture] vol context unavailable for %s: %s", symbol, exc)
+            return empty
 
     def _capture_futures(self, now: datetime) -> None:
         ts_iso = now.isoformat(timespec="seconds")

@@ -485,3 +485,53 @@ class TestLiveTickOrdering:
         process_job(redis, orchestrator, job)
 
         assert stock.ltp == 2525.0, "ltp fell back to the 5-minute close"
+
+
+class TestAggregateHydration:
+    @patch("services.analysis_engine.worker.load_stock_from_redis")
+    @patch("services.analysis_engine.worker.load_sensibull_from_redis")
+    @patch("services.analysis_engine.worker.load_zerodha_from_redis")
+    def test_options_agg_is_loaded_for_analysers(
+        self, mock_load_zerodha, mock_load_sensibull, mock_load_stock, patch_app_ctx,
+    ):
+        """The worker never loaded data:options_agg, so aggregate-based
+        analysers (straddle, walls, POP ladder) silently saw nothing."""
+        import common.shared as shared
+        from services.analysis_engine.worker import process_job
+
+        patch_app_ctx.mode = shared.Mode.INTRADAY
+        stock = _real_stock_with_data("NIFTY", is_index=True)
+        mock_load_stock.return_value = stock
+        mock_load_sensibull.return_value = True
+
+        agg = {
+            "atm_strike": "25500", "atm_straddle_premium": "120.5",
+            "expiry": "2026-11-25", "live_pcr": "1.05", "last_updated": "1000",
+        }
+
+        def hgetall(key):
+            if key.startswith("data:options_agg:"):
+                return dict(agg)
+            if key.startswith("data:tick:"):
+                return {"last_price": "25500.0", "timestamp": "1000"}
+            if key.startswith("data:options_live:"):
+                return {"25500.0_CE": '{"ltp": 60, "oi": 1}', "25500.0_PE": '{"ltp": 60, "oi": 1}'}
+            return {}
+
+        redis = MagicMock()
+        redis.hgetall.side_effect = hgetall
+
+        orchestrator = MagicMock()
+        score = MagicMock()
+        score.total_score = 0
+        score.priority.name = "LOW"
+        score.priority.value = 1
+        orchestrator.run_all_intraday.return_value = (False, score)
+
+        job = {"job_id": "j", "cycle_id": "c", "symbol": "NIFTY",
+               "is_index": "true", "mode": "intraday"}
+        process_job(redis, orchestrator, job)
+
+        assert stock.options_aggregate["atm_straddle_premium"] == 120.5
+        assert stock.options_aggregate["live_pcr"] == 1.05
+        assert stock.options_aggregate["expiry"] == "2026-11-25"

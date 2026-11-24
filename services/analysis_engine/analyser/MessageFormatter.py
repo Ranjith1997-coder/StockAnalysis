@@ -877,10 +877,6 @@ def _fmt_gex_regime(data, trend):
             "STRONG":   "high conviction",
         }.get(d.magnitude, d.magnitude)
 
-        flip_str = (
-            f"  🔄 <b>REGIME FLIP</b>: {d.prev_regime} → <b>{d.regime}</b>\n"
-            if d.regime_flipped else ""
-        )
         lines += [
             f"  {regime_emoji} <b>GEX REGIME</b>: {regime_label}",
         ]
@@ -950,3 +946,60 @@ def _fmt_gex_imbalance(data, trend):
             f"  ⚡ {headwind}",
         ]
     return lines
+
+
+# ── Volatility context (Block 2) ─────────────────────────────────────────
+
+@MessageFormatter.register("IV_CONTEXT")
+def _fmt_iv_context(data, trend):
+    emoji = {"VERY_LOW": "🧊", "LOW": "🟢", "NORMAL": "⚪",
+             "HIGH": "🟠", "VERY_HIGH": "🔥"}.get(data.zone, "⚪")
+    src = "" if data.ivp_source == "local" else f" ({data.ivp_source})"
+    premium = (f" | IV-VIX=<code>{data.iv_minus_vix:+.1f}</code>pt"
+               if data.iv_minus_vix is not None else "")
+    return [f"  {emoji} IV Rank: IVP=<code>{data.ivp:.0f}</code> "
+            f"IV=<code>{data.iv:.1f}%</code> (<b>{data.zone}</b>){src}{premium}"]
+
+
+@MessageFormatter.register("VIX_REGIME")
+def _fmt_vix_regime(data, trend):
+    emoji = {"CALM": "😴", "NORMAL": "🙂", "ELEVATED": "😰", "PANIC": "🚨"}.get(
+        data.regime, "❔")
+    vix = f"VIX=<code>{data.vix:.1f}</code> " if data.vix is not None else ""
+    return [f"  {emoji} Regime: {vix}<b>{data.regime}</b> | IV {data.iv_profile}"]
+
+
+@MessageFormatter.register("TERM_STRUCTURE")
+def _fmt_term_structure(data, trend):
+    arrow = {"CONTANGO": "↗️", "BACKWARDATION": "↘️", "FLAT": "➡️"}.get(
+        data.regime, "➡️")
+    event = " 🎯event-week" if data.event_week else ""
+    return [
+        f"  {arrow} Term: <b>{data.regime}</b> "
+        f"{data.near_iv:.1f}% → {data.next_iv:.1f}% "
+        f"(<code>{data.slope:+.2f}</code>pt){event}",
+        f"     <i>{data.signal}</i>",
+    ]
+
+
+@MessageFormatter.register("EXPECTED_MOVE")
+def _fmt_expected_move(data, trend):
+    return [
+        f"  📐 Expected move: daily=<code>{data.daily_move:.0f}</code> "
+        f"1σ=<code>{data.sigma_1d:.0f}</code> (straddle {data.straddle:.0f}, DTE {data.dte})",
+        f"     ±1σ band: <code>{data.lower_1s:.0f} – {data.upper_1s:.0f}</code>",
+    ]
+
+
+@MessageFormatter.register("POP_LADDER")
+def _fmt_pop_ladder(data, trend):
+    widths = " ".join(
+        f"{w}g:{data.condor_pop.get(w, 0) * 100:.0f}%"
+        for w in data.widths
+    )
+    suggestion = (
+        f" | suggest {data.suggested_width}g "
+        f"({data.suggested_put:.0f}/{data.suggested_call:.0f})"
+        if data.suggested_width else " | no width meets target"
+    )
+    return [f"  🎯 POP condor: {widths}{suggestion}"]

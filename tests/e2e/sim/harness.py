@@ -28,6 +28,9 @@ from services.analysis_engine.analyser.GEXAnalyser import GEXAnalyser
 from services.analysis_engine.analyser.IVAnalyser import IVAnalyser
 from services.analysis_engine.analyser.MaxPainAnalyser import MaxPainAnalyser
 from services.analysis_engine.analyser.OIChainAnalyser import OIChainAnalyser
+from services.analysis_engine.analyser.VolatilityContextAnalyser import (
+    VolatilityContextAnalyser,
+)
 from services.analysis_engine.analyser.OptionSellerCompositeAnalyser import (
     OptionSellerCompositeAnalyser,
 )
@@ -134,6 +137,7 @@ def build_orchestrator() -> AnalyserOrchestrator:
         VolumeAnalyser(), TechnicalAnalyser(), CandleStickAnalyser(), IVAnalyser(),
         FuturesAnalyser(), PCRAnalyser(), MaxPainAnalyser(), OIChainAnalyser(),
         GEXAnalyser(), PanicModeAnalyser(), OptionSellerCompositeAnalyser(),
+        VolatilityContextAnalyser(),
     ):
         orchestrator.register(analyser)
     return orchestrator
@@ -155,7 +159,7 @@ class Harness:
             self._temp_dirs.append(temp)
             capture_root = temp / "options_history"
         root = capture_root
-        self.recorder = ChainRecorder(self.feed.objects, root=root)
+        self.recorder = ChainRecorder(self.feed.objects, root=root, redis=redis)
         self.publisher = SnapshotPublisher(redis, [], self.feed.objects)
         self.span = FakeSpanCalculator(scenario)
         self.orchestrator = build_orchestrator()

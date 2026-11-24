@@ -261,6 +261,27 @@ def load_equity_tick_from_redis(redis: RedisProxy, stock: Stock) -> bool:
     return True
 
 
+def load_options_agg_from_redis(redis: RedisProxy, stock: Stock) -> bool:
+    """Load `data:options_agg:{symbol}` into the tick store's aggregate.
+
+    Publishes by market-data every second (PCR, ATM, walls, straddle, gex_*).
+    The analysis worker used to skip this hash, so every analyser reading
+    ``stock.options_aggregate`` silently saw nothing.
+    """
+    agg_raw = redis.hgetall(f"data:options_agg:{stock.stock_symbol}")
+    if not agg_raw:
+        return False
+    agg = stock._tick_store.options_aggregate
+    for key, value in agg_raw.items():
+        if value is None or value == "":
+            continue
+        try:
+            agg[key] = float(value)
+        except (ValueError, TypeError):
+            agg[key] = value
+    return True
+
+
 def load_tick_from_redis(redis: RedisProxy, stock: Stock) -> bool:
     """Load live tick data (equity + options aggregate) from Redis into TickStore.
 
@@ -273,25 +294,10 @@ def load_tick_from_redis(redis: RedisProxy, stock: Stock) -> bool:
     Returns True if any data was loaded.
     """
     loaded = load_equity_tick_from_redis(redis, stock)
-
-    # Options aggregate
-    agg_raw = redis.hgetall(f"data:options_agg:{stock.stock_symbol}")
-    if agg_raw:
-        agg = stock._tick_store.options_aggregate
-        for k, v in agg_raw.items():
-            if v is None or v == "":
-                continue
-            # Try numeric conversion, keep string if it fails
-            try:
-                agg[k] = float(v)
-            except (ValueError, TypeError):
-                agg[k] = v
+    if load_options_agg_from_redis(redis, stock):
         loaded = True
-
-    # Options live (per-strike)
     if load_options_live_from_redis(redis, stock):
         loaded = True
-
     return loaded
 
 

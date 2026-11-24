@@ -1,6 +1,11 @@
 # Block 2 design — volatility context: IV rank, VIX regime, term structure, expected move & POP
 
-Status: **design** · 2026-11-24 · follows Block 1 (backtester, `b5bc7b0`)
+Status: **implemented** · 2026-11-24 · follows Block 1 (backtester, `b5bc7b0`)
+
+Code: `lib/fno/option_math.py` ·
+`services/analysis_engine/analyser/VolatilityContextAnalyser.py` (IV_CONTEXT,
+VIX_REGIME, TERM_STRUCTURE, EXPECTED_MOVE, POP_LADDER) · capture columns in
+`chain_recorder.CONTEXT_COLUMNS` · optional `PAPER_MIN_POP` gate (default 0).
 Roadmap: I1, I3, I6 (and the measurement plumbing they need)
 
 ---
@@ -185,3 +190,26 @@ Estimated 3–3.5 h. Deploy at the end (holiday), then smoke.
 | Term structure unavailable in replay on old days | explicit `single_expiry` skip, not an error |
 | Gate changes live behaviour | default off; equality test proves it |
 | Duplicate math (straddle helper, BS) | one module, analname imports; pinning test on the old helper |
+
+
+## 11. Implementation notes
+
+Shipped as designed, with two findings:
+
+1. **Production bug: the analysis worker never loaded `data:options_agg`.**
+   `load_tick_from_redis()` did, but `process_job` called the equity/options-live
+   loaders separately, so every analyser reading `options_aggregate` (straddle,
+   walls, PCR, and the new placement analyser) silently saw nothing. Added
+   `load_options_agg_from_redis()` and called it in the worker; pinned by a test
+   that asserts `atm_straddle_premium`/`live_pcr` arrive.
+2. **Index dispatch:** analyser methods must be decorated with
+   `@BaseAnalyzer.index_both` to run for NIFTY/BANKNIFTY/SENSEX; `both` alone
+   only runs for stocks. Caught by the E2E assertion (keys absent on indices).
+
+Behaviour guard: `PAPER_MIN_POP` is unset by default, so `select_strikes` output
+is unchanged; the live-vs-replay equality test still passes exactly.
+
+Validated: 23 hand-computed math tests, 22 analyser tests, POP-gate tests
+(disabled = identical, enabled widens and meets the target), capture/replay
+round-trip for two expiries, and an E2E scenario asserting all five keys with a
+real two-expiry slope.

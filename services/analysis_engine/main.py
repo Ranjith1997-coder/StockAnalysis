@@ -28,6 +28,7 @@ from .analyser.OIChainAnalyser import OIChainAnalyser
 from .analyser.GEXAnalyser import GEXAnalyser
 from .analyser.PanicModeAnalyser import PanicModeAnalyser
 from .analyser.OptionSellerCompositeAnalyser import OptionSellerCompositeAnalyser
+from .analyser.VolatilityContextAnalyser import VolatilityContextAnalyser
 from services.analysis_engine.worker import process_job
 from services.common.redis_proxy import RedisProxy
 from services.common.version import BUILD_LABEL, GIT_COMMIT, GIT_DIRTY
@@ -109,6 +110,7 @@ def main():
     orchestrator.register(GEXAnalyser())
     orchestrator.register(PanicModeAnalyser())
     orchestrator.register(OptionSellerCompositeAnalyser())
+    orchestrator.register(VolatilityContextAnalyser())
 
     logger.info(
         f"[analysis-engine] Started worker={worker_name}, "

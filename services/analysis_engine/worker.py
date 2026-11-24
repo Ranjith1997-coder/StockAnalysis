@@ -22,6 +22,7 @@ from services.common.stock_loader import (
     load_zerodha_from_redis,
     load_equity_tick_from_redis,
     load_options_live_from_redis,
+    load_options_agg_from_redis,
 )
 from services.common.serialization import safe_json_dumps, safe_json_loads
 from services.common.metrics import incr_stock, set_stock, incr_system, incr_daily
@@ -234,6 +235,7 @@ def process_job(
     load_zerodha_from_redis(redis, stock)
 
     if is_index and symbol in constant.LIVE_OPTIONS_INDICES:
+        load_options_agg_from_redis(redis, stock)
         load_options_live_from_redis(redis, stock)
         _load_gex_state(redis, orchestrator, stock)
 

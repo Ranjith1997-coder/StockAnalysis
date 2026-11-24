@@ -399,3 +399,58 @@ class TestBuildPositionEndToEnd:
         span = SpanCalculator(_nifty_instruments())
         account = PaperAccount(capital=1_000_000.0)
         assert build_position(self._signal(), redis, span, account) is None
+
+
+class TestPopGate:
+    def test_disabled_by_default(self, monkeypatch):
+        from services.paper_trading.strategy_builder import _min_pop_from_env
+
+        monkeypatch.delenv("PAPER_MIN_POP", raising=False)
+        assert _min_pop_from_env() == 0.0
+        monkeypatch.setenv("PAPER_MIN_POP", "0.7")
+        assert _min_pop_from_env() == 0.7
+        monkeypatch.setenv("PAPER_MIN_POP", "not-a-number")
+        assert _min_pop_from_env() == 0.0
+
+    @patch("services.paper_trading.strategy_builder.time.time", return_value=1000.0)
+    def test_enabled_gate_widens_the_short_strikes(self, _mock_time):
+        from lib.fno.option_math import widen_short_strikes
+
+        expected_put, expected_call = widen_short_strikes(
+            24_000, 25_000, 24_500, 50, 0.18, 2 / 365, 0.95
+        )
+        assert (expected_put, expected_call) != (24_000, 25_000)
+
+        ticks = {}
+        for strike in range(23_400, 25_700, 50):
+            ticks[f"{float(strike)}_CE"] = {"ltp": 50.0, "iv": 18.0}
+            ticks[f"{float(strike)}_PE"] = {"ltp": 50.0, "iv": 18.0}
+
+        redis = MagicMock()
+        def hget(key, field=None):
+            if key.startswith("data:sensibull:"):
+                return json.dumps({"per_expiry_map": {"2026-07-21": {}}})
+            if key.startswith("data:options_agg:"):
+                return "24500.0" if field == "atm_strike" else None
+            if key.startswith("data:options_live:"):
+                return json.dumps(ticks[field]) if field in ticks else None
+            return None
+        redis.hget.side_effect = hget
+        redis.hgetall.side_effect = lambda key: (
+            {"atm_iv": "18.0", "dte": "2"}
+            if key.startswith("data:options_agg:")
+            else {k: "{}" for k in ticks}
+        )
+
+        span = SpanCalculator(_nifty_instruments())
+        with patch.object(span, "calculate_margin", return_value=68_578.86):
+            position = build_position(
+                EntrySignal(strategy="IRON_CONDOR", symbol="NIFTY",
+                            put_wall_strike=24_000.0, call_wall_strike=25_000.0),
+                redis, span, PaperAccount(capital=1_000_000.0),
+                min_pop=0.95,
+            )
+
+        assert position is not None
+        shorts = {leg.strike for leg in position.legs if leg.side == "SELL"}
+        assert shorts == {expected_put, expected_call}

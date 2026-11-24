@@ -75,6 +75,8 @@ class Scenario:
     iv_atm: float = 0.12
     iv_skew: float = -0.08
     iv_smile: float = 0.40
+    term_slope_pct_per_week: float = 0.30
+    atm_iv_percentile: float = 55.0
     oi_ce_writing_pct_per_min: float = 0.0
     oi_pe_writing_pct_per_min: float = 0.0
     lot_size: dict[str, int] = field(default_factory=dict)
@@ -198,6 +200,8 @@ def parse_scenario(raw: dict, source: str = "<dict>") -> Scenario:
         iv_atm=float(smile.get("atm", 0.12)),
         iv_skew=float(smile.get("skew", -0.08)),
         iv_smile=float(smile.get("smile", 0.40)),
+        term_slope_pct_per_week=float(raw.get("term_slope_pct_per_week", 0.30)),
+        atm_iv_percentile=float(raw.get("atm_iv_percentile", 55.0)),
         oi_ce_writing_pct_per_min=float(flow.get("ce_writing_pct_per_min", 0.0)),
         oi_pe_writing_pct_per_min=float(flow.get("pe_writing_pct_per_min", 0.0)),
         lot_size={k: int(v) for k, v in raw.get("lot_size", {}).items()},

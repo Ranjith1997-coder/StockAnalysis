@@ -78,11 +78,13 @@ export, EOD summary.
 
 ---
 
-## Milestone 3 — Volatility, skew, flow (≈4 d) 🟨 · **Block 2 design ready**
+## Milestone 3 — Volatility, skew, flow (≈4 d) 🟨 · **I1, I3, I6 done**
 
-**Design:** `docs/options-indicators-block2.md` (I1 IV rank + VIX regime,
-I3 term structure, I6 expected move/POP/strike placement, capture schema
-extension for replay). Tasks B2.1–B2.8.
+**Done (2026-11-24):** `docs/options-indicators-block2.md` — IV_CONTEXT
+(local IV percentile + VIX regime + IV−VIX), TERM_STRUCTURE (two-expiry slope,
+contango/backwardation, event week), EXPECTED_MOVE and POP_LADDER with
+expected-move band and POP-based suggestions; capture columns for replay; POP
+gate off by default. Found and fixed: the worker never loaded `data:options_agg`.
 
 | ID | Item | Output | Effort |
 |---|---|---|---|
@@ -200,6 +202,13 @@ live execution — the box currently has no runtime protection.
 ---
 
 ## Progress log
+
+- 2026-11-24 — M3 Block 2: IV rank/VIX regime (I1), term structure (I3),
+  expected move + POP ladder + strike suggestion (I6); capture stores
+  `atm_iv_percentile/atm_iv_near/atm_iv_next/next_expiry/term_slope`;
+  `PAPER_MIN_POP` gate shipped disabled. Fixed a production gap where the
+  analysis worker never loaded `data:options_agg` (aggregate-based analysers
+  saw nothing).
 
 - 2026-11-24 — M2 backtester: `tools/options_backtest/` (loader, ReplayRedis,
   context rebuild, simulate, outcomes, CLI). Replays captured Parquet through

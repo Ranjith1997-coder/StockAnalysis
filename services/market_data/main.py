@@ -570,7 +570,7 @@ def main():
     publisher.start()
 
     # 10b. Intraday capture (options chain + futures depth + spot/GIFT/VIX)
-    recorder = ChainRecorder(index_objs)
+    recorder = ChainRecorder(index_objs, redis=redis)
     recorder.prune_old()
     recorder.start()
 
