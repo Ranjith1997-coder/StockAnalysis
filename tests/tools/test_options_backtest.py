@@ -6,7 +6,7 @@ replay to the same exit reason and P&L.
 from __future__ import annotations
 
 import json
-from datetime import date, datetime, time, timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pandas as pd

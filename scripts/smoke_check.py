@@ -89,8 +89,21 @@ def _now_ist() -> datetime:
     return datetime.now(timezone.utc).astimezone()
 
 
+def _is_trading_day(day) -> bool:
+    """Exchange calendar; fail-safe to True so a calendar outage cannot mask a fault."""
+    try:
+        from common.market_calendar import is_trading_day
+        return bool(is_trading_day(day))
+    except Exception:
+        return True
+
+
 def in_market_hours(now: datetime) -> bool:
-    return now.weekday() < 5 and MARKET_OPEN <= now.time() <= MARKET_CLOSE
+    return (
+        now.weekday() < 5
+        and MARKET_OPEN <= now.time() <= MARKET_CLOSE
+        and _is_trading_day(now.date())
+    )
 
 
 def check_services() -> list[Check]:
@@ -154,8 +167,11 @@ def check_heartbeats() -> list[Check]:
 
 
 def check_options_fresh() -> list[Check]:
-    if not in_market_hours(_now_ist()):
-        return [Check("options_agg", True, "skipped (outside market hours)")]
+    now = _now_ist()
+    if not in_market_hours(now):
+        reason = ("holiday" if not _is_trading_day(now.date())
+                  else "outside market hours")
+        return [Check("options_agg", True, f"skipped ({reason})")]
     now = _now_ist().timestamp()
     checks = []
     for symbol in LIVE_INDICES:
@@ -198,7 +214,10 @@ def _unit_start_epoch(unit: str) -> float | None:
 
 
 def check_capture() -> list[Check]:
-    today = _now_ist().strftime("%Y-%m-%d")
+    now = _now_ist()
+    if not _is_trading_day(now.date()):
+        return [Check("capture", True, "holiday — no capture expected")]
+    today = now.strftime("%Y-%m-%d")
     cmd = (
         f"cd {APP_DIR} && f=data/options_history/eod/{today}/manifest.json; "
         'if [ -f "$f" ]; then cat "$f"; else echo MISSING; fi'
