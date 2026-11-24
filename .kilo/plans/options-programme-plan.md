@@ -78,7 +78,11 @@ export, EOD summary.
 
 ---
 
-## Milestone 3 — Volatility, skew, flow (≈4 d) ⬜
+## Milestone 3 — Volatility, skew, flow (≈4 d) 🟨 · **Block 2 design ready**
+
+**Design:** `docs/options-indicators-block2.md` (I1 IV rank + VIX regime,
+I3 term structure, I6 expected move/POP/strike placement, capture schema
+extension for replay). Tasks B2.1–B2.8.
 
 | ID | Item | Output | Effort |
 |---|---|---|---|
