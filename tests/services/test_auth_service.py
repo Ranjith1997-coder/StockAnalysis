@@ -1,8 +1,6 @@
 """Tests for services/auth_service/main.py — enctoken lifecycle manager."""
-import time
-import pytest
-from unittest.mock import MagicMock, patch, call
-from datetime import datetime, time as dtime
+from unittest.mock import MagicMock, patch
+from datetime import datetime
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -97,7 +95,7 @@ class TestDoRefresh:
     @patch("services.auth_service.main.os.getenv")
     @patch("services.auth_service.auth.auth_login.generate_enctoken")
     def test_publishes_correct_hash_fields(self, mock_gen, mock_getenv, mock_load):
-        from services.auth_service.main import _do_refresh, AUTH_HASH
+        from services.auth_service.main import _do_refresh
 
         mock_gen.return_value = (True, MagicMock(), "fresh_token_abc123")
         mock_getenv.side_effect = lambda key, default=None: {
@@ -328,3 +326,60 @@ class TestRunSchedule:
 
         mock_midnight.assert_called()
         mock_refresh.assert_not_called()
+
+
+class TestKiteConsentFallback:
+    """Kite stopped redirecting after consent; POST the form to get the token."""
+
+    def _session(self, final_url, raises=None):
+        from unittest.mock import MagicMock
+
+        session = MagicMock()
+        if raises:
+            session.post.side_effect = raises
+        else:
+            session.post.return_value = MagicMock(url=final_url)
+        return session
+
+    def test_approves_and_returns_request_token(self):
+        from services.auth_service.main import _approve_kite_consent
+
+        url = ("https://kite.zerodha.com/connect/authorize"
+               "?api_key=abc&sess_id=sess123")
+        final = ("https://web.sensibull.com/login?request_token=tok456&action=login")
+        session = self._session(final)
+
+        token = _approve_kite_consent(session, url)
+
+        assert token == "tok456"
+        session.post.assert_called_once()
+        assert session.post.call_args.kwargs["data"] == {
+            "api_key": "abc", "sess_id": "sess123",
+        }
+
+    def test_non_authorize_url_is_ignored(self):
+        from services.auth_service.main import _approve_kite_consent
+
+        assert _approve_kite_consent(MagicMock(), "https://kite.zerodha.com/connect/login") is None
+
+    def test_missing_sess_id_is_ignored(self):
+        from services.auth_service.main import _approve_kite_consent
+
+        url = "https://kite.zerodha.com/connect/authorize?api_key=abc"
+        assert _approve_kite_consent(MagicMock(), url) is None
+
+    def test_post_failure_returns_none(self):
+        from services.auth_service.main import _approve_kite_consent
+
+        url = "https://kite.zerodha.com/connect/authorize?api_key=abc&sess_id=s"
+        session = self._session(None, raises=RuntimeError("network"))
+
+        assert _approve_kite_consent(session, url) is None
+
+    def test_redirect_without_token_returns_none(self):
+        from services.auth_service.main import _approve_kite_consent
+
+        url = "https://kite.zerodha.com/connect/authorize?api_key=abc&sess_id=s"
+        session = self._session("https://kite.zerodha.com/connect/authorize?again=1")
+
+        assert _approve_kite_consent(session, url) is None

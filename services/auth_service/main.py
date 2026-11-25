@@ -22,14 +22,13 @@ import sys
 import time
 import signal
 import threading
-from datetime import datetime, time as dtime, timedelta
+from datetime import datetime, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 from dotenv import load_dotenv
 load_dotenv()
 
-import common.constants as constant
 from lib.logging_util import get_logger
 logger = get_logger("auth-service")
 from services.common.redis_proxy import RedisProxy
@@ -92,6 +91,34 @@ def _do_refresh(redis: RedisProxy, reason: str = "scheduled") -> bool:
     _do_sensibull_refresh(redis, reason=reason, zerodha_session=session)
 
     return True
+
+
+def _approve_kite_consent(session, authorize_url: str, timeout: int = 10) -> str | None:
+    """Finish Kite's consent page and return the OAuth request_token.
+
+    Kite's /connect/authorize normally redirects straight back to the app, but
+    when it stops on the consent page (seen 2026-11-22 onward) the redirect
+    carries no request_token. The page's form posts ``api_key`` + ``sess_id``
+    back to the same URL; doing that yields the redirect with the token.
+    """
+    from urllib.parse import urlparse, parse_qs
+
+    parsed = urlparse(authorize_url)
+    if "/connect/authorize" not in parsed.path:
+        return None
+    params = {k: v[0] for k, v in parse_qs(parsed.query).items()}
+    if "sess_id" not in params:
+        return None
+    try:
+        response = session.post(authorize_url, data=params,
+                                allow_redirects=True, timeout=timeout)
+    except Exception as exc:
+        logger.warning("[auth-service] Kite consent POST failed: %s", exc)
+        return None
+    token = parse_qs(urlparse(response.url).query).get("request_token", [None])[0]
+    if token:
+        logger.info("[auth-service] Kite consent approved; request_token received")
+    return token
 
 
 def _do_sensibull_refresh(redis: RedisProxy, reason: str = "scheduled",
@@ -164,13 +191,15 @@ def _do_sensibull_refresh(redis: RedisProxy, reason: str = "scheduled",
         parsed = urlparse(final_url)
         params = parse_qs(parsed.query)
         request_token = params.get("request_token", [None])[0]
+        if not request_token:
+            request_token = _approve_kite_consent(session, final_url)
 
         if not request_token:
             logger.error(f"[auth-service] Sensibull refresh: no request_token in redirect URL: {final_url}")
             _send_alert(redis, "Sensibull auth: no request_token in OAuth redirect")
             return False
 
-        logger.debug(f"[auth-service] Sensibull OAuth: got request_token from redirect")
+        logger.debug("[auth-service] Sensibull OAuth: got request_token from redirect")
 
         # Step 3: Exchange request_token for Sensibull access_token
         gen_r = requests.post(
