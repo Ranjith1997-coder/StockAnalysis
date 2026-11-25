@@ -1003,3 +1003,25 @@ def _fmt_pop_ladder(data, trend):
         if data.suggested_width else " | no width meets target"
     )
     return [f"  🎯 POP condor: {widths}{suggestion}"]
+
+
+@MessageFormatter.register("FUTURE_OI_FROM_OPEN")
+def _fmt_future_oi_from_open(data, trend):
+    emoji = "🟢" if data.oi_from_open_pct > 0 else "🔴"
+    return [
+        f"  {emoji} Futures OI from open: <b>{data.action}</b> "
+        f"OI=<code>{data.oi_from_open_pct:+.2f}%</code> "
+        f"Price=<code>{data.price_from_open_pct:+.2f}%</code>",
+        f"     OI {data.open_oi:,} → <code>{data.curr_oi:,}</code>",
+    ]
+
+
+@MessageFormatter.register("GEX_WALL")
+def _fmt_gex_wall(data, trend):
+    nearest_call = (f"{data.nearest_call_wall:.0f} (GEX {data.call_wall_gex:.0f})"
+                    if data.nearest_call_wall is not None else "—")
+    nearest_put = (f"{data.nearest_put_wall:.0f} (GEX {data.put_wall_gex:.0f})"
+                   if data.nearest_put_wall is not None else "—")
+    return [
+        f"  🧱 GEX walls: call <code>{nearest_call}</code> | put <code>{nearest_put}</code>",
+    ]

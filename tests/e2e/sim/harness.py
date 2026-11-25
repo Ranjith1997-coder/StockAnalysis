@@ -198,6 +198,10 @@ class Harness:
 
                     self._state = state
                     self._market_step(now, state, elapsed)
+                    if elapsed == step:
+                        # Production has a Sensibull hash before the first entry;
+                        # the fresh-context gate would otherwise block session opens.
+                        self._publish_analysis_inputs(now)
 
                     if elapsed % HEARTBEAT_INTERVAL < step:
                         self._write_heartbeats()

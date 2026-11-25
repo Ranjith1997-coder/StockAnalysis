@@ -7,7 +7,7 @@ plan, not unit tests here.
 """
 
 import time
-from datetime import date, datetime, time as dtime
+from datetime import date, datetime, time as dtime, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -313,9 +313,13 @@ class TestHandleExitSignal:
 
 
 class TestCheckEntryGate:
-    def _redis(self, last_updated):
+    def _redis(self, last_updated, sensibull_age=0):
         redis = MagicMock()
         redis.hgetall.return_value = {"last_updated": str(last_updated)}
+        redis.hget.side_effect = lambda key, field: (
+            (datetime.fromtimestamp(last_updated) - timedelta(seconds=sensibull_age)).isoformat()
+            if key.startswith("data:sensibull:") else None
+        )
         return redis
 
     @patch("services.paper_trading.main.is_trading_day", return_value=True)
@@ -328,6 +332,12 @@ class TestCheckEntryGate:
         for t in (dtime(9, 19), dtime(15, 1), dtime(20, 0)):
             now = datetime.combine(date(2026, 7, 20), t)
             assert pt_main.check_entry_gate(self._redis(now.timestamp()), "NIFTY", now) == "outside_entry_window"
+
+    @patch("services.paper_trading.main.is_trading_day", return_value=True)
+    def test_rejects_stale_sensibull_context(self, _td):
+        now = datetime(2026, 7, 20, 10, 0)
+        redis = self._redis(now.timestamp(), sensibull_age=5 * 3600)
+        assert pt_main.check_entry_gate(redis, "NIFTY", now) == "stale_sensibull"
 
     @patch("services.paper_trading.main.is_trading_day", return_value=False)
     def test_rejects_non_trading_day(self, _td):

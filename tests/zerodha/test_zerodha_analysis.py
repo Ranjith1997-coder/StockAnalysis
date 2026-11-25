@@ -1,12 +1,8 @@
 """Tests for zerodha/zerodha_analysis.py — ZerodhaTickerManager tick routing."""
-import time
-import queue
-import threading
-import pytest
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 from lib.zerodha.zerodha_analysis import ZerodhaTickerManager
-from common.token_registry import TokenInfo, TokenType, OptionZone
+from common.token_registry import TokenInfo, TokenType
 from tests.zerodha.conftest import (
     make_stock, make_equity_info, make_index_info,
     make_option_info, make_future_info,
@@ -240,14 +236,21 @@ class TestProcessOptionTick:
 
 # ── _process_future_tick ──────────────────────────────────────────────────────
 
+def _futures_mdata(current: str, next_: str | None = None):
+    import pandas as pd
+    return {
+        "current": pd.DataFrame({"expiry": [current]}),
+        "next": pd.DataFrame({"expiry": [next_]}) if next_ else pd.DataFrame(),
+    }
+
+
 class TestProcessFutureTick:
     def test_current_expiry_key_is_current(self, patched_app_ctx):
         mgr = _manager()
         parent = make_stock("NIFTY")
-        expiry = "2026-04-24"
-        info = make_future_info(token=55001, symbol="NIFTY", expiry=expiry)
+        parent.zerodha_ctx = {"futures_mdata": _futures_mdata("2026-04-28", "2026-05-26")}
+        info = make_future_info(token=55001, symbol="NIFTY", expiry="2026-04-28")
         patched_app_ctx.token_registry.get_parent_object.return_value = parent
-        patched_app_ctx.stockExpires = [expiry, "2026-05-29"]
         with patch(_SHARED) as mock_shared:
             mock_shared.app_ctx = patched_app_ctx
             mgr._process_future_tick({"instrument_token": 55001}, info)
@@ -256,13 +259,24 @@ class TestProcessFutureTick:
     def test_next_expiry_key_is_next(self, patched_app_ctx):
         mgr = _manager()
         parent = make_stock("NIFTY")
-        info = make_future_info(token=55001, symbol="NIFTY", expiry="2026-05-29")
+        parent.zerodha_ctx = {"futures_mdata": _futures_mdata("2026-04-28", "2026-05-26")}
+        info = make_future_info(token=55001, symbol="NIFTY", expiry="2026-05-26")
         patched_app_ctx.token_registry.get_parent_object.return_value = parent
-        patched_app_ctx.stockExpires = ["2026-04-24", "2026-05-29"]
         with patch(_SHARED) as mock_shared:
             mock_shared.app_ctx = patched_app_ctx
             mgr._process_future_tick({"instrument_token": 55001}, info)
         parent.update_futures_tick.assert_called_once_with("next", {"instrument_token": 55001})
+
+    def test_unknown_expiry_is_dropped(self, patched_app_ctx):
+        mgr = _manager()
+        parent = make_stock("NIFTY")
+        parent.zerodha_ctx = {"futures_mdata": _futures_mdata("2026-04-28")}
+        info = make_future_info(token=55001, symbol="NIFTY", expiry="2026-04-24")
+        patched_app_ctx.token_registry.get_parent_object.return_value = parent
+        with patch(_SHARED) as mock_shared:
+            mock_shared.app_ctx = patched_app_ctx
+            mgr._process_future_tick({"instrument_token": 55001}, info)
+        parent.update_futures_tick.assert_not_called()
 
     def test_none_parent_returns_early(self, patched_app_ctx):
         mgr = _manager()
@@ -346,6 +360,7 @@ class TestWebSocketCallbacks:
 
     def test_on_connect_subscribes_base_tokens(self, patched_app_ctx):
         mgr = _manager()
+        mgr.token_registry.get_all_tokens_of_type.return_value = []
         patched_app_ctx.index_token_obj_dict = {256265: MagicMock()}
         patched_app_ctx.stock_token_obj_dict = {1234: MagicMock()}
         ws = MagicMock()
@@ -358,8 +373,23 @@ class TestWebSocketCallbacks:
         assert 256265 in subscribed
         assert 1234 in subscribed
 
+    def test_on_connect_subscribes_futures_too(self, patched_app_ctx):
+        mgr = _manager()
+        mgr.token_registry.get_all_tokens_of_type.return_value = [777, 888]
+        patched_app_ctx.index_token_obj_dict = {256265: MagicMock()}
+        patched_app_ctx.stock_token_obj_dict = {}
+        ws = MagicMock()
+        with patch(_SHARED) as mock_shared:
+            mock_shared.app_ctx = patched_app_ctx
+            with patch.object(mgr, "start_tick_processor"):
+                mgr.on_connect_base(ws, {})
+        subscribed = ws.subscribe.call_args[0][0]
+        assert 777 in subscribed and 888 in subscribed
+        assert 256265 in subscribed
+
     def test_on_connect_index_only_mode_skips_equities(self, patched_app_ctx):
         mgr = _manager()
+        mgr.token_registry.get_all_tokens_of_type.return_value = []
         mgr.index_only_mode = True
         patched_app_ctx.index_token_obj_dict = {256265: MagicMock()}
         patched_app_ctx.stock_token_obj_dict = {1234: MagicMock()}
@@ -429,3 +459,46 @@ class TestTickProcessor:
         assert mgr.stop_processor is True
         # Thread should have joined (not alive)
         assert not mgr.processor_thread.is_alive()
+
+
+class TestFuturesSubscription:
+    def test_registry_lists_all_futures_tokens(self):
+        from common.token_registry import TokenRegistry
+
+        registry = TokenRegistry()
+        registry.register(TokenInfo(
+            token=11, token_type=TokenType.FUTURE, parent_symbol="NIFTY",
+            tradingsymbol="NIFTY26NOVFUT", expiry="2026-11-27"))
+        registry.register(TokenInfo(
+            token=12, token_type=TokenType.OPTION, parent_symbol="NIFTY",
+            tradingsymbol="NIFTY26NOV25000CE", strike=25_000.0,
+            option_type="CE", expiry="2026-11-25"))
+        registry.register(TokenInfo(
+            token=13, token_type=TokenType.FUTURE, parent_symbol="BANKNIFTY",
+            tradingsymbol="BANKNIFTY26NOVFUT", expiry="2026-11-27"))
+
+        assert sorted(registry.get_all_tokens_of_type(TokenType.FUTURE)) == [11, 13]
+        assert registry.get_all_tokens_of_type(TokenType.OPTION) == [12]
+
+    def test_futures_expiry_maps_by_its_own_mdata(self):
+        import pandas as pd
+
+        from lib.zerodha.zerodha_analysis import futures_expiry_key
+
+        parent = MagicMock()
+        parent.zerodha_ctx = {"futures_mdata": {
+            "current": pd.DataFrame({"expiry": ["2026-11-27"]}),
+            "next": pd.DataFrame({"expiry": ["2026-12-30"]}),
+        }}
+
+        assert futures_expiry_key(parent, "2026-11-27") == "current"
+        assert futures_expiry_key(parent, "2026-12-30") == "next"
+        # A weekly OPTION expiry must not be mistaken for a futures contract
+        assert futures_expiry_key(parent, "2026-11-25") is None
+
+    def test_missing_mdata_returns_none(self):
+        from lib.zerodha.zerodha_analysis import futures_expiry_key
+
+        parent = MagicMock()
+        parent.zerodha_ctx = {}
+        assert futures_expiry_key(parent, "2026-11-27") is None

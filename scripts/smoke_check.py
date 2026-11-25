@@ -188,6 +188,29 @@ def check_options_fresh() -> list[Check]:
     return checks
 
 
+def check_sensibull_fresh() -> list[Check]:
+    """Option-chain context comes from the data-gateway's Sensibull fetch."""
+    now = _now_ist()
+    if not in_market_hours(now):
+        return [Check("sensibull", True, "skipped (outside market hours)")]
+    checks: list[Check] = []
+    for symbol in LIVE_INDICES:
+        raw = redis_cli("HGET", f"data:sensibull:{symbol}", "last_fetch_time")
+        try:
+            stamp = datetime.fromisoformat(raw.strip())
+        except ValueError:
+            checks.append(Check(f"sensibull:{symbol}", False, f"unreadable {raw!r}"))
+            continue
+        age = (now.replace(tzinfo=None) - stamp.replace(tzinfo=None)).total_seconds()
+        minutes = age / 60.0
+        checks.append(Check(
+            f"sensibull:{symbol}", age < 30 * 60,
+            f"last fetch {minutes:.0f} min ago (limit 30 min; "
+            "stale context blocks index entries)",
+        ))
+    return checks
+
+
 def check_ws2_subs() -> list[Check]:
     raw = redis_cli("HGET", "service:registry:market-data", "ws2_subs")
     try:
@@ -263,7 +286,10 @@ def check_recent_errors() -> list[Check]:
     loop = (
         'for u in ' + " ".join(UNITS) + '; do '
         'ts=$(systemctl show -p ActiveEnterTimestamp --value "$u"); '
-        'if [ -n "$ts" ]; then since="$ts"; else since="5 minutes ago"; fi; '
+        'start_epoch=$(date -d "$ts" +%s 2>/dev/null || echo 0); '
+        'recent_epoch=$(date -d "2 hours ago" +%s); '
+        'if [ "$start_epoch" -gt "$recent_epoch" ]; then since="$ts"; '
+        'else since="2 hours ago"; fi; '
         'pid=$(systemctl show -p MainPID --value "$u"); '
         'n=$(journalctl --since "$since" --no-pager -o short -u "$u" 2>/dev/null '
         "| grep -F \"python[$pid]\" | grep -c Traceback); "
@@ -294,6 +320,7 @@ def run() -> list[Check]:
         check_services,
         check_heartbeats,
         check_options_fresh,
+        check_sensibull_fresh,
         check_ws2_subs,
         check_capture,
         check_recent_errors,

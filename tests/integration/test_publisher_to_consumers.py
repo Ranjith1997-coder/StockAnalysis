@@ -42,6 +42,13 @@ def _open_market(monkeypatch):
     monkeypatch.setattr(pt_main, "ENTRY_WINDOW_END", dtime(23, 59))
 
 
+def _publish_sensibull(redis, symbol: str = "NIFTY", fetched_at: datetime | None = None) -> None:
+    """The gate also requires a fresh Sensibull fetch (chain context)."""
+    redis.hset(f"data:sensibull:{symbol}", mapping={
+        "last_fetch_time": (fetched_at or datetime.now()).isoformat(),
+    })
+
+
 def _publish_chain(redis, symbol: str = "NIFTY", spot: float = 25_000.0) -> _Obj:
     obj = _Obj(symbol)
     ts = obj._tick_store
@@ -60,11 +67,13 @@ def _publish_chain(redis, symbol: str = "NIFTY", spot: float = 25_000.0) -> _Obj
 
 def test_fresh_published_aggregate_passes_the_entry_gate(fake_redis) -> None:
     _publish_chain(fake_redis)
+    _publish_sensibull(fake_redis)
     assert check_entry_gate(fake_redis, "NIFTY", now=datetime.now()) == ""
 
 
 def test_stale_aggregate_is_rejected(fake_redis) -> None:
     _publish_chain(fake_redis)
+    _publish_sensibull(fake_redis)
     # Same data, evaluated 11 s later: past ENTRY_MAX_AGG_AGE_SECONDS (10 s).
     later = datetime.now() + timedelta(seconds=11)
     assert check_entry_gate(fake_redis, "NIFTY", now=later) == "stale_options_agg"
@@ -81,6 +90,7 @@ def test_entry_gate_respects_the_time_window(fake_redis, hour, minute) -> None:
     from services.paper_trading import main as pt_main
 
     _publish_chain(fake_redis)
+    _publish_sensibull(fake_redis)
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(pt_main, "ENTRY_WINDOW_START", dtime(9, 20))
         patch.setattr(pt_main, "ENTRY_WINDOW_END", dtime(15, 0))
@@ -144,3 +154,30 @@ def test_pinn_zscore_cache_round_trip(fake_redis) -> None:
 def test_missing_pinn_cache_fails_open(fake_redis) -> None:
     signal = EntrySignal(strategy="IRON_CONDOR", symbol="NIFTY", put_wall_strike=24_900.0)
     assert get_pinn_confirmation(fake_redis, signal) is None
+
+
+class TestSensibullFreshnessGate:
+    def test_stale_sensibull_blocks_an_otherwise_valid_entry(self, fake_redis):
+        _publish_chain(fake_redis)
+        _publish_sensibull(fake_redis, fetched_at=datetime.now() - timedelta(hours=5))
+
+        assert check_entry_gate(fake_redis, "NIFTY", now=datetime.now()) == "stale_sensibull"
+
+    def test_missing_sensibull_blocks(self, fake_redis):
+        _publish_chain(fake_redis)
+        assert check_entry_gate(fake_redis, "NIFTY", now=datetime.now()) == "stale_sensibull"
+
+    def test_fresh_sensibull_allows(self, fake_redis):
+        _publish_chain(fake_redis)
+        _publish_sensibull(fake_redis)
+        assert check_entry_gate(fake_redis, "NIFTY", now=datetime.now()) == ""
+
+    def test_guard_can_be_disabled(self, fake_redis, monkeypatch):
+        monkeypatch.setenv("PAPER_MAX_SENSIBULL_AGE_SECONDS", "0")
+        _publish_chain(fake_redis)
+        assert check_entry_gate(fake_redis, "NIFTY", now=datetime.now()) == ""
+
+    def test_unparseable_timestamp_blocks(self, fake_redis):
+        _publish_chain(fake_redis)
+        fake_redis.hset("data:sensibull:NIFTY", mapping={"last_fetch_time": "not-a-date"})
+        assert check_entry_gate(fake_redis, "NIFTY", now=datetime.now()) == "stale_sensibull"

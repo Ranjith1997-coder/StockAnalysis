@@ -165,6 +165,11 @@ class TokenRegistry:
     def get_option_tokens_for(self, parent_symbol: str) -> Dict[float, Dict[str, int]]:
         return self._option_strike_map.get(parent_symbol, {}).copy()
 
+    def get_all_tokens_of_type(self, token_type: TokenType) -> List[int]:
+        """Every registered token of one type (e.g. current-expiry futures)."""
+        return [token for token, info in self._registry.items()
+                if info.token_type == token_type]
+
     def get_all_subscribed_tokens(self) -> List[int]:
         return [t for t, info in self._registry.items() if info.is_subscribed]
 

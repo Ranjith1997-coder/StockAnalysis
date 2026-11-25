@@ -427,6 +427,27 @@ def _handle_exit_signal(redis, signal) -> None:
             _close_at_market(redis, position, signal.reason)
 
 
+def _max_sensibull_age_seconds() -> float:
+    import os
+    try:
+        return max(0.0, float(os.getenv("PAPER_MAX_SENSIBULL_AGE_SECONDS", "1800")))
+    except ValueError:
+        return 1800.0
+
+
+def _sensibull_age_seconds(redis, symbol: str, now: "datetime") -> float | None:
+    raw = redis.hget(f"data:sensibull:{symbol}", "last_fetch_time")
+    if not raw:
+        return None
+    try:
+        stamp = datetime.fromisoformat(str(raw))
+    except ValueError:
+        return None
+    if stamp.tzinfo is not None:
+        stamp = stamp.replace(tzinfo=None)
+    return (now - stamp).total_seconds()
+
+
 def check_entry_gate(redis, symbol: str, now: "datetime | None" = None) -> str:
     """Time/data-freshness gate for new entries. Returns '' if allowed, else reason."""
     now = now or datetime.now()
@@ -437,6 +458,15 @@ def check_entry_gate(redis, symbol: str, now: "datetime | None" = None) -> str:
     agg = redis.hgetall(f"data:options_agg:{symbol}")
     if engine.is_agg_data_stale(agg, now=now.timestamp(), max_age_seconds=ENTRY_MAX_AGG_AGE_SECONDS):
         return "stale_options_agg"
+    # Option-chain context (per-expiry OI/PCR/max-pain) comes from the
+    # data-gateway's Sensibull fetch, not from the tick stream. If that fetch
+    # is down, analysers would decide on stale chain data: refuse the entry
+    # (set PAPER_MAX_SENSIBULL_AGE_SECONDS=0 to disable this guard).
+    max_age = _max_sensibull_age_seconds()
+    if max_age > 0 and symbol in constant.LIVE_OPTIONS_INDICES:
+        age = _sensibull_age_seconds(redis, symbol, now)
+        if age is None or age > max_age:
+            return "stale_sensibull"
     return ""
 
 

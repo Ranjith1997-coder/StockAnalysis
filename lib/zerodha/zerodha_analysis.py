@@ -14,6 +14,28 @@ from lib.notification.Notification import TELEGRAM_NOTIFICATIONS
 import requests
 
 
+def futures_expiry_key(parent, expiry) -> str | None:
+    """Map a futures tick to ``current``/``next`` using its own mdata.
+
+    Comparing against option expiries (``app_ctx.stockExpires``) mislabels every
+    monthly futures contract as "next" because index options expire weekly.
+    """
+    mdata = (getattr(parent, "zerodha_ctx", {}) or {}).get("futures_mdata", {}) or {}
+    expiry = str(expiry)[:10]
+    for key in ("current", "next"):
+        frame = mdata.get(key)
+        if frame is None or getattr(frame, "empty", True):
+            continue
+        try:
+            candidate = str(frame["expiry"].iloc[0])[:10]
+        except (KeyError, IndexError, AttributeError):
+            logger.debug("[ZerodhaWS] futures_mdata.%s has no usable expiry", key)
+            continue
+        if candidate == expiry:
+            return key
+    return None
+
+
 class ZerodhaTickerManager:
     # Aggregate recomputation throttle (seconds)
     AGGREGATE_INTERVAL = 1.0
@@ -343,7 +365,13 @@ class ZerodhaTickerManager:
                 logger.warning(f"[ZerodhaWS] No parent object for futures token {info.token} ({info.parent_symbol}) — tick dropped")
             return
 
-        expiry_key = "current" if info.expiry == self._get_current_expiry(info.parent_symbol) else "next"
+        expiry_key = futures_expiry_key(parent, info.expiry)
+        if expiry_key is None:
+            logger.debug(
+                "[ZerodhaWS] %s futures expiry %s matches neither current nor "
+                "next mdata — tick dropped", info.parent_symbol, info.expiry,
+            )
+            return
         parent.update_futures_tick(expiry_key, tick)
 
     def _get_current_expiry(self, parent_symbol):
@@ -519,14 +547,25 @@ class ZerodhaTickerManager:
 
         index_tokens = list(shared.app_ctx.index_token_obj_dict.keys())
         equity_tokens = [] if self.index_only_mode else list(shared.app_ctx.stock_token_obj_dict.keys())
-        all_base_tokens = equity_tokens + index_tokens
+        # Futures are base instruments, not options: without this they are
+        # registered but never subscribed, so futures_live/capture/analysis stay
+        # empty (found live on 2026-11-25: no data:futures_live at all).
+        futures_tokens = []
+        registry = getattr(self, "token_registry", None)
+        if registry is not None:
+            futures_tokens = registry.get_all_tokens_of_type(TokenType.FUTURE)
+        all_base_tokens = equity_tokens + index_tokens + futures_tokens
 
         self.start_tick_processor()
 
         if all_base_tokens:
             ws.subscribe(all_base_tokens)
             ws.set_mode(ws.MODE_FULL, all_base_tokens)
-            mode_label = "indices only" if self.index_only_mode else f"{len(equity_tokens)} stocks + {len(index_tokens)} indices"
+            mode_label = (
+                "indices only" if self.index_only_mode
+                else f"{len(equity_tokens)} stocks + {len(index_tokens)} indices "
+                     f"+ {len(futures_tokens)} futures"
+            )
             logger.info(f"WS1 (base) subscribed to {len(all_base_tokens)} tokens ({mode_label})")
 
     def on_close_base(self, ws, code, reason):
