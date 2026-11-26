@@ -15,6 +15,9 @@ from services.analysis_engine.analyser.GEXAnalyser import GEXAnalyser
 from services.analysis_engine.analyser.IVAnalyser import IVAnalyser
 from services.analysis_engine.analyser.MaxPainAnalyser import MaxPainAnalyser
 from services.analysis_engine.analyser.OIChainAnalyser import OIChainAnalyser
+from services.analysis_engine.analyser.VolatilityContextAnalyser import (
+    VolatilityContextAnalyser,
+)
 from services.analysis_engine.analyser.OptionSellerCompositeAnalyser import (
     OptionSellerCompositeAnalyser,
 )
@@ -57,6 +60,7 @@ def build_orchestrator() -> AnalyserOrchestrator:
         VolumeAnalyser(), TechnicalAnalyser(), CandleStickAnalyser(), IVAnalyser(),
         FuturesAnalyser(), PCRAnalyser(), MaxPainAnalyser(), OIChainAnalyser(),
         GEXAnalyser(), PanicModeAnalyser(), OptionSellerCompositeAnalyser(),
+        VolatilityContextAnalyser(),
     ):
         orchestrator.register(analyser)
     return orchestrator
@@ -150,11 +154,17 @@ class Backtester:
         session_start = snapshots[0].ts
         scripted = [spec for spec in self._config.signals if spec.get("symbol") == symbol]
         fired: set[int] = set()
+        # Capture timestamps jitter by ~1 s, so `elapsed % interval == 0` almost
+        # never matches; schedule cycles monotonically instead.
+        next_cycle = 0
 
         for snapshot in snapshots:
             with time_machine.travel(_local_instant(snapshot.ts), tick=False):
                 elapsed = int((snapshot.ts - session_start).total_seconds())
-                is_cycle = elapsed % self._config.analysis_interval == 0
+                is_cycle = elapsed >= next_cycle
+                if is_cycle:
+                    while next_cycle <= elapsed:
+                        next_cycle += self._config.analysis_interval
                 context.update(snapshot, analysis_cycle=is_cycle)
                 redis = context.redis
 

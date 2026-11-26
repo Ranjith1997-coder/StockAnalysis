@@ -26,6 +26,12 @@ DEFAULT_LOT_SIZES = {
 OI_HISTORY_LEN = 15
 
 
+def _i(value) -> int:
+    """NaN-safe int (real capture frames have NaN for missing numeric fields)."""
+    number = _f(value)
+    return int(number) if number is not None else 0
+
+
 def _f(value) -> float | None:
     try:
         if value is None or (isinstance(value, float) and pd.isna(value)):
@@ -71,10 +77,10 @@ class ReplayContext:
                 continue
             tick = {
                 "ltp": _f(row.ltp), "bid": _f(row.bid), "ask": _f(row.ask),
-                "buy_qty": int(row.bid_qty or 0), "sell_qty": int(row.ask_qty or 0),
-                "oi": int(row.oi or 0), "open_oi": int(row.open_oi or 0),
-                "prev_oi": int(row.prev_oi or 0), "has_oi": bool(row.has_oi),
-                "volume": int(row.volume or 0), "iv": _f(row.iv),
+                "buy_qty": _i(row.bid_qty), "sell_qty": _i(row.ask_qty),
+                "oi": _i(row.oi), "open_oi": _i(row.open_oi),
+                "prev_oi": _i(row.prev_oi), "has_oi": bool(row.has_oi),
+                "volume": _i(row.volume), "iv": _f(row.iv),
                 "delta": _f(row.delta), "gamma": _f(row.gamma),
                 "theta": _f(row.theta), "vega": _f(row.vega),
                 "iv_change": _f(row.iv_change),
@@ -143,11 +149,11 @@ class ReplayContext:
         bars = pd.DataFrame(self._bars).set_index("date")
 
         future_price = _f(snapshot.ctx.get("future_price")) or spot
-        fut_oi = int(snapshot.ctx.get("fut_oi") or 0)
+        fut_oi = _i(snapshot.ctx.get("fut_oi"))
         self._futures.append({
             "date": snapshot.ts, "open": future_price, "high": future_price,
             "low": future_price, "close": future_price,
-            "volume": int(snapshot.ctx.get("fut_volume") or 0),
+            "volume": _i(snapshot.ctx.get("fut_volume")),
             "oi": fut_oi, "underlying_price": spot,
         })
         fut_df = pd.DataFrame(self._futures).set_index("date")
@@ -299,7 +305,7 @@ class ReplayContext:
                 continue
             bucket = per_strike.setdefault(f"{strike:.2f}", {"call_oi": 0, "put_oi": 0})
             if str(row.side) == "CE":
-                bucket["call_oi"] = int(row.oi or 0)
+                bucket["call_oi"] = _i(row.oi)
             else:
-                bucket["put_oi"] = int(row.oi or 0)
+                bucket["put_oi"] = _i(row.oi)
         return _compute_max_pain(per_strike, snapshot.spot)

@@ -279,3 +279,47 @@ class TestReplayVolatilityContext:
         assert per_expiry["2026-11-26"]["atm_iv"] == pytest.approx(13.0)
         assert per_expiry["2026-12-03"]["atm_iv"] == pytest.approx(14.2)
         assert per_expiry["2026-11-26"]["atm_iv_percentile"] == pytest.approx(82.0)
+
+
+class TestOldCapture:
+    def test_day_without_vol_context_columns_still_loads(self, tmp_path):
+        """Days captured before the Block 2 schema change must remain readable."""
+        import pandas as pd
+
+        from services.market_data.chain_recorder import CONTEXT_COLUMNS
+        from tools.options_backtest.loader import (
+            OPTIONAL_CONTEXT_COLUMNS,
+        )
+
+        base = datetime(2026, 11, 24, 9, 25)
+        write_day(tmp_path, [(base, 25_000.0, ladder())])
+
+        path = next((tmp_path / "context" / SYMBOL / DATE).glob("*.parquet"))
+        frame = pd.read_parquet(path)
+        old = frame[[c for c in CONTEXT_COLUMNS if c not in OPTIONAL_CONTEXT_COLUMNS]]
+        old.to_parquet(path, index=False)
+
+        day = load_day(tmp_path, DATE, SYMBOL)
+
+        assert len(day.snapshots()) == 1
+        assert day.context["atm_iv_near"].isna().all()
+
+
+class TestCycleScheduling:
+    def test_jittered_timestamps_still_run_every_interval(self, tmp_path):
+        """Recorder timestamps drift by ~1 s; cycles must not be skipped."""
+        from tests.tools.test_options_backtest import write_day as _write
+
+        base = datetime(2026, 11, 24, 9, 25)
+        frames = []
+        for step in range(40):                      # 40 snapshots, mostly 31 s apart
+            ts = base + timedelta(seconds=step * 31)
+            frames.append((ts, 25_000.0, ladder()))
+        _write(tmp_path, frames)
+
+        config = BacktestConfig(root=tmp_path, date=DATE, symbols=(SYMBOL,),
+                                signals=(SIGNAL,), analysis_interval=300)
+        result = Backtester(config).run()
+
+        # ~20 minutes of data at 5-minute cycles -> 4-5 cycles, not 0-1
+        assert 4 <= result.analysis_cycles <= 6

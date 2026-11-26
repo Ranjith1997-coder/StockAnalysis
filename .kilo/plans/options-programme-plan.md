@@ -203,6 +203,16 @@ live execution — the box currently has no runtime protection.
 
 ## Progress log
 
+- 2026-11-26 — Deployed `8974140` (Block 2, futures, stale-Sensibull gate,
+  smoke fixes). Smoke 28/28. First real backtest on the captured day
+  (2026-11-26, 3 indices): 228 analysis cycles, 123 signals, 2 entries,
+  1 TARGET + 1 open, net +₹100, MFE +286 / MAE −935. Two replay bugs fixed
+  on the way: older captures were rejected for missing Block-2 columns, and
+  jittered capture timestamps skipped 95 % of analysis cycles (modulo
+  scheduling → monotonic). Blocked: Sensibull OAuth now stops on Kite's
+  JS-only consent page (form POST returns 405); needs one manual approval
+  before data can refresh.
+
 - 2026-11-24 — M3 Block 2: IV rank/VIX regime (I1), term structure (I3),
   expected move + POP ladder + strike suggestion (I6); capture stores
   `atm_iv_percentile/atm_iv_near/atm_iv_next/next_expiry/term_slope`;

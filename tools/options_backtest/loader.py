@@ -20,6 +20,13 @@ from services.market_data.chain_recorder import (
     FUTURES_COLUMNS,
 )
 
+# Columns added after capture went live (Block 2 vol context). Older days must
+# still load; they simply lack those values.
+OPTIONAL_CONTEXT_COLUMNS = (
+    "atm_iv_percentile", "atm_iv_near", "atm_iv_next", "next_expiry", "term_slope",
+)
+REQUIRED_CONTEXT_COLUMNS = [c for c in CONTEXT_COLUMNS if c not in OPTIONAL_CONTEXT_COLUMNS]
+
 
 class MissingCaptureError(RuntimeError):
     """No files for the requested symbol/date (or an incomplete schema)."""
@@ -74,7 +81,8 @@ class Snapshot:
         return float(value) if value not in (None, "") else None
 
 
-def _read_parquet_tree(folder: Path, required: list[str], label: str) -> pd.DataFrame:
+def _read_parquet_tree(folder: Path, required: list[str], label: str,
+                        optional: tuple[str, ...] = ()) -> pd.DataFrame:
     files = sorted(folder.rglob("*.parquet"))
     if not files:
         raise MissingCaptureError(f"no {label} parquet under {folder}")
@@ -84,13 +92,21 @@ def _read_parquet_tree(folder: Path, required: list[str], label: str) -> pd.Data
         raise MissingCaptureError(
             f"{label} capture is missing columns {missing} (schema drift?)"
         )
+    for column in optional:
+        if column not in frame.columns:
+            frame[column] = None
     return frame
 
 
 def load_day(root: Path | str, date: str, symbol: str) -> DayData:
     root = Path(root)
     chain = _read_parquet_tree(root / "chain" / symbol / date, CHAIN_COLUMNS, "chain")
-    context = _read_parquet_tree(root / "context" / symbol / date, CONTEXT_COLUMNS, "context")
+    context = _read_parquet_tree(
+        root / "context" / symbol / date,
+        REQUIRED_CONTEXT_COLUMNS,
+        "context",
+        optional=OPTIONAL_CONTEXT_COLUMNS,
+    )
     futures_path = root / "futures" / symbol / date
     if futures_path.exists():
         futures = _read_parquet_tree(futures_path, FUTURES_COLUMNS, "futures")
