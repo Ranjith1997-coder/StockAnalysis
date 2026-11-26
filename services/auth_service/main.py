@@ -265,6 +265,40 @@ def _send_alert(redis: RedisProxy, message: str):
         pass
 
 
+def _maybe_alert_sensibull_expiry(redis: RedisProxy, now=None,
+                                  threshold_hours: float = 12.0) -> bool:
+    """Alert once per token when the Sensibull client_info JWT is near expiry.
+
+    Rotation needs a manual browser consent, so this is the only warning before
+    every index analyser starts reading stale chain context (and the
+    stale-Sensibull entry gate starts rejecting trades).
+    """
+    from datetime import timezone
+    from lib.sensibull_auth import client_info_expiry
+
+    now = now or datetime.now(timezone.utc)
+    expiry = client_info_expiry(redis.hget(SENSIBULL_HASH, "client_info"))
+    if expiry is None:
+        return False
+    if (expiry - now).total_seconds() > threshold_hours * 3600:
+        return False
+    key = f"auth:sensibull:expiry_alerted:{int(expiry.timestamp())}"
+    if redis.get(key):
+        return False
+    _send_alert(
+        redis,
+        f"Sensibull client_info expires {expiry.astimezone():%Y-%m-%d %H:%M}. "
+        "Rotate the pair (docs/sensibull-auth.md) or index analysis will run on "
+        "stale chain data.",
+    )
+    setter = getattr(redis, "set_with_ttl", None)
+    if callable(setter):
+        setter(key, "1", 86400)
+    else:
+        redis.set(key, "1")
+    return True
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Reactive refresh: auth:commands stream consumer
 # ═══════════════════════════════════════════════════════════════════════════
@@ -292,6 +326,7 @@ def _start_auth_commands_consumer(redis: RedisProxy):
         global _last_refresh_ts
         while _running:
             try:
+                _maybe_alert_sensibull_expiry(redis)
                 messages = redis.xreadgroup(
                     AUTH_COMMANDS_GROUP, consumer,
                     {AUTH_COMMANDS_STREAM: ">"},

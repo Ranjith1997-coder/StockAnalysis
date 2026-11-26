@@ -383,3 +383,62 @@ class TestKiteConsentFallback:
         session = self._session("https://kite.zerodha.com/connect/authorize?again=1")
 
         assert _approve_kite_consent(session, url) is None
+
+
+class TestSensibullExpiryAlert:
+    def _jwt(self, exp):
+        import base64
+        import json
+        header = base64.urlsafe_b64encode(b'{"alg":"none"}').decode().rstrip("=")
+        body = base64.urlsafe_b64encode(json.dumps({"exp": exp}).encode()).decode().rstrip("=")
+        return f"{header}.{body}.sig"
+
+    def _redis(self, raw, existing=None):
+        from unittest.mock import MagicMock
+
+        redis = MagicMock()
+        redis.hget.side_effect = lambda key, field: raw if key == "auth:sensibull" else None
+        redis.get.return_value = existing
+        return redis
+
+    def test_alerts_when_expiring_soon_and_sets_a_throttle_key(self):
+        from datetime import datetime, timedelta, timezone
+
+        from services.auth_service.main import _maybe_alert_sensibull_expiry
+
+        now = datetime(2026, 11, 26, 19, 0, tzinfo=timezone.utc)
+        exp = int((now + timedelta(hours=6)).timestamp())
+        redis = self._redis(self._jwt(exp))
+
+        assert _maybe_alert_sensibull_expiry(redis, now=now) is True
+        redis.xadd.assert_called_once()
+        assert "expiry_alerted" in redis.set_with_ttl.call_args[0][0]
+
+    def test_no_alert_when_far_from_expiry(self):
+        from datetime import datetime, timedelta, timezone
+
+        from services.auth_service.main import _maybe_alert_sensibull_expiry
+
+        now = datetime(2026, 11, 26, 19, 0, tzinfo=timezone.utc)
+        exp = int((now + timedelta(days=5)).timestamp())
+        assert _maybe_alert_sensibull_expiry(self._redis(self._jwt(exp)), now=now) is False
+
+    def test_alert_is_throttled_per_token(self):
+        from datetime import datetime, timedelta, timezone
+
+        from services.auth_service.main import _maybe_alert_sensibull_expiry
+
+        now = datetime(2026, 11, 26, 19, 0, tzinfo=timezone.utc)
+        exp = int((now + timedelta(hours=2)).timestamp())
+        redis = self._redis(self._jwt(exp), existing="1")
+
+        assert _maybe_alert_sensibull_expiry(redis, now=now) is False
+        redis.xadd.assert_not_called()
+
+    def test_missing_client_info_is_a_noop(self):
+        from datetime import datetime, timezone
+
+        from services.auth_service.main import _maybe_alert_sensibull_expiry
+
+        assert _maybe_alert_sensibull_expiry(
+            self._redis(None), now=datetime.now(timezone.utc)) is False
