@@ -55,4 +55,5 @@
 - CI: `.github/workflows/ci.yml` — diff-based ruff (E402 ignored) + full pytest on PR/push to master.
 - Programme plan: `.kilo/plans/options-programme-plan.md` · task specs: `.kilo/plans/options-indicators-roadmap.md`.
 - Test strategy: `docs/testing-strategy.md` (layers, markers, task specs T0–T8).
+- Sensibull auth rotation: `docs/sensibull-auth.md` (JWT pair, manual consent, smoke checks).
 - E2E simulator design: `docs/e2e-simulator-design.md` (T5 task plan).

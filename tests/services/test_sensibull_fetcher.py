@@ -277,3 +277,30 @@ class TestDeserialize:
         assert ctx["historical_data"].empty
         assert ctx["oi_chain"] is None
         assert ctx["oi_chain_history"] == []
+
+
+class TestClientInfoExpiry:
+    def _jwt(self, claims):
+        import base64, json
+        header = base64.urlsafe_b64encode(b'{"alg":"none"}').decode().rstrip("=")
+        body = base64.urlsafe_b64encode(json.dumps(claims).encode()).decode().rstrip("=")
+        return f"{header}.{body}.sig"
+
+    def test_reads_the_exp_claim(self):
+        from datetime import datetime, timezone
+
+        from services.data_gateway.sensibull_fetcher import client_info_expiry
+
+        expiry = client_info_expiry(self._jwt({"exp": 1_800_000_000, "user_id": "u"}))
+        assert expiry == datetime.fromtimestamp(1_800_000_000, tz=timezone.utc)
+
+    @pytest.mark.parametrize("raw", [None, "", "not-a-jwt", "a.b"])
+    def test_invalid_input_is_none(self, raw):
+        from services.data_gateway.sensibull_fetcher import client_info_expiry
+
+        assert client_info_expiry(raw) is None
+
+    def test_missing_exp_is_none(self):
+        from services.data_gateway.sensibull_fetcher import client_info_expiry
+
+        assert client_info_expiry(self._jwt({"user_id": "u"})) is None

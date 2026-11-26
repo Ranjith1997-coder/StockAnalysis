@@ -188,6 +188,22 @@ def check_options_fresh() -> list[Check]:
     return checks
 
 
+def check_sensibull_auth() -> list[Check]:
+    """The pair access_token + client_info expires; an expired JWT means 401."""
+    from services.data_gateway.sensibull_fetcher import client_info_expiry
+
+    raw = redis_cli("HGET", "auth:sensibull", "client_info")
+    expiry = client_info_expiry(raw)
+    if expiry is None:
+        return [Check("sensibull:auth", False,
+                      "no valid client_info JWT — refresh needs a manual login")]
+    hours = (expiry - datetime.now(timezone.utc)).total_seconds() / 3600
+    return [Check(
+        "sensibull:auth", hours > 0,
+        f"client_info expires {expiry:%Y-%m-%d %H:%M}Z ({hours:+.1f}h)",
+    )]
+
+
 def check_sensibull_fresh() -> list[Check]:
     """Option-chain context comes from the data-gateway's Sensibull fetch."""
     now = _now_ist()
@@ -320,6 +336,7 @@ def run() -> list[Check]:
         check_services,
         check_heartbeats,
         check_options_fresh,
+        check_sensibull_auth,
         check_sensibull_fresh,
         check_ws2_subs,
         check_capture,

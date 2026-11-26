@@ -27,6 +27,34 @@ SENSIBULL_BASE = "https://oxide.sensibull.com/v1/compute"
 INDEX_ANALYSIS_EXCLUDE = {"INDIA_VIX", "FINNIFTY"}
 
 
+def client_info_expiry(raw: str | None):
+    """Expiry of the Sensibull client_info JWT (None when absent/invalid).
+
+    The access_token is useless without a live client_info pair; when client_info
+    expires the API returns 401 even though the token looks well formed.
+    """
+    import base64
+    from datetime import datetime, timezone
+
+    if not raw:
+        return None
+    parts = raw.split(".")
+    if len(parts) < 2:
+        return None
+    payload = parts[1] + "=" * (-len(parts[1]) % 4)
+    try:
+        claims = json.loads(base64.urlsafe_b64decode(payload))
+    except (ValueError, TypeError):
+        return None
+    exp = claims.get("exp")
+    if not exp:
+        return None
+    try:
+        return datetime.fromtimestamp(float(exp), tz=timezone.utc)
+    except (ValueError, OSError, TypeError):
+        return None
+
+
 def _get_sensibull_cookies() -> dict | None:
     """Read Sensibull access_token + client_info from env for authenticated API calls.
 
