@@ -281,7 +281,8 @@ class TestDeserialize:
 
 class TestClientInfoExpiry:
     def _jwt(self, claims):
-        import base64, json
+        import base64
+        import json
         header = base64.urlsafe_b64encode(b'{"alg":"none"}').decode().rstrip("=")
         body = base64.urlsafe_b64encode(json.dumps(claims).encode()).decode().rstrip("=")
         return f"{header}.{body}.sig"
