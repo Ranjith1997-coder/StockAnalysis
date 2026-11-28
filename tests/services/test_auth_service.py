@@ -442,3 +442,42 @@ class TestSensibullExpiryAlert:
 
         assert _maybe_alert_sensibull_expiry(
             self._redis(None), now=datetime.now(timezone.utc)) is False
+
+
+class TestSensibullPairFreshness:
+    def _jwt(self, exp):
+        import base64
+        import json
+        header = base64.urlsafe_b64encode(b'{"alg":"none"}').decode().rstrip("=")
+        body = base64.urlsafe_b64encode(json.dumps({"exp": exp}).encode()).decode().rstrip("=")
+        return f"{header}.{body}.sig"
+
+    def test_valid_pair_skips_the_legacy_oauth_flow(self):
+        import time
+        from unittest.mock import MagicMock, patch
+
+        import services.auth_service.main as auth_main
+
+        redis = MagicMock()
+        redis.hget.return_value = self._jwt(int(time.time()) + 8 * 3600)
+        session = MagicMock()
+        with patch("services.auth_service.auth.auth_login.generate_enctoken",
+                   return_value=(True, session, "enc")), \
+             patch.object(auth_main, "_do_sensibull_refresh") as oauth:
+            assert auth_main._do_refresh(redis, reason="scheduled") is True
+        oauth.assert_not_called()
+
+    def test_expired_pair_runs_the_legacy_oauth_flow(self):
+        import time
+        from unittest.mock import MagicMock, patch
+
+        import services.auth_service.main as auth_main
+
+        redis = MagicMock()
+        redis.hget.return_value = self._jwt(int(time.time()) - 60)
+        session = MagicMock()
+        with patch("services.auth_service.auth.auth_login.generate_enctoken",
+                   return_value=(True, session, "enc")), \
+             patch.object(auth_main, "_do_sensibull_refresh") as oauth:
+            auth_main._do_refresh(redis, reason="scheduled")
+        oauth.assert_called_once()

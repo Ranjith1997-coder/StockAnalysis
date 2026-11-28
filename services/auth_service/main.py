@@ -58,6 +58,16 @@ def signal_handler(signum, frame):
 # Core: TOTP login + Redis publish
 # ═══════════════════════════════════════════════════════════════════════════
 
+def _sensibull_pair_is_fresh(redis: RedisProxy, min_hours: float = 2.0) -> bool:
+    from datetime import timezone
+    from lib.sensibull_auth import client_info_expiry
+
+    expiry = client_info_expiry(redis.hget(SENSIBULL_HASH, "client_info"))
+    if expiry is None:
+        return False
+    return (expiry - datetime.now(timezone.utc)).total_seconds() > min_hours * 3600
+
+
 def _do_refresh(redis: RedisProxy, reason: str = "scheduled") -> bool:
     """Run TOTP login and publish enctoken to Redis.
 
@@ -86,9 +96,11 @@ def _do_refresh(redis: RedisProxy, reason: str = "scheduled") -> bool:
     logger.info(f"[auth-service] Enctoken refreshed and published (reason={reason})")
     incr_system("auth_refreshes")
 
-    # Also refresh Sensibull session — reuse the Zerodha session to avoid
-    # a second login that would invalidate this enctoken.
-    _do_sensibull_refresh(redis, reason=reason, zerodha_session=session)
+    # Also refresh Sensibull — but the browser automation owns that pair now.
+    # Calling the old OAuth flow every day only logs a consent failure (and an
+    # alert); skip it while the published pair is comfortably valid.
+    if not _sensibull_pair_is_fresh(redis):
+        _do_sensibull_refresh(redis, reason=reason, zerodha_session=session)
 
     return True
 

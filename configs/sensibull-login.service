@@ -1,0 +1,14 @@
+[Unit]
+Description=Sensibull auth refresh (headless browser login)
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/hacker/StockAnalysis
+Environment=PYTHONPATH=/home/hacker/StockAnalysis
+Environment=REDIS_URL=redis://localhost:6379
+Environment=SENSIBULL_BROWSER_CHANNEL=
+EnvironmentFile=-/home/hacker/StockAnalysis/.env
+ExecStart=/home/hacker/StockAnalysis/.venv/bin/python scripts/sensibull_login.py
+TimeoutStartSec=300
+Nice=10

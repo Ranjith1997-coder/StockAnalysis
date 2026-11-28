@@ -1,0 +1,14 @@
+[Unit]
+Description=Sensibull auth refresh (after the 07:15 JWT boundary, before the 09:00 enctoken refresh)
+
+[Timer]
+# The client_info JWT always expires at 07:15 IST, so running before that only
+# buys minutes. 08:05 gives ~23 h of validity, covering the whole session.
+# Both runs stay ahead of the 09:00 Zerodha enctoken refresh: a fresh Kite
+# login invalidates the enctoken the market-data WebSocket is using.
+OnCalendar=*-*-* 08:05:00
+OnCalendar=*-*-* 08:35:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

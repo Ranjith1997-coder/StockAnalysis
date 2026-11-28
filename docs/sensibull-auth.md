@@ -42,6 +42,47 @@ curl -s -o /dev/null -w '%{http_code}\n' \
 The data-gateway cycles every 310 s, so `data:sensibull:{NIFTY,BANKNIFTY,SENSEX}`
 refreshes within ~5 minutes. `make smoke` then shows `sensibull:*` passing.
 
+## Automated daily refresh (Playwright)
+
+`scripts/sensibull_login.py` drives a real browser: Zerodha login → TOTP →
+Authorize → read `access_token`/`client_info` → write `auth:sensibull`.
+
+```bash
+python scripts/sensibull_login.py --check   # login + API check, no Redis write
+python scripts/sensibull_login.py           # login + publish to Redis
+```
+
+Install once on the host that runs it:
+
+```bash
+.venv/bin/pip install -r requirements-browser.txt
+.venv/bin/playwright install chromium        # or use system Chrome/Chromium
+```
+
+Scheduling: `configs/sensibull-login.service` + `configs/sensibull-login.timer`
+run it at **08:05 and 08:35 IST** — after the 07:15 JWT boundary (the `exp`
+claim is anchored there, so an earlier run buys only minutes) and before the
+09:00 enctoken refresh
+(see below). Enable with:
+
+```bash
+sudo cp configs/sensibull-login.* /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now sensibull-login.timer
+sudo systemctl start sensibull-login.service   # first run, watch it
+journalctl -u sensibull-login -n 30
+```
+
+Exit codes: `0` ok, `2` login/cookie failure, `3` API rejected the pair; a
+failure leaves the old pair in place and the 12-hour expiry alert still fires.
+Screenshots of failures land in `logs/sensibull_login_failure.png`.
+
+**Hard rule:** the `client_info` JWT expires at **07:15 daily**. Run the
+refresh after 07:15 (08:05 is the scheduled slot) so it lasts the session. A
+fresh Kite login invalidates the enctoken the market-data WebSocket is using,
+so do not run it after 08:45 on a trading day without following it with the
+auth-service refresh.
+
 ## Guard rails that now exist
 
 - `make smoke` → `sensibull:auth` decodes the JWT and fails when it is expired;
