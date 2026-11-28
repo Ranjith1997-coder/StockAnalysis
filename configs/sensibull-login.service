@@ -4,7 +4,11 @@ After=network-online.target
 
 [Service]
 Type=oneshot
+User=hacker
+Group=hacker
 WorkingDirectory=/home/hacker/StockAnalysis
+Environment=HOME=/home/hacker
+Environment=PLAYWRIGHT_BROWSERS_PATH=/home/hacker/.cache/ms-playwright
 Environment=PYTHONPATH=/home/hacker/StockAnalysis
 Environment=REDIS_URL=redis://localhost:6379
 Environment=SENSIBULL_BROWSER_CHANNEL=
